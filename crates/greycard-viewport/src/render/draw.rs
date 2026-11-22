@@ -502,7 +502,7 @@ impl Renderer {
             .and_then(|_| osharp::Taps::of(v));
         // Off, its targets are let go of; not by a tapped analysis,
         // whose view has it off only because it stops before it.
-        if v.output_sharpen.acting().is_none() && !matches!(through, Through::Tap(_)) {
+        if osharp::Taps::of(v).is_none() && !matches!(through, Through::Tap(_)) {
             self.osharp.release();
         }
         // The overlays alone keep what they paint and discard every

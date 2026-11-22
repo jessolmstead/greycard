@@ -599,6 +599,8 @@ pub fn render_framed(
     white: Option<&greycard_edit::WhiteShift>,
     detail: Option<(&crate::detail::BandImages, &crate::detail::DetailMeta)>,
 ) -> Rendered {
+    let settings = settings.for_edit(edit);
+    let settings = &*settings;
     // The picture from before the Detail section, when it came with
     // the bands: what the range masks read, through the resize with
     // the picture.
@@ -1042,6 +1044,23 @@ pub struct Origin {
 }
 
 impl Settings {
+    /// The sheet as a frame under `edit` is exported by it: with the
+    /// sheet's Sharpen off where the edit's Output sharpen acts (the
+    /// picture's on, or a mask adding to it), since that sharpen is in
+    /// the pixels of the picture made and a second after the resize
+    /// stacks on it. A mask's take alone does not act. Per frame, so a
+    /// set mixes both.
+    pub fn for_edit(&self, edit: &greycard_edit::Edit) -> std::borrow::Cow<'_, Settings> {
+        if self.sharpen != Sharpen::Off && edit.output_sharpens() {
+            std::borrow::Cow::Owned(Settings {
+                sharpen: Sharpen::Off,
+                ..self.clone()
+            })
+        } else {
+            std::borrow::Cow::Borrowed(self)
+        }
+    }
+
     /// What the sheet asked for, in words, for the export's XMP.
     pub fn describe(&self) -> String {
         let mut s = self.format.name().to_string();
@@ -1940,6 +1959,178 @@ mod tests {
         }
     }
 
+    /// The output sharpen's edge gain on a hard grey step, encoded 0.3
+    /// to 0.7: what the sharpen adds to the step's span from its darkest
+    /// to its lightest pixel near it, over the step, the same export with
+    /// the output sharpen off taken away, so the resize's own ring is
+    /// not counted. Sixteen bits, no sheet sharpening.
+    fn edge_gain(
+        image: &WorkingImage,
+        output: greycard_edit::OutputSharpen,
+        long_edge: Option<u32>,
+    ) -> f32 {
+        let span = |output| {
+            let edit = greycard_edit::Edit {
+                output_sharpen: output,
+                ..Default::default()
+            };
+            let settings = Settings {
+                format: Format::Tiff,
+                sharpen: Sharpen::Off,
+                long_edge,
+                ..Settings::default()
+            };
+            let (w, h) = (image.width as u32, image.height as u32);
+            let rendered = render(
+                image,
+                &edit,
+                &greycard_edit::NoStores,
+                (w, h),
+                &settings,
+                &Default::default(),
+                f32::INFINITY,
+                None,
+                finish::Source::Display,
+                None,
+                None,
+            );
+            let Pixels::Sixteen(p) = rendered.pixels else {
+                panic!("a TIFF is sixteen bits")
+            };
+            let (rw, rh) = (rendered.width as usize, rendered.height as usize);
+            // The middle row, twenty pixels of this picture either side
+            // of the step, past the widest blur's reach and the ring's.
+            let row = &p[(rh / 2) * rw * 3..(rh / 2 + 1) * rw * 3];
+            let near = (rw / 2 - 20..rw / 2 + 20).map(|x| f32::from(row[x * 3]) / 65535.0);
+            let (lo, hi) = near.fold((f32::MAX, f32::MIN), |(lo, hi), v| (lo.min(v), hi.max(v)));
+            hi - lo
+        };
+        let off = greycard_edit::OutputSharpen {
+            amount: 0.0,
+            ..output
+        };
+        (span(output) - span(off)) / 0.4
+    }
+
+    /// A hard grey step across the middle of a frame 6144 wide, 3
+    /// times 2048, so the step falls on a pixel's edge at 2048 too.
+    fn hard_step() -> WorkingImage {
+        let (w, h) = (6144usize, 24usize);
+        let mut image = WorkingImage::new(w, h);
+        let (dark, light) = (finish::decode(0.3), finish::decode(0.7));
+        for (i, px) in image.data.chunks_mut(3).enumerate() {
+            px.fill(if i % w < w / 2 { dark } else { light });
+        }
+        image
+    }
+
+    /// The radius is in the pixels of the picture made: an export at 2048
+    /// of a frame 6144 wide gives a grating as much gain at a frequency
+    /// of its own pixels as the full-size export of a frame 2048 wide
+    /// gives the same grating, within a fifth of a percent (1e-4
+    /// measured). The old radius, a third of a pixel there, gave radius
+    /// 3 a gain of 1.43 at a period of 6 against the full size's 2.00,
+    /// and radius 1 about none. A grating and not a step, because a
+    /// step's own edge is not the same at the two sizes: Lanczos spreads
+    /// a hard step over two of the smaller picture's pixels, and the
+    /// sharpen reads that softer edge (the hard step's added span,
+    /// printed: 0.21 at full size and 0.05 at 2048 at radius 0.5, 0.60
+    /// and 0.30 at 1, 0.87 and 0.68 at 3; before, at 2048, 0.00, 0.00,
+    /// and 0.30).
+    #[test]
+    fn the_same_radius_gives_the_same_edge_gain_at_any_size() {
+        let image = hard_step();
+        for radius in [0.5f32, 1.0, 2.0, 3.0] {
+            let output = greycard_edit::OutputSharpen {
+                amount: 1.0,
+                radius,
+                threshold: 0.0,
+                ..Default::default()
+            };
+            let full = edge_gain(&image, output, None);
+            let small = edge_gain(&image, output, Some(2048));
+            eprintln!(
+                "radius {radius}: a hard step's added span {full:.3} at full size, \
+                 {small:.3} at 2048"
+            );
+            assert!(small > 0.04, "radius {radius}: {small} at 2048");
+            for period in [4.0f32, 6.0, 12.0] {
+                let a = grating_gain(2048, period, output, None);
+                let b = grating_gain(6144, 3.0 * period, output, Some(2048));
+                eprintln!("  period {period}: gain {a:.4} full size, {b:.4} at 2048");
+                assert!(a > 1.02, "radius {radius}, period {period}: {a}");
+                assert!(
+                    (a - b).abs() < 2e-3 * a,
+                    "radius {radius}, period {period}: {a} full size, {b} at 2048"
+                );
+            }
+        }
+    }
+
+    /// The output sharpen's gain on a grey grating `period` pixels of a
+    /// frame `w` wide, encoded 0.5 ± 0.15, exported at `long_edge`: the
+    /// grating's amplitude at its own frequency in the export, sharpened
+    /// over unsharpened, in the middle row's middle half.
+    fn grating_gain(
+        w: usize,
+        period: f32,
+        output: greycard_edit::OutputSharpen,
+        long_edge: Option<u32>,
+    ) -> f32 {
+        let h = 12usize;
+        let mut image = WorkingImage::new(w, h);
+        for (i, px) in image.data.chunks_mut(3).enumerate() {
+            let x = (i % w) as f32 + 0.5;
+            let v = 0.5 + 0.15 * (std::f32::consts::TAU * x / period).sin();
+            px.fill(finish::decode(v));
+        }
+        let amplitude = |output| {
+            let edit = greycard_edit::Edit {
+                output_sharpen: output,
+                ..Default::default()
+            };
+            let settings = Settings {
+                format: Format::Tiff,
+                sharpen: Sharpen::Off,
+                long_edge,
+                ..Settings::default()
+            };
+            let rendered = render(
+                &image,
+                &edit,
+                &greycard_edit::NoStores,
+                (w as u32, h as u32),
+                &settings,
+                &Default::default(),
+                f32::INFINITY,
+                None,
+                finish::Source::Display,
+                None,
+                None,
+            );
+            let Pixels::Sixteen(p) = rendered.pixels else {
+                panic!("a TIFF is sixteen bits")
+            };
+            let (rw, rh) = (rendered.width as usize, rendered.height as usize);
+            let out_period = period * rw as f32 / w as f32;
+            let row = &p[(rh / 2) * rw * 3..(rh / 2 + 1) * rw * 3];
+            let (mut re, mut im) = (0.0f64, 0.0f64);
+            let (a, b) = (rw / 4, 3 * rw / 4);
+            for x in a..b {
+                let v = f64::from(row[x * 3]) / 65535.0;
+                let t = std::f64::consts::TAU * (x as f64 + 0.5) / f64::from(out_period);
+                re += v * t.cos();
+                im += v * t.sin();
+            }
+            (2.0 * (re * re + im * im).sqrt() / (b - a) as f64) as f32
+        };
+        let off = greycard_edit::OutputSharpen {
+            amount: 0.0,
+            ..output
+        };
+        amplitude(output) / amplitude(off)
+    }
+
     /// A mask with every section of a look moved, over a feathered
     /// linear shape, the picture's planes and guide made from it: the
     /// export, sixteen bits, at an opacity.
@@ -2068,6 +2259,7 @@ mod tests {
             structure: -0.4,
             dehaze: 0.4,
             sharpen: 0.0,
+            output_sharpen: 0.0,
         };
         let off = opacity_render(&image, &look, 1.0, false);
         assert_eq!(opacity_render(&image, &look, 0.0, true), off, "none is off");
@@ -3301,5 +3493,7 @@ mod tests {
     }
 }
 
+#[cfg(test)]
+mod output_sharpen_tests;
 #[cfg(test)]
 mod vignette_tests;

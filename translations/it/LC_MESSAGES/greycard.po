@@ -42,243 +42,243 @@ msgid "Create"
 msgstr "Crea"
 
 #. The camera match sheet's Fit button; it also reads 'Fit N groups'
-#: crates/greycard-slint/ui/app.slint:2354
+#: crates/greycard-slint/ui/app.slint:2359
 msgid "Fit"
 msgstr "Adatta"
 
 #. The status line as shown.
-#: crates/greycard-slint/ui/app.slint:2392
+#: crates/greycard-slint/ui/app.slint:2397
 msgid "preparing..."
 msgstr "preparazione..."
 
-#: crates/greycard-slint/ui/app.slint:2477
+#: crates/greycard-slint/ui/app.slint:2482
 msgid "Proof: {}"
 msgstr "Prova: {}"
 
-#: crates/greycard-slint/ui/app.slint:2477
+#: crates/greycard-slint/ui/app.slint:2482
 msgid "Proof: {} · gamut"
 msgstr "Prova: {} · gamut"
 
-#: crates/greycard-slint/ui/app.slint:2480
+#: crates/greycard-slint/ui/app.slint:2485
 msgid "File"
 msgstr "File"
 
 #. The five canvas shades, in Settings and the View menu
-#: crates/greycard-slint/ui/app.slint:2505
+#: crates/greycard-slint/ui/app.slint:2510
 msgid "Black"
 msgstr "Nero"
 
 #. The five canvas shades, in Settings and the View menu
-#: crates/greycard-slint/ui/app.slint:2505
+#: crates/greycard-slint/ui/app.slint:2510
 msgid "Dark grey"
 msgstr "Grigio scuro"
 
 #. The five canvas shades, in Settings and the View menu
-#: crates/greycard-slint/ui/app.slint:2505
+#: crates/greycard-slint/ui/app.slint:2510
 msgid "Light grey"
 msgstr "Grigio chiaro"
 
 #. The five canvas shades, in Settings and the View menu
-#: crates/greycard-slint/ui/app.slint:2505
+#: crates/greycard-slint/ui/app.slint:2510
 msgid "Mid grey"
 msgstr "Grigio medio"
 
 #. The five canvas shades, in Settings and the View menu
-#: crates/greycard-slint/ui/app.slint:2505
+#: crates/greycard-slint/ui/app.slint:2510
 msgid "White"
 msgstr "Bianco"
 
 #. The download ask's yes button, for a model or the lens database
-#: crates/greycard-slint/ui/app.slint:2616
+#: crates/greycard-slint/ui/app.slint:2621
 msgid "Download"
 msgstr "Scarica"
 
 #. The download ask's button that declines for now
-#: crates/greycard-slint/ui/app.slint:2618
+#: crates/greycard-slint/ui/app.slint:2623
 msgid "Not now"
 msgstr "Non ora"
 
 #. The models ask's button that downloads every model
-#: crates/greycard-slint/ui/app.slint:2625
+#: crates/greycard-slint/ui/app.slint:2630
 msgid "Download all"
 msgstr "Scarica tutto"
 
-#: crates/greycard-slint/ui/app.slint:4158
+#: crates/greycard-slint/ui/app.slint:4166
 msgid "Queued for export, shown as it will export. Edit it from its folder."
 msgstr ""
 "In coda per l'esportazione, mostrata come verrà esportata. Modificala dalla "
 "sua cartella."
 
 #. The Loupe's mode button at the top of the develop panel
-#: crates/greycard-slint/ui/app.slint:4169
+#: crates/greycard-slint/ui/app.slint:4177
 msgid "Cull"
 msgstr "Cernita"
 
-#: crates/greycard-slint/ui/app.slint:4174
+#: crates/greycard-slint/ui/app.slint:4182
 msgid "Cull mode"
 msgstr "Modalità cernita"
 
 #. Develop, Crop, Masks, and Retouch
-#: crates/greycard-slint/ui/app.slint:4193
+#: crates/greycard-slint/ui/app.slint:4201
 msgid "Panel tabs"
 msgstr "Schede del pannello"
 
 #. The Loupe's mode buttons at the top of the develop panel
-#: crates/greycard-slint/ui/app.slint:4196
+#: crates/greycard-slint/ui/app.slint:4204
 msgid "Crop"
 msgstr "Ritaglio"
 
 #. The Loupe's mode buttons at the top of the develop panel
-#: crates/greycard-slint/ui/app.slint:4196
+#: crates/greycard-slint/ui/app.slint:4204
 msgid "Develop"
 msgstr "Sviluppo"
 
 #. The Loupe's mode buttons at the top of the develop panel
-#: crates/greycard-slint/ui/app.slint:4196
+#: crates/greycard-slint/ui/app.slint:4204
 msgid "Masks"
 msgstr "Maschere"
 
 #. The Loupe's mode buttons at the top of the develop panel
-#: crates/greycard-slint/ui/app.slint:4196
+#: crates/greycard-slint/ui/app.slint:4204
 msgid "Retouch"
 msgstr "Ritocco"
 
 #. View menu
-#: crates/greycard-slint/ui/app.slint:5391
+#: crates/greycard-slint/ui/app.slint:5401
 msgid "Full screen"
 msgstr "Schermo intero"
 
 #. View menu
-#: crates/greycard-slint/ui/app.slint:5391
+#: crates/greycard-slint/ui/app.slint:5401
 msgid "Full screen (F11)"
 msgstr "Schermo intero (F11)"
 
 #. File menu
-#: crates/greycard-slint/ui/app.slint:5399
+#: crates/greycard-slint/ui/app.slint:5409
 msgid "Export..."
 msgstr "Esporta..."
 
 #. File menu
-#: crates/greycard-slint/ui/app.slint:5399
+#: crates/greycard-slint/ui/app.slint:5409
 msgid "Stop export"
 msgstr "Interrompi esportazione"
 
 #. View menu
-#: crates/greycard-slint/ui/app.slint:5530
+#: crates/greycard-slint/ui/app.slint:5540
 msgid "Right panel"
 msgstr "Pannello destro"
 
 #. View menu
-#: crates/greycard-slint/ui/app.slint:5532
+#: crates/greycard-slint/ui/app.slint:5542
 msgid "Hide panel"
 msgstr "Nascondi pannello"
 
 #. View menu
-#: crates/greycard-slint/ui/app.slint:5532
+#: crates/greycard-slint/ui/app.slint:5542
 msgid "Show panel"
 msgstr "Mostra pannello"
 
 #. View menu: the filmstrip
-#: crates/greycard-slint/ui/app.slint:5569
+#: crates/greycard-slint/ui/app.slint:5579
 msgid "Filmstrip"
 msgstr "Pellicola"
 
 #. View menu: the filmstrip
-#: crates/greycard-slint/ui/app.slint:5571
+#: crates/greycard-slint/ui/app.slint:5581
 msgid "Hide filmstrip"
 msgstr "Nascondi pellicola"
 
 #. View menu: the filmstrip
-#: crates/greycard-slint/ui/app.slint:5571
+#: crates/greycard-slint/ui/app.slint:5581
 msgid "Show filmstrip"
 msgstr "Mostra pellicola"
 
 #. The view button at the top left: the grid
-#: crates/greycard-slint/ui/app.slint:5774
+#: crates/greycard-slint/ui/app.slint:5784
 msgid "Library"
 msgstr "Libreria"
 
-#: crates/greycard-slint/ui/app.slint:5778
+#: crates/greycard-slint/ui/app.slint:5788
 msgid "Library view"
 msgstr "Vista libreria"
 
 #. The view button at the top left: one frame
-#: crates/greycard-slint/ui/app.slint:5792
+#: crates/greycard-slint/ui/app.slint:5802
 msgid "Loupe"
 msgstr "Lente"
 
-#: crates/greycard-slint/ui/app.slint:5796
+#: crates/greycard-slint/ui/app.slint:5806
 msgid "Loupe view"
 msgstr "Vista lente"
 
 #. File menu
-#: crates/greycard-slint/ui/app.slint:5884
+#: crates/greycard-slint/ui/app.slint:5894
 msgid "Open folder..."
 msgstr "Apri cartella..."
 
 #. File menu
-#: crates/greycard-slint/ui/app.slint:5917
+#: crates/greycard-slint/ui/app.slint:5927
 msgid "Import..."
 msgstr "Importa..."
 
-#: crates/greycard-slint/ui/app.slint:5940
+#: crates/greycard-slint/ui/app.slint:5950
 msgid "Stop import"
 msgstr "Interrompi importazione"
 
-#: crates/greycard-slint/ui/app.slint:5940
+#: crates/greycard-slint/ui/app.slint:5950
 msgid "Stopping..."
 msgstr "Interruzione..."
 
-#: crates/greycard-slint/ui/app.slint:5941
+#: crates/greycard-slint/ui/app.slint:5951
 msgid "Importing the catalog..."
 msgstr "Importazione del catalogo..."
 
 #. File menu, under Import
-#: crates/greycard-slint/ui/app.slint:5962
+#: crates/greycard-slint/ui/app.slint:5972
 msgid "From a card or folder..."
 msgstr "Da una scheda o cartella..."
 
 #. File menu, under Import
-#: crates/greycard-slint/ui/app.slint:5967
+#: crates/greycard-slint/ui/app.slint:5977
 msgid "A Lightroom catalog..."
 msgstr "Un catalogo Lightroom..."
 
 #. Help menu: a newer version is out; {} is its number
-#: crates/greycard-slint/ui/app.slint:6326
+#: crates/greycard-slint/ui/app.slint:6336
 msgid "{} is available"
 msgstr "{} è disponibile"
 
 #. Help menu: under the version note
-#: crates/greycard-slint/ui/app.slint:6335
+#: crates/greycard-slint/ui/app.slint:6345
 msgid "Not now: do not offer {} again"
 msgstr "Non ora: non proporre più {}"
 
-#: crates/greycard-slint/ui/app.slint:6343
+#: crates/greycard-slint/ui/app.slint:6353
 msgid "Settings..."
 msgstr "Impostazioni..."
 
-#: crates/greycard-slint/ui/app.slint:6351
+#: crates/greycard-slint/ui/app.slint:6361
 msgid "Help"
 msgstr "Aiuto"
 
-#: crates/greycard-slint/ui/app.slint:6354
+#: crates/greycard-slint/ui/app.slint:6364
 msgid "Help menu"
 msgstr "Menu Aiuto"
 
 #. Help menu: the keys sheet, with the key that opens it
-#: crates/greycard-slint/ui/app.slint:6375
+#: crates/greycard-slint/ui/app.slint:6385
 msgid "Keys (?)"
 msgstr "Tasti (?)"
 
-#: crates/greycard-slint/ui/app.slint:6379
+#: crates/greycard-slint/ui/app.slint:6389
 msgid "User guide"
 msgstr "Guida utente"
 
-#: crates/greycard-slint/ui/app.slint:6384
+#: crates/greycard-slint/ui/app.slint:6394
 msgid "Report a problem..."
 msgstr "Segnala un problema..."
 
-#: crates/greycard-slint/ui/app.slint:6454
+#: crates/greycard-slint/ui/app.slint:6464
 msgid "Left panel"
 msgstr "Pannello sinistro"
 
@@ -1034,304 +1034,308 @@ msgstr "Elimina definitivamente"
 msgid "Move to the trash"
 msgstr "Sposta nel cestino"
 
-#: crates/greycard-slint/ui/panel/deliver.slint:110
+#: crates/greycard-slint/ui/panel/deliver.slint:113
 msgctxt "watermark place"
 msgid "Top left"
 msgstr "In alto a sinistra"
 
-#: crates/greycard-slint/ui/panel/deliver.slint:111
+#: crates/greycard-slint/ui/panel/deliver.slint:114
 msgctxt "watermark place"
 msgid "Top"
 msgstr "In alto"
 
-#: crates/greycard-slint/ui/panel/deliver.slint:112
+#: crates/greycard-slint/ui/panel/deliver.slint:115
 msgctxt "watermark place"
 msgid "Top right"
 msgstr "In alto a destra"
 
-#: crates/greycard-slint/ui/panel/deliver.slint:113
+#: crates/greycard-slint/ui/panel/deliver.slint:116
 msgctxt "watermark place"
 msgid "Left"
 msgstr "A sinistra"
 
-#: crates/greycard-slint/ui/panel/deliver.slint:114
+#: crates/greycard-slint/ui/panel/deliver.slint:117
 msgctxt "watermark place"
 msgid "Center"
 msgstr "Al centro"
 
-#: crates/greycard-slint/ui/panel/deliver.slint:115
+#: crates/greycard-slint/ui/panel/deliver.slint:118
 msgctxt "watermark place"
 msgid "Right"
 msgstr "A destra"
 
-#: crates/greycard-slint/ui/panel/deliver.slint:116
+#: crates/greycard-slint/ui/panel/deliver.slint:119
 msgctxt "watermark place"
 msgid "Bottom left"
 msgstr "In basso a sinistra"
 
-#: crates/greycard-slint/ui/panel/deliver.slint:117
+#: crates/greycard-slint/ui/panel/deliver.slint:120
 msgctxt "watermark place"
 msgid "Bottom"
 msgstr "In basso"
 
-#: crates/greycard-slint/ui/panel/deliver.slint:118
+#: crates/greycard-slint/ui/panel/deliver.slint:121
 msgctxt "watermark place"
 msgid "Bottom right"
 msgstr "In basso a destra"
 
-#: crates/greycard-slint/ui/panel/deliver.slint:269
+#: crates/greycard-slint/ui/panel/deliver.slint:272
 msgid "Export"
 msgstr "Esporta"
 
-#: crates/greycard-slint/ui/panel/deliver.slint:269
+#: crates/greycard-slint/ui/panel/deliver.slint:272
 msgid "Export {n} frame"
 msgid_plural "Export {n} frames"
 msgstr[0] "Esporta {n} foto"
 msgstr[1] "Esporta {n} foto"
 
-#: crates/greycard-slint/ui/panel/deliver.slint:276
+#: crates/greycard-slint/ui/panel/deliver.slint:279
 msgid "{} and {n} other, each under its own edit"
 msgid_plural "{} and {n} others, each under its own edit"
 msgstr[0] "{} e {n} altra, ciascuna con la propria modifica"
 msgstr[1] "{} e altre {n}, ciascuna con la propria modifica"
 
-#: crates/greycard-slint/ui/panel/deliver.slint:284
+#: crates/greycard-slint/ui/panel/deliver.slint:287
 msgid "Preset"
 msgstr "Preset"
 
 #. Export sheet: after a preset's name once its settings were changed
-#: crates/greycard-slint/ui/panel/deliver.slint:294
+#: crates/greycard-slint/ui/panel/deliver.slint:297
 msgid "(edited)"
 msgstr "(modificato)"
 
-#: crates/greycard-slint/ui/panel/deliver.slint:305
+#: crates/greycard-slint/ui/panel/deliver.slint:308
 msgid "Save as..."
 msgstr "Salva come..."
 
-#: crates/greycard-slint/ui/panel/deliver.slint:312
+#: crates/greycard-slint/ui/panel/deliver.slint:315
 msgid "Delete"
 msgstr "Elimina"
 
 #. The snapshot's name, as it is typed.
-#: crates/greycard-slint/ui/panel/deliver.slint:320
+#: crates/greycard-slint/ui/panel/deliver.slint:323
 msgid "Name"
 msgstr "Nome"
 
 #. Export sheet: the built-in preset's name
-#: crates/greycard-slint/ui/panel/deliver.slint:326
+#: crates/greycard-slint/ui/panel/deliver.slint:329
 msgid "Web 2048"
 msgstr "Web 2048"
 
 #. Over a preset of that name, in any case.
-#: crates/greycard-slint/ui/panel/deliver.slint:334
+#: crates/greycard-slint/ui/panel/deliver.slint:337
 msgid "Replace"
 msgstr "Sostituisci"
 
-#: crates/greycard-slint/ui/panel/deliver.slint:357
+#: crates/greycard-slint/ui/panel/deliver.slint:360
 msgid "Format"
 msgstr "Formato"
 
-#: crates/greycard-slint/ui/panel/deliver.slint:358
+#: crates/greycard-slint/ui/panel/deliver.slint:361
 msgid "TIFF 16-bit"
 msgstr "TIFF 16 bit"
 
-#: crates/greycard-slint/ui/panel/deliver.slint:361
+#: crates/greycard-slint/ui/panel/deliver.slint:364
 msgid "Quality"
 msgstr "Qualità"
 
-#: crates/greycard-slint/ui/panel/deliver.slint:375
+#: crates/greycard-slint/ui/panel/deliver.slint:378
 msgid "Long edge"
 msgstr "Lato lungo"
 
 #. Export size: the full size, with the pixel counts beside it
-#: crates/greycard-slint/ui/panel/deliver.slint:377
+#: crates/greycard-slint/ui/panel/deliver.slint:380
 msgid "Full"
 msgstr "Intera"
 
-#: crates/greycard-slint/ui/panel/deliver.slint:381
+#: crates/greycard-slint/ui/panel/deliver.slint:384
 msgid "Pixels"
 msgstr "Pixel"
 
-#: crates/greycard-slint/ui/panel/deliver.slint:395
+#: crates/greycard-slint/ui/panel/deliver.slint:398
 msgid "{} × {}, as it is"
 msgstr "{} × {}, così com'è"
 
-#: crates/greycard-slint/ui/panel/deliver.slint:406
+#: crates/greycard-slint/ui/panel/deliver.slint:409
 msgid "Sharpen"
 msgstr "Nitidezza"
 
 #. Export sharpen: the four levels
-#: crates/greycard-slint/ui/panel/deliver.slint:408
+#: crates/greycard-slint/ui/panel/deliver.slint:411
 msgid "High"
 msgstr "Alta"
 
 #. Export sharpen: the four levels
-#: crates/greycard-slint/ui/panel/deliver.slint:408
+#: crates/greycard-slint/ui/panel/deliver.slint:411
 msgid "Low"
 msgstr "Bassa"
 
 #. Export sharpen: the four levels
-#: crates/greycard-slint/ui/panel/deliver.slint:408
+#: crates/greycard-slint/ui/panel/deliver.slint:411
 msgid "Off"
 msgstr "Nessuna"
 
 #. Export sharpen: the four levels
-#: crates/greycard-slint/ui/panel/deliver.slint:408
+#: crates/greycard-slint/ui/panel/deliver.slint:411
 msgid "Standard"
 msgstr "Standard"
 
-#: crates/greycard-slint/ui/panel/deliver.slint:417
+#: crates/greycard-slint/ui/panel/deliver.slint:419
+msgid "Frames with Output sharpen use it instead"
+msgstr ""
+
+#: crates/greycard-slint/ui/panel/deliver.slint:433
 msgid "Embed profile"
 msgstr "Incorpora profilo"
 
-#: crates/greycard-slint/ui/panel/deliver.slint:422
+#: crates/greycard-slint/ui/panel/deliver.slint:438
 msgid "Metadata"
 msgstr "Metadati"
 
 #. Export metadata: all, all but greycard's edit record, or none
-#: crates/greycard-slint/ui/panel/deliver.slint:424
+#: crates/greycard-slint/ui/panel/deliver.slint:440
 msgctxt "metadata"
 msgid "All"
 msgstr "Tutti"
 
 #. Export metadata: all, all but greycard's edit record, or none
-#: crates/greycard-slint/ui/panel/deliver.slint:424
+#: crates/greycard-slint/ui/panel/deliver.slint:440
 msgid "No edit"
 msgstr "Senza modifica"
 
 #. Export metadata: all, all but greycard's edit record, or none
-#: crates/greycard-slint/ui/panel/deliver.slint:424
+#: crates/greycard-slint/ui/panel/deliver.slint:440
 msgctxt "metadata"
 msgid "None"
 msgstr "Nessuno"
 
-#: crates/greycard-slint/ui/panel/deliver.slint:430
+#: crates/greycard-slint/ui/panel/deliver.slint:446
 msgid "Subfolder"
 msgstr "Sottocartella"
 
 #. Export subfolder: none, the folder itself
-#: crates/greycard-slint/ui/panel/deliver.slint:436
+#: crates/greycard-slint/ui/panel/deliver.slint:452
 msgid "None: the folder below"
 msgstr "Nessuna: la cartella sotto"
 
-#: crates/greycard-slint/ui/panel/deliver.slint:442
+#: crates/greycard-slint/ui/panel/deliver.slint:458
 msgid "Saved in {} beside each original."
 msgstr "Salvato in {} accanto a ogni originale."
 
-#: crates/greycard-slint/ui/panel/deliver.slint:471
+#: crates/greycard-slint/ui/panel/deliver.slint:487
 msgid "If it exists"
 msgstr "Se esiste"
 
-#: crates/greycard-slint/ui/panel/deliver.slint:472
+#: crates/greycard-slint/ui/panel/deliver.slint:488
 msgid "Increment"
 msgstr "Numera"
 
-#: crates/greycard-slint/ui/panel/deliver.slint:472
+#: crates/greycard-slint/ui/panel/deliver.slint:488
 msgid "Overwrite"
 msgstr "Sovrascrivi"
 
-#: crates/greycard-slint/ui/panel/deliver.slint:472
+#: crates/greycard-slint/ui/panel/deliver.slint:488
 msgid "Skip"
 msgstr "Salta"
 
-#: crates/greycard-slint/ui/panel/deliver.slint:476
+#: crates/greycard-slint/ui/panel/deliver.slint:492
 msgid "Watermark"
 msgstr "Filigrana"
 
 #. Export watermark: off, a text, or a PNG
-#: crates/greycard-slint/ui/panel/deliver.slint:478
+#: crates/greycard-slint/ui/panel/deliver.slint:494
 msgid "Image"
 msgstr "Immagine"
 
 #. Export watermark: off, a text, or a PNG
-#: crates/greycard-slint/ui/panel/deliver.slint:478
+#: crates/greycard-slint/ui/panel/deliver.slint:494
 msgid "Text"
 msgstr "Testo"
 
 #. Export watermark: the text's default, which the user replaces
-#: crates/greycard-slint/ui/panel/deliver.slint:488
+#: crates/greycard-slint/ui/panel/deliver.slint:504
 msgid "© Your Name"
 msgstr "© Il tuo nome"
 
-#: crates/greycard-slint/ui/panel/deliver.slint:496
+#: crates/greycard-slint/ui/panel/deliver.slint:512
 msgid "No PNG chosen"
 msgstr "Nessun PNG scelto"
 
-#: crates/greycard-slint/ui/panel/deliver.slint:504
+#: crates/greycard-slint/ui/panel/deliver.slint:520
 msgid "Choose..."
 msgstr "Scegli..."
 
 #. three by three grid of places
-#: crates/greycard-slint/ui/panel/deliver.slint:519
+#: crates/greycard-slint/ui/panel/deliver.slint:535
 msgid "Position"
 msgstr "Posizione"
 
 #. Export watermark: the slider
-#: crates/greycard-slint/ui/panel/deliver.slint:534
+#: crates/greycard-slint/ui/panel/deliver.slint:550
 msgid "Size"
 msgstr "Dimensione"
 
 #. Export watermark: the slider
-#: crates/greycard-slint/ui/panel/deliver.slint:546
+#: crates/greycard-slint/ui/panel/deliver.slint:562
 msgid "Margin"
 msgstr "Margine"
 
 #. Export watermark: the slider
-#: crates/greycard-slint/ui/panel/deliver.slint:558
+#: crates/greycard-slint/ui/panel/deliver.slint:574
 msgid "Opacity"
 msgstr "Opacità"
 
 #. reader: the row has no box of its own to be one.
-#: crates/greycard-slint/ui/panel/deliver.slint:577
+#: crates/greycard-slint/ui/panel/deliver.slint:593
 msgid "Border"
 msgstr "Bordo"
 
 #. Export border: a border in the canvas shade
-#: crates/greycard-slint/ui/panel/deliver.slint:586
+#: crates/greycard-slint/ui/panel/deliver.slint:602
 msgid "Match"
 msgstr "Sfondo"
 
 #. Export border: the slider
-#: crates/greycard-slint/ui/panel/deliver.slint:644
+#: crates/greycard-slint/ui/panel/deliver.slint:660
 msgid "Width"
 msgstr "Larghezza"
 
-#: crates/greycard-slint/ui/panel/deliver.slint:656
+#: crates/greycard-slint/ui/panel/deliver.slint:672
 msgid "Added outside the picture; the file is {} × {}."
 msgstr "Aggiunto fuori dall'immagine; il file è {} × {}."
 
-#: crates/greycard-slint/ui/panel/deliver.slint:657
+#: crates/greycard-slint/ui/panel/deliver.slint:673
 msgid "Added outside the picture."
 msgstr "Aggiunto fuori dall'immagine."
 
-#: crates/greycard-slint/ui/panel/deliver.slint:674
+#: crates/greycard-slint/ui/panel/deliver.slint:690
 msgid "Folder"
 msgstr "Cartella"
 
-#: crates/greycard-slint/ui/panel/deliver.slint:696
+#: crates/greycard-slint/ui/panel/deliver.slint:712
 msgid "Add to queue"
 msgstr "Aggiungi alla coda"
 
 #. Export queue: the set now exporting; {} is its name
-#: crates/greycard-slint/ui/panel/deliver.slint:742
+#: crates/greycard-slint/ui/panel/deliver.slint:758
 msgid "{}, running"
 msgstr "{}, in corso"
 
 #. Export queue: remove the set named {}
-#: crates/greycard-slint/ui/panel/deliver.slint:759
+#: crates/greycard-slint/ui/panel/deliver.slint:775
 msgid "Remove {}"
 msgstr "Rimuovi {}"
 
-#: crates/greycard-slint/ui/panel/deliver.slint:795
+#: crates/greycard-slint/ui/panel/deliver.slint:811
 msgid "Export the queue"
 msgstr "Esporta la coda"
 
 #. Export queue: the button that empties it
-#: crates/greycard-slint/ui/panel/deliver.slint:801
+#: crates/greycard-slint/ui/panel/deliver.slint:817
 msgid "Clear"
 msgstr "Svuota"
 
-#: crates/greycard-slint/ui/panel/deliver.slint:809
+#: crates/greycard-slint/ui/panel/deliver.slint:825
 msgid "Clear the queue of {n} set?"
 msgid_plural "Clear the queue of {n} sets?"
 msgstr[0] "Svuotare la coda di {n} set?"
@@ -1456,119 +1460,123 @@ msgstr "Riduci il disturbo delle foto e unisci di nuovo"
 msgid "Structure"
 msgstr "Struttura"
 
-#: crates/greycard-slint/ui/panel/edit.slint:348
+#: crates/greycard-slint/ui/panel/edit.slint:351
 msgid "DETAIL"
 msgstr "DETTAGLIO"
 
-#: crates/greycard-slint/ui/panel/edit.slint:356
+#: crates/greycard-slint/ui/panel/edit.slint:359
 msgid "Texture"
 msgstr "Texture"
 
-#: crates/greycard-slint/ui/panel/edit.slint:369
+#: crates/greycard-slint/ui/panel/edit.slint:372
 msgid "Clarity"
 msgstr "Chiarezza"
 
-#: crates/greycard-slint/ui/panel/edit.slint:395
+#: crates/greycard-slint/ui/panel/edit.slint:398
 msgid "Dehaze"
 msgstr "Rimuovi foschia"
 
-#: crates/greycard-slint/ui/panel/edit.slint:436
+#: crates/greycard-slint/ui/panel/edit.slint:424
+msgid "Output sharpen"
+msgstr "Nitidezza di output"
+
+#: crates/greycard-slint/ui/panel/edit.slint:452
 msgid "SHARPEN"
 msgstr "NITIDEZZA"
 
-#: crates/greycard-slint/ui/panel/edit.slint:443
+#: crates/greycard-slint/ui/panel/edit.slint:459
 msgid "Auto radius"
 msgstr "Raggio auto"
 
-#: crates/greycard-slint/ui/panel/edit.slint:449
+#: crates/greycard-slint/ui/panel/edit.slint:465
 msgid "Radius"
 msgstr "Raggio"
 
 #. Sharpen: the radius field's word while the radius is automatic
-#: crates/greycard-slint/ui/panel/edit.slint:459
+#: crates/greycard-slint/ui/panel/edit.slint:475
 msgid "auto"
 msgstr "auto"
 
 #. Sharpen: the radius field's word while the radius is automatic
-#: crates/greycard-slint/ui/panel/edit.slint:459
+#: crates/greycard-slint/ui/panel/edit.slint:475
 msgid "auto {}"
 msgstr "auto {}"
 
-#: crates/greycard-slint/ui/panel/edit.slint:464
+#: crates/greycard-slint/ui/panel/edit.slint:480
 msgid "Iterations"
 msgstr "Iterazioni"
 
-#: crates/greycard-slint/ui/panel/edit.slint:476
+#: crates/greycard-slint/ui/panel/edit.slint:492
 msgid "Auto threshold"
 msgstr "Soglia auto"
 
-#: crates/greycard-slint/ui/panel/edit.slint:482
+#: crates/greycard-slint/ui/panel/edit.slint:498
 msgid "Threshold"
 msgstr "Soglia"
 
 #. Sharpen: show where the sharpen lands
-#: crates/greycard-slint/ui/panel/edit.slint:498
+#: crates/greycard-slint/ui/panel/edit.slint:514
 msgid "Show mask"
 msgstr "Mostra"
 
-#: crates/greycard-slint/ui/panel/edit.slint:516
+#: crates/greycard-slint/ui/panel/edit.slint:532
 msgid "OUTPUT SHARPEN"
 msgstr "NITIDEZZA DI OUTPUT"
 
-#: crates/greycard-slint/ui/panel/edit.slint:572
+#: crates/greycard-slint/ui/panel/edit.slint:588
 msgid "VIGNETTE"
 msgstr "VIGNETTATURA"
 
-#: crates/greycard-slint/ui/panel/edit.slint:591
+#: crates/greycard-slint/ui/panel/edit.slint:607
 msgid "Midpoint"
 msgstr "Punto medio"
 
-#: crates/greycard-slint/ui/panel/edit.slint:603
+#: crates/greycard-slint/ui/panel/edit.slint:619
 msgid "Feather"
 msgstr "Sfumatura"
 
-#: crates/greycard-slint/ui/panel/edit.slint:615
+#: crates/greycard-slint/ui/panel/edit.slint:631
 msgid "Roundness"
 msgstr "Rotondità"
 
 #. Vignette: where it acts, the scene or the picture
-#: crates/greycard-slint/ui/panel/edit.slint:634
+#: crates/greycard-slint/ui/panel/edit.slint:650
 msgid "Style"
 msgstr "Stile"
 
 #. Vignette: a falloff in the scene; laid over the picture
-#: crates/greycard-slint/ui/panel/edit.slint:645
+#: crates/greycard-slint/ui/panel/edit.slint:661
 msgid "Natural"
 msgstr "Naturale"
 
 #. Vignette: a falloff in the scene; laid over the picture
-#: crates/greycard-slint/ui/panel/edit.slint:645
+#: crates/greycard-slint/ui/panel/edit.slint:661
 msgid "Overlay"
 msgstr "Sovrapposta"
 
-#: crates/greycard-slint/ui/panel/edit.slint:661
+#: crates/greycard-slint/ui/panel/edit.slint:677
 msgid "GRAIN"
 msgstr "GRANA"
 
-#: crates/greycard-slint/ui/panel/edit.slint:694
+#: crates/greycard-slint/ui/panel/edit.slint:710
 msgid "Type"
 msgstr "Tipo"
 
 #. Grain: the two kinds of grain
-#: crates/greycard-slint/ui/panel/edit.slint:697
+#: crates/greycard-slint/ui/panel/edit.slint:713
 msgid "Cubic"
 msgstr "Cubica"
 
 #. Grain: the two kinds of grain
-#: crates/greycard-slint/ui/panel/edit.slint:697
+#: crates/greycard-slint/ui/panel/edit.slint:713
 msgid "Tabular"
 msgstr "Tabulare"
 
-#: crates/greycard-slint/ui/panel/edit.slint:715
+#: crates/greycard-slint/ui/panel/edit.slint:731
 msgid "DEMOSAIC"
 msgstr "DEMOSAICO"
 
-#: crates/greycard-slint/ui/panel/edit.slint:722
+#: crates/greycard-slint/ui/panel/edit.slint:738
 msgid "Demosaic"
 msgstr "Demosaico"
 
@@ -3243,10 +3251,6 @@ msgstr "Disturbo"
 #: crates/greycard-ui/src/carry.rs:405
 msgid "Detail"
 msgstr "Dettaglio"
-
-#: crates/greycard-ui/src/carry.rs:407
-msgid "Output sharpen"
-msgstr "Nitidezza di output"
 
 #: crates/greycard-ui/src/carry.rs:409
 msgid "Color mixer"
@@ -5315,8 +5319,8 @@ msgstr "Con il JPEG della fotocamera, {}"
 #: crates/greycard-ui/src/panel/cull.rs:446
 #: crates/greycard-ui/src/panel/deliver.rs:1662
 #: crates/greycard-ui/src/panel/deliver.rs:1696
-#: crates/greycard-ui/src/panel/edit.rs:479
-#: crates/greycard-ui/src/panel/edit.rs:1273
+#: crates/greycard-ui/src/panel/edit.rs:480
+#: crates/greycard-ui/src/panel/edit.rs:1276
 #: crates/greycard-ui/src/panel/history.rs:473
 msgid "developing..."
 msgstr "sviluppo..."
@@ -6133,140 +6137,140 @@ msgstr[0] ""
 msgstr[1] ""
 "{n} cose indicate dalla modifica che questo computer non ha (vedi il log)"
 
-#: crates/greycard-ui/src/panel/deliver.rs:1981
+#: crates/greycard-ui/src/panel/deliver.rs:2000
 msgid "nothing to export"
 msgstr "niente da esportare"
 
-#: crates/greycard-ui/src/panel/deliver.rs:2023
+#: crates/greycard-ui/src/panel/deliver.rs:2042
 msgid "exporting {n} frame..."
 msgid_plural "exporting {n} frames..."
 msgstr[0] "esportazione di {n} foto..."
 msgstr[1] "esportazione di {n} foto..."
 
-#: crates/greycard-ui/src/panel/deliver.rs:2072
+#: crates/greycard-ui/src/panel/deliver.rs:2091
 msgid "{name} is there already"
 msgstr "{name} esiste già"
 
-#: crates/greycard-ui/src/panel/deliver.rs:2073
+#: crates/greycard-ui/src/panel/deliver.rs:2092
 msgid "{n} file is there already"
 msgid_plural "{n} files are there already"
 msgstr[0] "{n} file esiste già"
 msgstr[1] "{n} file esistono già"
 
-#: crates/greycard-ui/src/panel/deliver.rs:2083
+#: crates/greycard-ui/src/panel/deliver.rs:2102
 msgid "{title}: overwrite?"
 msgstr "{title}: sovrascrivere?"
 
-#: crates/greycard-ui/src/panel/deliver.rs:2105
+#: crates/greycard-ui/src/panel/deliver.rs:2124
 msgid "export canceled"
 msgstr "esportazione annullata"
 
-#: crates/greycard-ui/src/panel/deliver.rs:2131
+#: crates/greycard-ui/src/panel/deliver.rs:2150
 msgid " beside each original"
 msgstr " accanto a ogni originale"
 
-#: crates/greycard-ui/src/panel/deliver.rs:2212
+#: crates/greycard-ui/src/panel/deliver.rs:2231
 msgid "Export to a folder"
 msgstr "Esporta in una cartella"
 
-#: crates/greycard-ui/src/panel/deliver.rs:2244
+#: crates/greycard-ui/src/panel/deliver.rs:2263
 #: crates/greycard-ui/src/panel/export_queue.rs:504
 msgid "{folder} is not there"
 msgstr "{folder} non esiste"
 
-#: crates/greycard-ui/src/panel/deliver.rs:2245
+#: crates/greycard-ui/src/panel/deliver.rs:2264
 msgid "{folder} is not a folder"
 msgstr "{folder} non è una cartella"
 
-#: crates/greycard-ui/src/panel/deliver.rs:2264
+#: crates/greycard-ui/src/panel/deliver.rs:2283
 #: crates/greycard-ui/src/sidecars.rs:243
 msgid "{folder} cannot be written to"
 msgstr "{folder} non è scrivibile"
 
-#: crates/greycard-ui/src/panel/deliver.rs:2334
+#: crates/greycard-ui/src/panel/deliver.rs:2353
 msgid "choosing the folder exports go to..."
 msgstr "scelta della cartella delle esportazioni..."
 
-#: crates/greycard-ui/src/panel/deliver.rs:2348
+#: crates/greycard-ui/src/panel/deliver.rs:2367
 msgid "exports go to {folder}"
 msgstr "le esportazioni vanno in {folder}"
 
-#: crates/greycard-ui/src/panel/deliver.rs:2350
+#: crates/greycard-ui/src/panel/deliver.rs:2369
 msgid "the export folder is as it was"
 msgstr "la cartella di esportazione resta com'era"
 
-#: crates/greycard-ui/src/panel/deliver.rs:2358
+#: crates/greycard-ui/src/panel/deliver.rs:2377
 msgid "; the export waiting on {folder} was not started"
 msgstr "; l'esportazione in attesa di {folder} non è stata avviata"
 
-#: crates/greycard-ui/src/panel/deliver.rs:2390
+#: crates/greycard-ui/src/panel/deliver.rs:2409
 msgid "stopping the export after the frame in hand..."
 msgstr "interruzione dell'esportazione dopo la foto in corso..."
 
-#: crates/greycard-ui/src/panel/deliver.rs:2449
+#: crates/greycard-ui/src/panel/deliver.rs:2480
 msgid "export preset {name}"
 msgstr "preset di esportazione {name}"
 
-#: crates/greycard-ui/src/panel/deliver.rs:2466
+#: crates/greycard-ui/src/panel/deliver.rs:2497
 msgid "{none} is the picker's; choose another name"
 msgstr "{none} appartiene al selettore; scegli un altro nome"
 
-#: crates/greycard-ui/src/panel/deliver.rs:2478
+#: crates/greycard-ui/src/panel/deliver.rs:2509
 msgid "export preset {name} saved"
 msgstr "preset di esportazione {name} salvato"
 
-#: crates/greycard-ui/src/panel/deliver.rs:2503
+#: crates/greycard-ui/src/panel/deliver.rs:2534
 msgid "export preset {name} deleted"
 msgstr "preset di esportazione {name} eliminato"
 
 #. The frame on screen with a panel that is not its own (its
 #. root offline, its sidecar not read): nothing to export, and
 #. the worker's open picture is another frame's.
-#: crates/greycard-ui/src/panel/deliver.rs:2643
+#: crates/greycard-ui/src/panel/deliver.rs:2674
 msgid "nothing is exported"
 msgstr "non viene esportato nulla"
 
-#: crates/greycard-ui/src/panel/deliver.rs:2690
-#: crates/greycard-ui/src/panel/deliver.rs:2697
-#: crates/greycard-ui/src/panel/deliver.rs:2785
+#: crates/greycard-ui/src/panel/deliver.rs:2721
+#: crates/greycard-ui/src/panel/deliver.rs:2728
+#: crates/greycard-ui/src/panel/deliver.rs:2816
 msgid "not exported: {why}"
 msgstr "non esportato: {why}"
 
-#: crates/greycard-ui/src/panel/deliver.rs:2733
+#: crates/greycard-ui/src/panel/deliver.rs:2764
 msgid "exporting to {folder}..."
 msgstr "esportazione in {folder}..."
 
-#: crates/greycard-ui/src/panel/deliver.rs:2765
+#: crates/greycard-ui/src/panel/deliver.rs:2796
 #: crates/greycard-ui/src/panel/edit_in.rs:361
 msgid "not exported: another export is under way"
 msgstr "non esportato: è in corso un'altra esportazione"
 
-#: crates/greycard-ui/src/panel/deliver.rs:2773
+#: crates/greycard-ui/src/panel/deliver.rs:2804
 msgid "{why}: choose another folder"
 msgstr "{why}: scegli un'altra cartella"
 
-#: crates/greycard-ui/src/panel/deliver.rs:2790
+#: crates/greycard-ui/src/panel/deliver.rs:2821
 msgid "not exported: {why}; {failed}"
 msgstr "non esportato: {why}; {failed}"
 
-#: crates/greycard-ui/src/panel/edit.rs:524
+#: crates/greycard-ui/src/panel/edit.rs:525
 msgid "no demosaic for this mosaic"
 msgstr "nessun demosaico per questo mosaico"
 
-#: crates/greycard-ui/src/panel/edit.rs:525
+#: crates/greycard-ui/src/panel/edit.rs:526
 msgid "not a mosaic"
 msgstr "non è un mosaico"
 
-#: crates/greycard-ui/src/panel/edit.rs:526
+#: crates/greycard-ui/src/panel/edit.rs:527
 msgid "the raw could not be read"
 msgstr "non è stato possibile leggere il raw"
 
-#: crates/greycard-ui/src/panel/edit.rs:527
+#: crates/greycard-ui/src/panel/edit.rs:528
 msgid "reading the raw"
 msgstr "lettura del raw"
 
 #. The adjustments list: the whole-picture row above the masks
-#: crates/greycard-ui/src/panel/edit.rs:707
+#: crates/greycard-ui/src/panel/edit.rs:709
 msgid "Global"
 msgstr "Globale"
 

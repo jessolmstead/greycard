@@ -65,12 +65,20 @@ export global ScrollBars {
 // no English label is cut. `most` holds the panel's
 // longest labels, English and French, at the panel's type. The window
 // sets `panel-width` as the panel's width changes. The sheets keep a
-// column of their own (the export sheet's as wide as its labels).
+// column of their own (the export sheet's as wide as its labels). The
+// Masks tab's sections share one column of at least `masks-least`, its
+// longest English label's ("Output sharpen", a mask's Detail), so its
+// tracks line up down the tab at any panel width; the window sets
+// `masks` while that tab shows.
 export global LabelColumn {
     in-out property <length> panel-width: 334px;
+    in-out property <bool> masks: false;
     out property <length> least: 68px;
     out property <length> most: 116px;
-    out property <length> width: clamp(least + panel-width - 320px, least, most);
+    out property <length> masks-least: 100px;
+    out property <length> width: max(
+        masks ? masks-least : 0px,
+        clamp(least + panel-width - 320px, least, most));
 }
 
 export global Theme {

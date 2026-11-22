@@ -40,6 +40,13 @@ design note behind it.
 
 ### Develop
 
+- A mask's Detail has an Output sharpen, −100 to +100: it takes the
+  picture's sharpening away under the mask or adds its own (issue 135,
+  [§730](https://github.com/jessolmstead/greycard/blob/master/docs/notes/730-output-sharpen-in-a-mask-and-its-radius.md)).
+- Output sharpen's Radius is in pixels of the picture made, so an
+  export made smaller is sharpened as the full frame is.
+- An export made smaller skips the sheet's Sharpen for a frame whose
+  edit has an Output sharpen, and the sheet says so.
 - A large generative fill the card cannot hold at 1024 runs at 512 as
   the last resort, where it was refused
   ([§726](https://github.com/jessolmstead/greycard/blob/master/docs/notes/726-a-large-fill-at-512-as-the-last-resort.md), issue 142).

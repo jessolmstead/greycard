@@ -152,7 +152,8 @@ pub struct View {
     pub vignette: Vignette,
     pub grain: Grain,
     /// The unsharp mask on the finished picture, its radius in the
-    /// full-size picture's pixels (`osharp`).
+    /// window's pixels under 1:1 and the full-size picture's past it
+    /// (`osharp`).
     pub output_sharpen: OutputSharpen,
     /// The clipping warnings to paint over the picture.
     pub warn: Warn,

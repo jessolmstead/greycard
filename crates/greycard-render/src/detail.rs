@@ -1074,6 +1074,7 @@ mod tests {
                     structure,
                     dehaze,
                     sharpen: 0.0,
+                    output_sharpen: 0.0,
                 };
                 let (worst, _) = whole_against_global(&image, d, white);
                 assert!(worst <= 10, "{white:?} {d:?}: {worst} of 65535");
@@ -1224,6 +1225,7 @@ mod tests {
                 structure,
                 dehaze,
                 sharpen: 0.0,
+                output_sharpen: 0.0,
             };
             let half = Detail {
                 enabled: true,
@@ -1232,6 +1234,7 @@ mod tests {
                 structure: structure / 2.0,
                 dehaze: dehaze / 2.0,
                 sharpen: 0.0,
+                output_sharpen: 0.0,
             };
             let want = global(&image, &half);
             let planes = DetailPlanes::make(&image, None, CLIP, wants(&d)).unwrap();

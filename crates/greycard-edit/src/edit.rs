@@ -405,6 +405,21 @@ impl Edit {
                 .any(|a| a.look.light.tone.midtones != 0.0)
     }
 
+    /// Whether the output sharpen acts, whose radius
+    /// [`crate::key::OUTPUT_SHARPEN`] versions: the picture's own, or a
+    /// mask's share of it, which sharpens at the picture's radius with
+    /// the picture's off.
+    pub fn output_sharpens(&self) -> bool {
+        self.output_sharpen.acting().is_some()
+            || self.adjustments.iter().any(|a| {
+                a.enabled
+                    && a.strength() > 0.0
+                    && !a.mask.is_empty()
+                    && a.look.detail.enabled
+                    && a.look.detail.output_sharpen > 0.0
+            })
+    }
+
     /// Whether some mask holds a linear gradient, whose ramp
     /// [`crate::key::LINEAR_RAMP`] versions.
     pub fn has_linear_gradient(&self) -> bool {

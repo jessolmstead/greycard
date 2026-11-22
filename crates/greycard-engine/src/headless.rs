@@ -2336,6 +2336,60 @@ mod tests {
         image::DynamicImage::ImageRgb16(px).save(path).unwrap();
     }
 
+    /// A set of two frames at a small size under the sheet's Sharpen:
+    /// the frame whose edit has an Output sharpen goes without the
+    /// sheet's, to the bit of the set exported with the sheet's off,
+    /// and the frame with none gets the sheet's, as before; the files'
+    /// words say which each got.
+    #[test]
+    fn a_set_mixes_the_sheets_sharpen_by_each_frames_output_sharpen() {
+        let scratch = Scratch::new("sheet-sharpen");
+        let (a, b) = (scratch.0.join("a.png"), scratch.0.join("b.png"));
+        for path in [&a, &b] {
+            let px = image::ImageBuffer::from_fn(240, 160, |x, y| {
+                let v = if (x / 7 + y / 11) % 2 == 0 {
+                    14000
+                } else {
+                    42000
+                };
+                image::Rgb([v, v - 2000, v + 3000u16])
+            });
+            image::DynamicImage::ImageRgb16(px).save(path).unwrap();
+        }
+        let export_with = |sheet: export::Sharpen, out: &str| {
+            let req = to(&[&a, &b], &scratch.folder(out));
+            let mut plan = plan(&req, &Shared::default(), None, None).unwrap();
+            plan.settings.long_edge = Some(96);
+            plan.settings.sharpen = sheet;
+            plan.frames[0].edit.output_sharpen.amount = 0.8;
+            assert!(plan.frames[0].edit.output_sharpens());
+            assert!(!plan.frames[1].edit.output_sharpens());
+            let outs: Vec<PathBuf> = plan.frames.iter().map(|f| f.out.clone()).collect();
+            let finished = run(plan, lent());
+            assert!(finished.succeeded(), "{}", finished.line);
+            outs
+        };
+        let standard = export_with(export::Sharpen::Standard, "standard");
+        let off = export_with(export::Sharpen::Off, "off");
+        let pixels = |p: &Path| image::open(p).unwrap().to_rgb16();
+        assert!(
+            pixels(&standard[0]) == pixels(&off[0]),
+            "the frame with an Output sharpen goes without the sheet's"
+        );
+        assert!(
+            pixels(&standard[1]) != pixels(&off[1]),
+            "the frame with none gets the sheet's"
+        );
+        let says = |p: &Path, words: &[u8]| {
+            std::fs::read(p)
+                .unwrap()
+                .windows(words.len())
+                .any(|w| w == words)
+        };
+        assert!(!says(&standard[0], b"output sharpening Standard"));
+        assert!(says(&standard[1], b"output sharpening Standard"));
+    }
+
     /// The identity on a picture with a white balance offset: the
     /// window's export and the command line's are one file but for the
     /// moment of writing, and the offset reached both, the grey patch

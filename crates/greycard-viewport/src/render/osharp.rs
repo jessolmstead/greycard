@@ -49,16 +49,20 @@ pub(super) struct Taps {
 }
 
 impl Taps {
-    /// The sharpen of `v`, or none when it does nothing. The radius is
-    /// in the full-size picture's pixels, which `zoom` target pixels
-    /// each are, so the viewport at any zoom shows what an export at
-    /// that size would hold. Above 1:1 the taps are a picture's pixel
-    /// apart and as many as the export takes; below it a target pixel
-    /// apart.
+    /// The sharpen of `v`, or none when it does nothing: the picture's
+    /// own, or its blur for a mask's share of it with the picture's off
+    /// (`Params::finishing`), the amount then none. The radius is
+    /// in the pixels of the picture made, as an export's is in its own:
+    /// under 1:1 the window's, which is what an export the size the
+    /// window shows would be sharpened at; past 1:1 the full-size
+    /// picture's, `zoom` target pixels each, the full-size export seen
+    /// closer. Above 1:1 the taps are a picture's pixel apart and as
+    /// many as the export takes; below it a target pixel apart.
     pub(super) fn of(v: &View) -> Option<Self> {
-        let p = greycard_render::output_sharpen::Params::of(&v.output_sharpen, 1.0)?;
-        let sigma = p.sigma * v.zoom;
+        let (p, _) =
+            greycard_render::output_sharpen::Params::finishing(&v.output_sharpen, &v.locals)?;
         let step = v.zoom.max(1.0);
+        let sigma = p.sigma * step;
         let n = ((3.0 * sigma / step).ceil() as usize)
             .clamp(1, greycard_render::output_sharpen::MOST_TAPS);
         let margin = (n as f32 * step).ceil() as u32;
@@ -311,22 +315,29 @@ mod tests {
         }
     }
 
-    /// The radius follows the zoom, as an export's follows its size;
-    /// above 1:1 the taps are a picture's pixel apart and as many as
-    /// the export takes.
+    /// Under 1:1 the radius is in the window's pixels, as an export of
+    /// the size shown takes it in its own; past 1:1 it follows the
+    /// zoom, the full-size export seen closer, the taps a picture's
+    /// pixel apart and as many as the export takes.
     #[test]
-    fn the_taps_follow_the_zoom() {
+    fn the_taps_are_the_shown_pictures_and_follow_the_zoom_past_one() {
         assert_eq!(Taps::of(&view(1.0, 0.0, 2.0)), None);
-        // At half: three taps a target pixel apart, a margin of three.
-        let fit = Taps::of(&view(0.5, 1.0, 2.0)).unwrap();
-        assert_eq!((fit.sigma, fit.step, fit.n, fit.margin), (1.0, 1.0, 3.0, 3));
+        // At half and at a quarter: six taps a target pixel apart, a
+        // margin of six, the radius whole.
+        for zoom in [0.5, 0.25] {
+            let fit = Taps::of(&view(zoom, 1.0, 2.0)).unwrap();
+            assert_eq!((fit.sigma, fit.step, fit.n, fit.margin), (2.0, 1.0, 6.0, 6));
+        }
+        // At 1:1, the full-size export's.
+        let one = Taps::of(&view(1.0, 1.0, 2.0)).unwrap();
+        assert_eq!((one.sigma, one.step, one.n, one.margin), (2.0, 1.0, 6.0, 6));
         // At four: six taps four target pixels apart, a margin of 24.
         let close = Taps::of(&view(4.0, 1.0, 2.0)).unwrap();
         assert_eq!(
             (close.sigma, close.step, close.n, close.margin),
             (8.0, 4.0, 6.0, 24)
         );
-        let small = Taps::of(&view(0.25, 1.0, 1.0)).unwrap();
-        assert_eq!(small.margin, 1);
+        let small = Taps::of(&view(0.25, 1.0, 0.5)).unwrap();
+        assert_eq!(small.margin, 2);
     }
 }

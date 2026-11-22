@@ -310,6 +310,7 @@ fn detail(x: &crate::Detail, y: &crate::Detail) -> String {
         x.dehaze != y.dehaze,
         x.structure != y.structure,
         x.sharpen != y.sharpen,
+        x.output_sharpen != y.output_sharpen,
     ];
     if moved.iter().filter(|&&m| m).count() != 1 {
         return "Detail".to_string();
@@ -324,6 +325,8 @@ fn detail(x: &crate::Detail, y: &crate::Detail) -> String {
         format!("{} {:+.0}", crate::STRUCTURE, y.structure * 100.0)
     } else if moved[5] {
         format!("Sharpen {:+.0}", y.sharpen * 100.0)
+    } else if moved[6] {
+        format!("Output sharpen {:+.0}", y.output_sharpen * 100.0)
     } else {
         format!("Dehaze {:+.0}", y.dehaze * 100.0)
     }
@@ -1086,6 +1089,9 @@ mod tests {
         let mut soft = wide.clone();
         soft.adjustments[0].look.detail.sharpen = -1.0;
         assert_eq!(describe(&wide, &soft, &[]), "Sky: Sharpen -100");
+        let mut crisp = soft.clone();
+        crisp.adjustments[0].look.detail.output_sharpen = 0.4;
+        assert_eq!(describe(&soft, &crisp, &[]), "Sky: Output sharpen +40");
         let mut hazed = clear.clone();
         hazed.adjustments[0].look.detail.dehaze = 0.25;
         assert_eq!(describe(&clear, &hazed, &[]), "Sky: Dehaze +25");

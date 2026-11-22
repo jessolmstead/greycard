@@ -1,8 +1,9 @@
 //! The output sharpen: an unsharp mask on the finished picture's
 //! luminance, after the tone curve, the curves, and the look table,
 //! beside the capture sharpen, which deconvolves the scene-linear
-//! develop. The whole picture's alone; a mask carries none. The render
-//! crate's `output_sharpen` is the op.
+//! develop. The picture's; a mask takes from its amount or adds to it
+//! in its Detail (`Detail::output_sharpen`), at the picture's radius and
+//! threshold. The render crate's `output_sharpen` is the op.
 
 use serde::{Deserialize, Serialize};
 
@@ -20,8 +21,11 @@ pub struct OutputSharpen {
     /// How much of the difference from the blur is added back, 0 to 2
     /// (the panel shows 0 to 200%). Zero is no op at all.
     pub amount: f32,
-    /// The blur's standard deviation, pixels of the full-size picture,
-    /// 0.5 to 3: an export made smaller takes it smaller with it.
+    /// The blur's standard deviation, 0.5 to 3, in pixels of the
+    /// picture made: a full-size export's, a smaller export's own, and
+    /// the window's at the zoom under 1:1 (a full-size pixel's past
+    /// it). The same radius crisps a web-size export as it does the
+    /// full-size one; a 0.12 edit's full-size export is as it was.
     pub radius: f32,
     /// The difference, in encoded luminance (0 to 0.1, the panel shows
     /// 0 to 10%), at which half of it is sharpened: less is kept back
@@ -54,12 +58,19 @@ impl OutputSharpen {
     /// The settings as the op takes them, held to the panel's ends, or
     /// none when off.
     pub fn acting(&self) -> Option<OutputSharpen> {
-        (!self.is_off()).then(|| OutputSharpen {
+        (!self.is_off()).then(|| self.held())
+    }
+
+    /// The settings held to the panel's ends whether the section is on
+    /// or off: the radius and threshold a mask's share of it sharpens
+    /// at while the picture's own is off.
+    pub fn held(&self) -> OutputSharpen {
+        OutputSharpen {
             enabled: true,
-            amount: self.amount.min(AMOUNT_MAX),
+            amount: self.amount.clamp(0.0, AMOUNT_MAX),
             radius: self.radius.clamp(RADIUS_MIN, RADIUS_MAX),
             threshold: self.threshold.clamp(0.0, THRESHOLD_MAX),
-        })
+        }
     }
 }
 

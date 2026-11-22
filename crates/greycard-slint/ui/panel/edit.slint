@@ -343,6 +343,9 @@ export component DetailSection inherits Section {
     // Detail: the picture's sharpen is its own section.
     in property <bool> local;
     in-out property <float> detail-sharpen;
+    // A mask's share of the output sharpen, beside the capture's, on a
+    // mask's Detail alone: the picture's is OUTPUT SHARPEN.
+    in-out property <float> detail-output-sharpen;
     callback develop-changed();
 
     title: @tr("DETAIL");
@@ -415,6 +418,19 @@ export component DetailSection inherits Section {
         value <=> root.detail-sharpen;
         scale: 100;
         text: (root.detail-sharpen >= 0 ? "+" : "") + round(root.detail-sharpen * 100);
+        changed(v) => { root.develop-changed(); }
+    }
+    if root.local: output-sharpen-slider := EditSlider {
+        label: @tr("Output sharpen");
+        enabled: root.detail-enabled;
+        minimum: -1;
+        maximum: 1;
+        default: 0;
+        step: 0.01;
+        steps: Steps.percent;
+        value <=> root.detail-output-sharpen;
+        scale: 100;
+        text: (root.detail-output-sharpen >= 0 ? "+" : "") + round(root.detail-output-sharpen * 100);
         changed(v) => { root.develop-changed(); }
     }
 }

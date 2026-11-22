@@ -204,9 +204,10 @@ struct Params {
     // luminance as the highlights and shadows are; `finish.rs` says
     // where it acts.
     tone: vec4<f32>,
-    // The output sharpen (`output_sharpen.rs`): its amount, the blur's
-    // standard deviation in target pixels (the radius at this zoom),
-    // its threshold, and in w the draw's part in it: 0 none, 1 the
+    // The output sharpen (`output_sharpen.rs`): the picture's amount
+    // (none while its section is off and a mask's share runs it), the
+    // blur's standard deviation in target pixels (the radius, times the
+    // zoom past 1:1), its threshold, and in w the draw's part in it: 0 none, 1 the
     // first pass, which writes the encoded luminance and stops, 2 the
     // last, which reads its blur across (`osharp_across`) and sharpens.
     osharp: vec4<f32>,
@@ -270,7 +271,10 @@ struct Local {
     mix_lum0: vec4<f32>,
     mix_lum1: vec4<f32>,
     // Its own midtones, in x; its Opacity, in y, which scales the
-    // weight its look goes on by and not the mask the overlay shows.
+    // weight its look goes on by and not the mask the overlay shows;
+    // its share of the output sharpen's amount, in z, which under zero
+    // scales the picture's and over it adds: nothing while its Detail
+    // is off.
     tone: vec4<f32>,
 };
 
@@ -587,6 +591,11 @@ fn fs_main(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
     // `detail::amounts` sums them.
     var detail_k = vec4<f32>(0.0);
     var detail_s = 0.0;
+    // The output sharpen's amount here, as `output_sharpen::amount_at`
+    // makes it: the masks' takes scale the picture's, their additions
+    // sum on top.
+    var osharp_scale = 1.0;
+    var osharp_add = 0.0;
     for (var k = 0u; k < count; k = k + 1u) {
         let l = locals[k];
         let m = mask_at(l, uv, sample);
@@ -597,6 +606,12 @@ fn fs_main(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
             detail_k = detail_k + w * l.detail;
         }
         detail_s = detail_s + w * l.sharpen;
+        let osharp_share = w * l.tone.z;
+        if (osharp_share < 0.0) {
+            osharp_scale = osharp_scale * max(1.0 + osharp_share, 0.0);
+        } else {
+            osharp_add = osharp_add + osharp_share;
+        }
         if (l.white0.w > 0.5) {
             wm0 = wm0 + w * (l.white0.xyz - p.w0.xyz);
             wm1 = wm1 + w * (l.white1.xyz - p.w1.xyz);
@@ -783,8 +798,9 @@ fn fs_main(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
             return vec4<f32>(l, l, l, 1.0);
         }
         let blurred = osharp_down(here);
-        if (!osharp_past(blurred)) {
-            c = osharp_apply(c, l, blurred);
+        let amount = clamp(p.osharp.x * osharp_scale + osharp_add, 0.0, OSHARP_AMOUNT_MAX);
+        if (!osharp_past(blurred) && amount > 0.0) {
+            c = osharp_apply(c, l, blurred, amount);
         }
     }
     // The proof's gamut mark is looked up at the working-space color,
@@ -1831,21 +1847,36 @@ fn osharp_down(target_pt: vec2<f32>) -> f32 {
 // `output_sharpen::BLACK`.
 const OSHARP_BLACK: f32 = 1e-6;
 
-// `c` sharpened against its luminance's blur, as
+// The amount's top, which the picture's and the masks' shares summed
+// are held to, as `output_sharpen::AMOUNT_MAX`.
+const OSHARP_AMOUNT_MAX: f32 = 2.0;
+
+// The amount over which the channels under zero are held at zero
+// whole, under it by the amount's share, as
+// `output_sharpen::HOLD_RAMP` (`output_sharpen::held`).
+const OSHARP_HOLD_RAMP: f32 = 0.01;
+
+// `c` sharpened against its luminance's blur at `amount` (over none;
+// at none the pixel is not sharpened and stays as it came), as
 // `output_sharpen::apply`: the soft knee on the difference, the
 // encoded luminance moved by it, and the linear color scaled by what
 // that does to the linear luminance; black stays black, and a
 // brightening stops where the largest channel reaches white.
-fn osharp_apply(c_in: vec3<f32>, l: f32, blurred: f32) -> vec3<f32> {
-    // Every pixel held at zero from below, moved or not.
-    let c = max(c_in, vec3<f32>(0.0));
+fn osharp_apply(c_in: vec3<f32>, l: f32, blurred: f32, amount: f32) -> vec3<f32> {
+    // Every pixel held at zero from below, moved or not: whole from
+    // the ramp's top, by the amount's share of it under that.
+    var c = max(c_in, vec3<f32>(0.0));
+    if (amount < OSHARP_HOLD_RAMP) {
+        let f = clamp(amount / OSHARP_HOLD_RAMP, 0.0, 1.0);
+        c = select(c_in, c_in - f * c_in, c_in < vec3<f32>(0.0));
+    }
     let d = l - blurred;
     let t = p.osharp.z;
     var k = d;
     if (t > 0.0 && d != 0.0) {
         k = d * d * d / (d * d + t * t);
     }
-    let delta = p.osharp.x * k;
+    let delta = amount * k;
     if (delta == 0.0 || !(abs(delta) <= 1e30)) {
         return c;
     }

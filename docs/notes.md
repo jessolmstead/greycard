@@ -741,3 +741,4 @@ in its section; the roadmap and the changelog only point at it.
 - [§727. CJK text in its region's typeface](notes/727-cjk-text-in-its-region-s-typeface.md) (2026-11-21)
 - [§728. Our own resize for smaller exports, with no clamp](notes/728-our-own-resize-for-smaller-exports.md) (2026-11-21)
 - [§729. A large object removed, and the crop's place in a Fill](notes/729-a-large-object-removed-and-the-crop-in-a-fill.md) (2026-11-21)
+- [§730. Output sharpen in a mask, and its radius in the picture made](notes/730-output-sharpen-in-a-mask-and-its-radius.md) (2026-11-22)

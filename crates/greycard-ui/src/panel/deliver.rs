@@ -1878,6 +1878,25 @@ pub(crate) fn forget_shots() {
     SHOTS.with(|s| s.borrow_mut().clear());
 }
 
+/// Whether a frame the sheet would export has an Output sharpen that
+/// acts, which the export then sharpens by in place of the sheet's
+/// Sharpen (`Settings::for_edit`): the chosen set's, or the frame on
+/// screen's, the panel's edit for it. A frame whose sidecar is not
+/// read yet counts as none.
+fn any_output_sharpens(st: &State, app: &App) -> bool {
+    let mut frames = crate::panel::browser::chosen_frames(st);
+    if frames.is_empty() {
+        frames.extend(st.current);
+    }
+    frames.into_iter().any(|c| {
+        if Some(c) == st.current && st.culling.cull.is_none() {
+            read_edit(app, &st.develop.edit, st.develop.target).output_sharpens()
+        } else {
+            st.line(c).is_some_and(|l| l.current.output_sharpens())
+        }
+    })
+}
+
 /// What `{date}` and `{camera}` fill from for `source`, file `file` of
 /// the list when it is one: the index's row when it has one, which
 /// asks nothing of the disk, else the file's metadata read from the
@@ -2415,7 +2434,19 @@ pub(crate) fn install(app: &App, state: &Rc<Shared>, worker: &Rc<Worker>) {
             },
         );
         app.on_export_name_refused(|pattern| export_name::refused(&pattern));
-        app.on_export_sheet_opened(forget_shots);
+    }
+    {
+        let (state, app_weak) = (state.clone(), app.as_weak());
+        app.on_export_sheet_opened(move || {
+            forget_shots();
+            let Some(app) = app_weak.upgrade() else {
+                return;
+            };
+            let Ok(st) = state.try_borrow() else {
+                return;
+            };
+            app.set_export_output_sharpened(any_output_sharpens(&st, &app));
+        });
     }
     {
         let (state, app_weak) = (state.clone(), app.as_weak());

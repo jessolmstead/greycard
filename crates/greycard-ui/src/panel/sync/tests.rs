@@ -2979,6 +2979,91 @@ fn a_mask_copied_alone_joins_the_selection_and_the_open_frame() {
     assert_eq!(app.get_exposure(), 0.7, "the look before it kept");
 }
 
+/// A mask's Output sharpen goes where its mask goes: Copy masks and
+/// a paste, Paste mask, a sync to the chosen frames, a preset saved
+/// and laid over another frame, and a virtual copy.
+#[test]
+fn a_masks_output_sharpen_travels_with_its_mask() {
+    let share_of = |e: &Edit, name: &str| {
+        e.adjustments
+            .iter()
+            .find(|a| a.name == name)
+            .map(|a| a.look.detail.output_sharpen)
+    };
+    let sky = |state: &Rc<Shared>| {
+        state.borrow_mut().develop.edit.adjustments[0]
+            .look
+            .detail
+            .output_sharpen = 0.4;
+    };
+    // Copy masks, then a paste onto frame 2.
+    {
+        let (app, state, _worker) = two_frames();
+        sky(&state);
+        app.invoke_masks_copied();
+        app.invoke_select(2);
+        app.invoke_paste_asked();
+        app.invoke_sync_applied();
+        let st = state.borrow();
+        assert_eq!(share_of(&st.sidecars[2].current, "Sky 1"), Some(0.4));
+        assert_eq!(share_of(&st.sidecars[2].current, "Face 2"), Some(0.0));
+    }
+    // Paste mask onto frame 2.
+    {
+        let (app, state, _worker) = two_frames();
+        sky(&state);
+        app.invoke_mask_copied(0);
+        state.borrow_mut().views.picked = vec![2];
+        app.invoke_mask_pasted();
+        let st = state.borrow();
+        assert_eq!(share_of(&st.sidecars[2].current, "Sky 1"), Some(0.4));
+    }
+    // A sync of the mask alone onto frame 2.
+    {
+        let (app, state, _worker) = two_frames();
+        sky(&state);
+        state.borrow_mut().views.picked = vec![0, 2];
+        app.invoke_sync_open_asked();
+        press_id(&app, "CarryList::uncheck-all");
+        tick(&app, "mask.1");
+        app.invoke_sync_applied();
+        let st = state.borrow();
+        assert_eq!(share_of(&st.sidecars[2].current, "Sky 1"), Some(0.4));
+    }
+    // A preset of the mask, laid over frame 2.
+    {
+        let (app, state, _worker) = two_frames();
+        sky(&state);
+        let dir = crate::testing::scratch_dir("preset-output-sharpen");
+        state.borrow_mut().develop.preset_store = Some(preset::Store::at(dir.clone()));
+        app.invoke_preset_save_open();
+        press_id(&app, "CarryList::uncheck-all");
+        tick(&app, "mask.1");
+        app.set_preset_name("Crisp sky".into());
+        app.invoke_preset_saved();
+        let saved = preset::Store::at(dir.clone())
+            .find("Crisp sky")
+            .expect("saved")
+            .preset;
+        assert_eq!(share_of(&saved.edit, "Sky 1"), Some(0.4));
+        let out = saved.applied(&state.borrow().sidecars[2].current);
+        assert_eq!(share_of(&out, "Sky 1"), Some(0.4));
+        drop(app);
+        crate::testing::remove_dir_retry(&dir);
+    }
+    // A virtual copy of frame 2, its own mask sharpened.
+    {
+        let (_app, state, _worker) = two_frames();
+        let mut st = state.borrow_mut();
+        let mut own = st.sidecars[2].current.clone();
+        own.adjustments[0].look.detail.output_sharpen = -0.7;
+        st.sidecars[2].record(own);
+        let id = st.sidecars[2].new_version(None, Some("Soft")).unwrap();
+        let copy = &st.sidecars[2].version(&id).unwrap().line.current;
+        assert_eq!(share_of(copy, "Mine 1"), Some(-0.7));
+    }
+}
+
 /// A frame holding as many masks as a picture may takes no more
 /// from Paste mask: the 17th would be listed and never drawn.
 #[test]

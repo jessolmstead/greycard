@@ -1537,13 +1537,8 @@ clears or a tester asks for it.
 - [ ] The lens picker's list held back while its popup is open, which
       waits on Slint's ComboBox saying so; and "made under" hashing
       the profile folder's subfolders (§725)
-- [ ] The output sharpen's Radius in output pixels, or a choice: it
-      scales with an export's size today, so a web-size export barely
-      sharpens (§663)
 - [ ] The clipping warning under focus peaking reads the picture
       before the output sharpen (§663)
-- [ ] The output sharpen in a mask's look, after the picture's has
-      landed (issue 135)
 - [ ] Choose a color grading wheel without enlarging it or moving
       its point: the name chooses, the icon beside it enlarges
       (discussion 166)

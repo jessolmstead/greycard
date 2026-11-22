@@ -326,6 +326,7 @@ pub(crate) fn run(args: DevelopArgs) -> Result<()> {
         structure,
         dehaze: dehaze / 100.0,
         sharpen: 0.0,
+        output_sharpen: 0.0,
     };
     // The dehaze and the sharpen are not the engine's: they go after
     // the lens correction, as `correct_and_sharpen` says and as the

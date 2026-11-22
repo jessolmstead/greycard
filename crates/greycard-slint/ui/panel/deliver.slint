@@ -56,6 +56,9 @@ export component ExportSheet inherits Rectangle {
     /// The frames selected: two or more are exported as a set, into a
     /// folder, each under its own edit.
     in property <int> set-count: 1;
+    /// A frame to be exported has an Output sharpen that acts, which it
+    /// is sharpened by in place of the sheet's Sharpen.
+    in property <bool> output-sharpened;
     callback export();
     /// A set is being exported: the queue waits for it.
     in property <bool> exporting;
@@ -406,6 +409,19 @@ export component ExportSheet inherits Rectangle {
                             sharpen-words := Text { accessible-role: none; text: @tr("Sharpen"); width: root.label-column; overflow: elide; color: root.export-resizes() ? Theme.text : Theme.text-muted; font-size: Theme.font-sm; vertical-alignment: center; }
                             // Export sharpen: the four levels
                             Segmented { name: sharpen-words.text; options: ["Off", "Low", "Standard", "High"]; labels: [@tr("Off"), @tr("Low"), @tr("Standard"), @tr("High")]; current <=> root.export-sharpen; }
+                        }
+                        // Under the row, when it would sharpen a frame
+                        // whose edit's Output sharpen takes its place.
+                        if root.output-sharpened && root.export-resizes() && root.export-sharpen != "Off": HorizontalLayout {
+                            spacing: Theme.space-2;
+                            Rectangle { width: root.label-column; }
+                            output-sharpen-words := Text {
+                                text: @tr("Frames with Output sharpen use it instead");
+                                color: Theme.text-secondary;
+                                font-size: Theme.font-sm;
+                                wrap: word-wrap;
+                                horizontal-stretch: 1;
+                            }
                         }
                         HorizontalLayout {
                             spacing: Theme.space-2;

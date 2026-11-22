@@ -2105,6 +2105,44 @@ fn enter_exports_and_escape_cancels_unless_a_field_has_it() {
     assert_eq!(*exports.borrow(), 2);
 }
 
+/// The sheet says, under its Sharpen row, that a frame with an Output
+/// sharpen goes by it instead: only when the export is made smaller,
+/// the row is not Off, and a frame to be exported has one that acts.
+#[test]
+fn the_sheet_says_an_output_sharpen_takes_its_sharpens_place() {
+    use i_slint_backend_testing::ElementHandle;
+    let app = crate::testing::window(2);
+    let (_state, _worker) = crate::testing::state_for(&app, crate::testing::folder(2));
+    app.invoke_select(0);
+    app.set_frame_width(4000);
+    app.set_frame_height(3000);
+    app.set_export_size("1024".into());
+    app.set_export_sharpen("Standard".into());
+    let said = |app: &crate::App| {
+        crate::testing::settle(app);
+        ElementHandle::find_by_element_id(app, "ExportSheet::output-sharpen-words").count()
+    };
+    let reopen = |app: &crate::App| {
+        app.set_export_open(false);
+        crate::testing::settle(app);
+        app.set_export_open(true);
+    };
+    reopen(&app);
+    assert_eq!(said(&app), 0, "no Output sharpen");
+    app.set_output_sharpen_amount(0.6);
+    reopen(&app);
+    assert_eq!(said(&app), 1, "the frame's Output sharpen acts");
+    app.set_export_sharpen("Off".into());
+    assert_eq!(said(&app), 0, "the row Off");
+    app.set_export_sharpen("Standard".into());
+    app.set_export_size("Full".into());
+    assert_eq!(said(&app), 0, "the export at full size");
+    app.set_export_size("1024".into());
+    app.set_output_sharpen_enabled(false);
+    reopen(&app);
+    assert_eq!(said(&app), 0, "the section off");
+}
+
 /// A field or a slider on the sheet hands the keys back to the
 /// sheet, not the window: Enter after a typed Quality, or with
 /// the slider focused, exports; Tab keeps its place. Escape answers the open question

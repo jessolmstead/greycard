@@ -11,9 +11,13 @@
 //! channels keep their proportions: brightness only, the hue and the
 //! saturation as they were.
 //!
-//! The blur is a Gaussian of the radius in pixels of the full-size
-//! picture, scaled with the picture as an export made smaller is (and
-//! as the viewport's zoom does, in `viewport.wgsl`), its edges clamped.
+//! The blur is a Gaussian of the radius in pixels of the picture being
+//! made, its edges clamped: an export at 2048 pixels is sharpened at the
+//! radius in its own pixels, as the full-size one is in its own, so a
+//! web-size export is as crisp as the full-size one rather than the
+//! full-size sharpen seen smaller. The viewport takes it in the window's
+//! pixels under 1:1, as an export of that size would, and in the
+//! full-size picture's past it (`viewport.wgsl`).
 //! The threshold is a soft knee on the difference from it, `d³ / (d² +
 //! t²)`: half the difference at the threshold, less below it as its
 //! square, nearly all of it above, with no step anywhere, so no level
@@ -21,6 +25,7 @@
 //! it is and gives its neighbors' blurs nothing.
 
 use greycard_edit::OutputSharpen;
+use greycard_edit::output_sharpen::AMOUNT_MAX;
 use rayon::prelude::*;
 
 use crate::finish::{decode, encode};
@@ -35,6 +40,18 @@ pub const MOST_TAPS: usize = 9;
 /// no ratio lifts it. `viewport.wgsl`'s `OSHARP_BLACK` is this.
 pub const BLACK: f32 = 1e-6;
 
+/// The amount over which a pixel's channels under zero are held at
+/// zero whole; under it they are held by the share the amount is of
+/// it, so the hold comes on with the sharpen and not at its first ulp.
+/// A mask's weight sets the amount a pixel, and two devices may round
+/// a weight of next to nothing to nothing or not: a hold switched on
+/// whole at any amount turned that into whole levels of an
+/// out-of-gamut color (the parity sweep's seed 0x67726579 edit 195 on
+/// a real card, 3.7 levels of blue). The panel's first step, 1%, so
+/// every amount the panel sets is held whole as it always was.
+/// `viewport.wgsl`'s `OSHARP_HOLD_RAMP` is this.
+pub const HOLD_RAMP: f32 = 0.01;
+
 /// The sharpen as the finish of one picture takes it.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Params {
@@ -45,20 +62,78 @@ pub struct Params {
 }
 
 impl Params {
-    /// `s` for a picture `reach` of its pixels to a pixel of the
-    /// full-size picture, or none when it does nothing.
-    pub fn of(s: &OutputSharpen, reach: f32) -> Option<Self> {
+    /// `s` for the picture being made, its radius in that picture's own
+    /// pixels whatever its size, or none when it does nothing.
+    pub fn of(s: &OutputSharpen) -> Option<Self> {
         s.acting().map(|s| Params {
             amount: s.amount,
-            sigma: s.radius * reach,
+            sigma: s.radius,
             threshold: s.threshold,
         })
+    }
+
+    /// What a finish under `locals` runs, and whether a pixel's amount
+    /// is its own ([`amount_at`]): the picture's own sharpen, a mask's
+    /// share of either sign added to it; or, with the picture's off and
+    /// some mask's share positive, the blur at the picture's radius and
+    /// threshold at no amount of its own. A negative share alone takes
+    /// from nothing and runs nothing.
+    pub fn finishing(s: &OutputSharpen, locals: &[crate::finish::Local]) -> Option<(Self, bool)> {
+        let acting = |l: &&crate::finish::Local| l.enabled && l.opacity > 0.0;
+        match Self::of(s) {
+            Some(p) => Some((
+                p,
+                locals
+                    .iter()
+                    .filter(acting)
+                    .any(|l| l.baked.output_share != 0.0),
+            )),
+            None => locals
+                .iter()
+                .filter(acting)
+                .any(|l| l.baked.output_share > 0.0)
+                .then(|| {
+                    let held = s.held();
+                    (
+                        Params {
+                            amount: 0.0,
+                            sigma: held.radius,
+                            threshold: held.threshold,
+                        },
+                        true,
+                    )
+                }),
+        }
     }
 
     /// Taps a side of the blur: what a band of rows needs beyond it.
     pub fn reach(&self) -> usize {
         half_width(self.sigma)
     }
+}
+
+/// The amount at a pixel, from the picture's `base` and each local's
+/// share under its weight `w` there. A share under zero scales the
+/// picture's amount by `1 + w·share`, so -1 is none of the picture's
+/// under the mask whatever its amount, and -0.5 half; one over zero
+/// adds `w·share`, so +1 is 100% more, and over the picture's off 100%
+/// under it alone. With several masks the scales multiply and the
+/// additions sum, the scales on the picture's amount before the
+/// additions: each mask's take is of the picture's sharpening, never of
+/// another mask's, and the order of the masks does not count. Held to
+/// the amount's ends.
+#[inline]
+pub fn amount_at(base: f32, locals: &[(&crate::finish::Baked, f32)]) -> f32 {
+    let (mut scale, mut add) = (1.0, 0.0);
+    for (b, w) in locals {
+        let s = w * b.output_share;
+        if s < 0.0 {
+            scale *= (1.0 + s).max(0.0);
+        } else {
+            add += s;
+        }
+    }
+    (base * scale + add).clamp(0.0, AMOUNT_MAX)
 }
 
 /// Taps a side for a blur of `sigma`: three of it, one at least.
@@ -101,17 +176,22 @@ pub fn soft(d: f32, t: f32) -> f32 {
 /// `c` with luminance `l` sharpened against its blur `blurred`: the
 /// encoded luminance moved, and the linear color scaled by what that
 /// does to the linear luminance. Black stays black; no channel goes
-/// under zero, on any pixel, moved or not, and a brightening stops where the color's largest
-/// channel reaches white, so the channels' proportions hold.
+/// under zero on any pixel the sharpen acts on at [`HOLD_RAMP`] or
+/// more, moved or not (under it, by the amount's share), and a
+/// brightening stops where the color's largest channel reaches white,
+/// so the channels' proportions hold. At no amount (a pixel outside
+/// the only mask that sharpens, or under one that takes the picture's
+/// all off) the pixel is not sharpened and is as it came, to the bit.
 #[inline]
 pub fn apply(c: [f32; 3], l: f32, blurred: f32, p: &Params) -> [f32; 3] {
-    if !c.iter().all(|v| v.is_finite()) {
+    if !c.iter().all(|v| v.is_finite()) || p.amount.is_nan() || p.amount <= 0.0 {
         return c;
     }
     // Every pixel the sharpen passes over is held at zero from below,
     // moved or not, so a flat stretch outside the gamut is clipped as
-    // its sharpened edge is.
-    let c = c.map(|v| v.max(0.0));
+    // its sharpened edge is: whole from `HOLD_RAMP` up, by the amount's
+    // share of it under that.
+    let c = held(c, p.amount);
     let delta = p.amount * soft(l - blurred, p.threshold);
     if delta == 0.0 || !delta.is_finite() {
         return c;
@@ -126,6 +206,18 @@ pub fn apply(c: [f32; 3], l: f32, blurred: f32, p: &Params) -> [f32; 3] {
         ratio = ratio.min((1.0 / top).max(1.0));
     }
     c.map(|v| v * ratio)
+}
+
+/// `c` held at zero from below at `amount`: whole from [`HOLD_RAMP`]
+/// up, and under it each channel under zero moved toward zero by the
+/// amount's share of the ramp.
+#[inline]
+pub fn held(c: [f32; 3], amount: f32) -> [f32; 3] {
+    if amount >= HOLD_RAMP {
+        return c.map(|v| v.max(0.0));
+    }
+    let f = (amount / HOLD_RAMP).clamp(0.0, 1.0);
+    c.map(|v| if v < 0.0 { v - f * v } else { v })
 }
 
 /// One tap a side of `x` in a line `len` long, clamped at its ends,
@@ -190,7 +282,7 @@ fn blur_rows(
 
 /// The sharpen over a picture's colors, `w` by `h`, in place.
 pub fn sharpen(colors: &mut [[f32; 3]], w: usize, h: usize, p: &Params) {
-    let sharpened = sharpen_rows(colors, w, h, 0, h, p);
+    let sharpened = sharpen_rows(colors, w, h, 0, h, p, None);
     colors.copy_from_slice(&sharpened);
 }
 
@@ -199,7 +291,8 @@ pub fn sharpen(colors: &mut [[f32; 3]], w: usize, h: usize, p: &Params) {
 /// rows its blur reads above and below it, or the whole of it. The
 /// picture's edges are `held`'s, so a band held with [`Params::reach`]
 /// rows each side (fewer at the frame's own edges) comes out as the
-/// same rows of the whole frame do, to the bit.
+/// same rows of the whole frame do, to the bit. `amounts`, when given,
+/// is each of those rows' pixels' own amount, `p`'s otherwise.
 pub(crate) fn sharpen_rows(
     held: &[[f32; 3]],
     w: usize,
@@ -207,17 +300,19 @@ pub(crate) fn sharpen_rows(
     first: usize,
     count: usize,
     p: &Params,
+    amounts: Option<&[f32]>,
 ) -> Vec<[f32; 3]> {
     let l: Vec<f32> = held.par_iter().map(|c| luminance(*c)).collect();
     let b = blur_rows(&l, w, rows, first, count, p.sigma);
-    held[first * w..(first + count) * w]
+    let band = first * w..(first + count) * w;
+    held[band.clone()]
         .par_iter()
-        .zip(
-            l[first * w..(first + count) * w]
-                .par_iter()
-                .zip(b.par_iter()),
-        )
-        .map(|(c, (l, b))| apply(*c, *l, *b, p))
+        .zip(l[band].par_iter().zip(b.par_iter()))
+        .enumerate()
+        .map(|(i, (c, (l, b)))| match amounts {
+            Some(a) => apply(*c, *l, *b, &Params { amount: a[i], ..*p }),
+            None => apply(*c, *l, *b, p),
+        })
         .collect()
 }
 
@@ -246,11 +341,11 @@ mod tests {
     }
 
     #[test]
-    fn nothing_at_no_amount_and_the_radius_scales_with_the_picture() {
-        assert_eq!(Params::of(&OutputSharpen::default(), 1.0), None);
-        assert_eq!(Params::of(&on(0.5, 1.0, 0.0).with_off(), 1.0), None);
-        let p = Params::of(&on(0.5, 2.0, 0.01), 0.25).unwrap();
-        assert_eq!(p.sigma, 0.5);
+    fn nothing_at_no_amount_and_the_radius_is_the_pictures_own() {
+        assert_eq!(Params::of(&OutputSharpen::default()), None);
+        assert_eq!(Params::of(&on(0.5, 1.0, 0.0).with_off()), None);
+        let p = Params::of(&on(0.5, 2.0, 0.01)).unwrap();
+        assert_eq!(p.sigma, 2.0);
         let k = kernel(1.0);
         assert_eq!((k.len(), k[0]), (4, 1.0));
         // A flat line stays the value it is, the weights summed out.
@@ -277,7 +372,7 @@ mod tests {
     fn a_step_steepens_and_a_flat_keeps() {
         let (w, h) = (32, 4);
         let mut px = step(w, h, 0.3, 0.7);
-        let p = Params::of(&on(1.0, 1.0, 0.0), 1.0).unwrap();
+        let p = Params::of(&on(1.0, 1.0, 0.0)).unwrap();
         sharpen(&mut px, w, h, &p);
         let e = |x: usize| encode(px[w + x][0]);
         assert!(e(w / 2 - 1) < 0.3 - 0.05, "{}", e(w / 2 - 1));
@@ -312,7 +407,7 @@ mod tests {
         let (w, h) = (32, 2);
         let moved = |threshold: f32| {
             let mut px = step(w, h, 0.50, 0.51);
-            let p = Params::of(&on(1.0, 1.0, threshold), 1.0).unwrap();
+            let p = Params::of(&on(1.0, 1.0, threshold)).unwrap();
             sharpen(&mut px, w, h, &p);
             encode(px[w / 2][0]) - 0.51
         };
@@ -334,7 +429,7 @@ mod tests {
         let (w, h) = (32, 2);
         for (dark, light) in [(0.25f32, 0.6f32), (0.35, 0.75), (0.45, 0.85), (0.15, 0.4)] {
             let mut px = step(w, h, dark, light);
-            sharpen(&mut px, w, h, &Params::of(&on(0.5, 1.0, 0.0), 1.0).unwrap());
+            sharpen(&mut px, w, h, &Params::of(&on(0.5, 1.0, 0.0)).unwrap());
             let enc = (
                 dark - encode(px[w / 2 - 1][0]),
                 encode(px[w / 2][0]) - light,
@@ -381,7 +476,7 @@ mod tests {
                 .map(|i| if i % w < w / 2 { dark } else { light })
                 .collect();
             let before = px.clone();
-            sharpen(&mut px, w, h, &Params::of(&on(2.0, 1.5, 0.0), 1.0).unwrap());
+            sharpen(&mut px, w, h, &Params::of(&on(2.0, 1.5, 0.0)).unwrap());
             let mut moved = 0;
             for (a, b) in before.iter().zip(&px) {
                 assert!(b.iter().all(|v| (0.0..=1.0).contains(v)), "{b:?}");
@@ -403,7 +498,7 @@ mod tests {
         // Black stays black, however bright its neighbors.
         let mut px = vec![[0.0f32; 3]; 8];
         px[4..].fill([0.8, 0.8, 0.8]);
-        sharpen(&mut px, 8, 1, &Params::of(&on(2.0, 1.0, 0.0), 1.0).unwrap());
+        sharpen(&mut px, 8, 1, &Params::of(&on(2.0, 1.0, 0.0)).unwrap());
         assert_eq!(px[3], [0.0; 3]);
     }
 
@@ -413,7 +508,7 @@ mod tests {
     #[test]
     fn a_pixel_that_is_not_a_number_stays_itself_and_spreads_nothing() {
         let (w, h) = (16, 16);
-        let p = Params::of(&on(1.0, 2.0, 0.0), 1.0).unwrap();
+        let p = Params::of(&on(1.0, 2.0, 0.0)).unwrap();
         let mut px = step(w, h, 0.3, 0.6);
         px[8 * w + 3] = [f32::NAN, 0.2, 0.2];
         px[2 * w + 12] = [f32::INFINITY; 3];
@@ -454,15 +549,123 @@ mod tests {
                 }
             })
             .collect();
-        sharpen(
-            &mut px,
-            w,
-            h,
-            &Params::of(&on(1.0, 1.0, 0.01), 1.0).unwrap(),
-        );
+        sharpen(&mut px, w, h, &Params::of(&on(1.0, 1.0, 0.01)).unwrap());
         assert_eq!(px[0], [0.5, 0.0, 0.3], "a flat pixel far from the edge");
         assert!(px.iter().all(|c| c.iter().all(|v| *v >= 0.0)));
         assert_ne!(px[w / 2 - 1], [0.5, 0.0, 0.3], "the edge moved");
+    }
+
+    /// The hold at zero comes on with the amount: a color outside the
+    /// gamut at an amount of next to nothing is next to as it came, not
+    /// clipped (the parity sweep's edit 195 on a real card, where a
+    /// mask's weight of next to nothing on one device and nothing on
+    /// another made 3.7 levels of blue); from `HOLD_RAMP` up it is held
+    /// whole, as before; and the sharpen is continuous in its amount
+    /// all the way up from none.
+    #[test]
+    fn the_hold_at_zero_comes_on_with_the_amount() {
+        let c = [0.2, -0.03, 0.05];
+        let (l, blurred) = (luminance([0.2, 0.0, 0.05]), 0.3);
+        let at = |amount: f32| {
+            apply(
+                c,
+                l,
+                blurred,
+                &Params {
+                    amount,
+                    sigma: 1.0,
+                    threshold: 0.01,
+                },
+            )
+        };
+        let gap =
+            |a: [f32; 3], b: [f32; 3]| (0..3).map(|k| (a[k] - b[k]).abs()).fold(0.0, f32::max);
+        assert_eq!(at(0.0), c);
+        assert!(gap(at(1e-6), c) < 1e-5, "{:?}", at(1e-6));
+        assert!(gap(at(1e-4), c) < 1e-3, "{:?}", at(1e-4));
+        assert_eq!(held(c, HOLD_RAMP), [0.2, 0.0, 0.05]);
+        assert_eq!(held(c, 1.0), [0.2, 0.0, 0.05]);
+        assert_eq!(held(c, HOLD_RAMP / 2.0)[1], -0.015);
+        assert!(at(1.0)[1] >= 0.0, "held whole at a full amount");
+        // No step anywhere along the amount.
+        let mut last = at(0.0);
+        for i in 1..=2000 {
+            let now = at(i as f32 * 0.0001);
+            assert!(gap(now, last) < 1e-3, "a step at {}", i as f32 * 0.0001);
+            last = now;
+        }
+    }
+
+    /// An amount a pixel: where it is the picture's the pixel is what
+    /// the picture's sharpen makes it, to the bit; where it is none the
+    /// pixel is as it came, to the bit, a channel under zero kept; and
+    /// the amounts are taken by scale and added by weight, held to the
+    /// ends (`amount_at`).
+    #[test]
+    fn an_amount_a_pixel_is_the_pictures_or_none() {
+        let (w, h) = (24, 6);
+        let (p, _) = Params::finishing(&on(1.2, 1.4, 0.01), &[]).unwrap();
+        let mut px: Vec<[f32; 3]> = step(w, h, 0.3, 0.7);
+        px[3 * w + 2] = [0.4, -0.01, 0.2];
+        let whole = sharpen_rows(&px, w, h, 0, h, &p, None);
+        let amounts: Vec<f32> = (0..w * h)
+            .map(|i| if i % w < w / 2 + 1 { 0.0 } else { 1.2 })
+            .collect();
+        let by = sharpen_rows(&px, w, h, 0, h, &p, Some(&amounts));
+        for i in 0..w * h {
+            let want = if amounts[i] == 0.0 { px[i] } else { whole[i] };
+            assert_eq!(by[i], want, "pixel {i}");
+        }
+        assert_ne!(whole[w / 2 + 1], px[w / 2 + 1], "the edge moved");
+        // Off, the blur is still there for a mask's share, at the
+        // picture's radius and threshold and no amount of its own.
+        let off = on(1.2, 1.4, 0.01).with_off();
+        let masked = |share: f32| {
+            let mut a = greycard_edit::Adjustment::default();
+            a.mask.components.push(Default::default());
+            a.look.detail.output_sharpen = share;
+            crate::finish::Local::of(&a, vec![None], None)
+        };
+        assert_eq!(Params::finishing(&off, &[]), None);
+        assert_eq!(Params::finishing(&off, &[masked(-0.5)]), None);
+        assert_eq!(
+            Params::finishing(&off, &[masked(-0.5), masked(0.3)]),
+            Some((
+                Params {
+                    amount: 0.0,
+                    sigma: 1.4,
+                    threshold: 0.01
+                },
+                true
+            ))
+        );
+        let picture = on(1.2, 1.4, 0.01);
+        assert_eq!(Params::finishing(&picture, &[]).map(|p| p.1), Some(false));
+        assert_eq!(
+            Params::finishing(&picture, &[masked(-0.5)]).map(|p| p.1),
+            Some(true)
+        );
+        let local = |share: f32| crate::finish::Baked {
+            output_share: share,
+            ..crate::finish::Baked::of(&greycard_edit::Look::default())
+        };
+        let (a, b, off) = (local(1.0), local(-0.5), local(-1.0));
+        assert_eq!(amount_at(0.0, &[(&a, 0.25)]), 0.25);
+        assert_eq!(amount_at(1.0, &[(&a, 1.0), (&a, 1.0)]), AMOUNT_MAX);
+        // A take scales the picture's: -100 is none at any amount,
+        // -50 half, under a half weight a quarter off.
+        assert_eq!(amount_at(2.0, &[(&off, 1.0)]), 0.0);
+        assert_eq!(amount_at(2.0, &[(&b, 1.0)]), 1.0);
+        assert_eq!(amount_at(1.0, &[(&b, 0.5)]), 0.75);
+        // Over the picture's off, a take does nothing.
+        assert_eq!(amount_at(0.0, &[(&off, 1.0)]), 0.0);
+        // Takes multiply: two halves leave a quarter.
+        assert_eq!(amount_at(2.0, &[(&b, 1.0), (&b, 1.0)]), 0.5);
+        // A take is of the picture's alone, not of a mask's addition,
+        // in either order.
+        assert_eq!(amount_at(1.5, &[(&off, 1.0), (&a, 0.5)]), 0.5);
+        assert_eq!(amount_at(1.5, &[(&a, 0.5), (&off, 1.0)]), 0.5);
+        assert_eq!(amount_at(1.0, &[(&b, 1.0), (&a, 0.25)]), 0.75);
     }
 
     /// A band of rows held with the blur's reach above and below comes
@@ -470,19 +673,19 @@ mod tests {
     #[test]
     fn a_band_is_the_whole_frames_rows() {
         let (w, h) = (20, 41);
-        let p = Params::of(&on(1.3, 1.7, 0.01), 1.0).unwrap();
+        let p = Params::of(&on(1.3, 1.7, 0.01)).unwrap();
         let px: Vec<[f32; 3]> = (0..w * h)
             .map(|i| {
                 let v = ((i * 2654435761) % 1000) as f32 / 1000.0;
                 [v, v * 0.7, 0.2]
             })
             .collect();
-        let whole = sharpen_rows(&px, w, h, 0, h, &p);
+        let whole = sharpen_rows(&px, w, h, 0, h, &p, None);
         let n = p.reach();
         for (y0, count) in [(0, 6), (6, 6), (17, 9), (35, 6)] {
             let lo = y0 - n.min(y0);
             let hi = (y0 + count + n).min(h);
-            let band = sharpen_rows(&px[lo * w..hi * w], w, hi - lo, y0 - lo, count, &p);
+            let band = sharpen_rows(&px[lo * w..hi * w], w, hi - lo, y0 - lo, count, &p, None);
             assert_eq!(band, whole[y0 * w..(y0 + count) * w], "rows {y0} on");
         }
     }

@@ -435,6 +435,7 @@ pub(crate) fn read_look(app: &App) -> Look {
             structure: app.get_local_structure(),
             dehaze: app.get_local_dehaze(),
             sharpen: app.get_local_sharpen(),
+            output_sharpen: app.get_local_output_sharpen(),
         },
     }
 }
@@ -672,8 +673,9 @@ pub(crate) fn read_edit(app: &App, base: &Edit, target: Option<usize>) -> Edit {
         clarity: app.get_detail_clarity(),
         structure: app.get_detail_structure(),
         dehaze: app.get_detail_dehaze(),
-        // A mask's alone: the picture's sharpen is its own section.
+        // A mask's alone: the picture's sharpens are their own sections.
         sharpen: 0.0,
+        output_sharpen: 0.0,
     };
     edit.sharpen.enabled = app.get_sharpen();
     edit.sharpen.auto_radius = app.get_sharpen_auto_radius();
@@ -969,6 +971,7 @@ pub(crate) fn show_edit(st: &State, edit: &Edit, app: &App, target: Option<usize
     app.set_local_clarity(look.detail.clarity);
     app.set_local_structure(look.detail.structure);
     app.set_local_sharpen(look.detail.sharpen);
+    app.set_local_output_sharpen(look.detail.output_sharpen);
     app.set_local_dehaze(look.detail.dehaze);
     app.set_detail_enabled(edit.detail.enabled);
     app.set_detail_texture(edit.detail.texture);

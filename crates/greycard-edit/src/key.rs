@@ -110,6 +110,16 @@ pub const ASPECT_FRAME: &str = "aspect-frame-1";
 /// kept here. 1: the first, 2026-11-19.
 pub const HIGHLIGHT_FILL: &str = "highlight-fill-1";
 
+/// The output sharpen's radius, by version: taken into the key of an
+/// edit whose output sharpen acts ([`Edit::output_sharpens`]), so the
+/// pictures kept of such an edit are made again and those of every
+/// other edit are kept. 1: the radius in the pixels of the picture
+/// made, where before it was the full-size picture's and shrank with a
+/// smaller one, 2026-11-21: a kept picture, a fraction of full size,
+/// sharpens as an export of its size does. A full-size export is the
+/// same picture.
+pub const OUTPUT_SHARPEN: &str = "output-sharpen-1";
+
 /// The highlight fill's versions this build has, by the names an edit
 /// writes: `greycard_ai::highlight::VERSIONS`' names, which this crate
 /// cannot see; the engine's tests hold the two equal.
@@ -331,6 +341,11 @@ impl Edit {
             hasher.update(&(ASPECT_FRAME.len() as u64).to_le_bytes());
             hasher.update(ASPECT_FRAME.as_bytes());
         }
+        if self.output_sharpens() {
+            hasher.update(b"output sharpen\0");
+            hasher.update(&(OUTPUT_SHARPEN.len() as u64).to_le_bytes());
+            hasher.update(OUTPUT_SHARPEN.as_bytes());
+        }
         if self.highlight_fill().is_some() {
             hasher.update(b"highlight fill\0");
             hasher.update(&(HIGHLIGHT_FILL.len() as u64).to_le_bytes());
@@ -543,6 +558,26 @@ mod tests {
         );
         edit.highlight_fill = None;
         assert_eq!(key(&edit, None), off, "and off again");
+    }
+
+    /// An output sharpen that acts carries [`OUTPUT_SHARPEN`]; one at no
+    /// amount or switched off keys as before.
+    #[test]
+    fn the_output_sharpen_is_keyed_only_where_it_acts() {
+        let mut edit = Edit::default();
+        edit.output_sharpen.radius = 2.0;
+        assert!(!edit.output_sharpens());
+        assert_eq!(key(&edit, None), key_before_the_aspect_frame(&edit));
+        edit.output_sharpen.amount = 0.5;
+        assert!(edit.output_sharpens());
+        assert_ne!(
+            key(&edit, None),
+            key_before_the_aspect_frame(&edit),
+            "the radius's version"
+        );
+        edit.output_sharpen.enabled = false;
+        assert!(!edit.output_sharpens());
+        assert_eq!(key(&edit, None), key_before_the_aspect_frame(&edit));
     }
 
     /// The key as it was made before [`ASPECT_FRAME`], for an edit with

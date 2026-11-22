@@ -667,11 +667,17 @@ do not fringe.
 | Slider | Range | What it does |
 |---|---|---|
 | **Amount** | 0 to 200% | How strongly edges are sharpened. |
-| **Radius** | 0.5 to 3 | The width of the edges it acts on, in pixels of the full-size picture. An export made smaller gets a radius made smaller with it. |
+| **Radius** | 0.5 to 3 | The width of the edges it acts on, in pixels of the picture made: an export made smaller is sharpened at the same radius as the full frame. |
 | **Threshold** | 0 to 10% | Differences below it are mostly left alone, so smooth skin, sky, and noise stay smooth. Raise it if grain sharpens. |
 
 At the fit zoom you will see little of it, as with the grain; check
 it at 1:1.
+
+A mask's Detail has an **Output sharpen** of its own, −100 to +100.
+Below zero it takes the picture's sharpening away under the mask
+(−100 is none); above zero it adds, and works with the picture's own
+at zero. An export made smaller skips the export sheet's **Sharpen**
+for a frame sharpened here, so the two do not stack.
 
 ## Vignette
 

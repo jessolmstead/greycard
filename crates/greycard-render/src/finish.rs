@@ -59,6 +59,13 @@ pub struct Baked {
     /// Detail is in the develop. Put on at the finish from the
     /// develop's bands (`crate::detail`).
     pub detail: [f32; 5],
+    /// A local's own share of the output sharpen's amount (its Detail's
+    /// Output sharpen), held to the slider's ends, and nothing while its
+    /// Detail is off. Never the global's, whose sharpen is
+    /// [`Self::output_sharpen`]. Under zero it scales the picture's
+    /// amount, over zero it adds to it, by the mask's weight
+    /// ([`crate::output_sharpen::amount_at`]).
+    pub output_share: f32,
     /// Global only, as the black and white is: the unsharp mask on the
     /// finished picture ([`crate::output_sharpen`]), between the look
     /// table and the output transform. Off on every local's.
@@ -300,6 +307,11 @@ impl Baked {
                 .map(|v| v.clamp(-1.0, 1.0))
             } else {
                 [0.0; 5]
+            },
+            output_share: if look.detail.enabled {
+                look.detail.output_sharpen.clamp(-1.0, 1.0)
+            } else {
+                0.0
             },
             output_sharpen: OutputSharpen::default(),
             vignette_shown: false,
@@ -2208,7 +2220,8 @@ pub fn finish_with<T: Copy + Default + Send>(
 /// [`finish_with`] of an image `reach` of its pixels to a pixel of the
 /// full-size develop, as an export made smaller is: the mean a color
 /// window and the mixer read a hue from spans the same part of the
-/// scene as in the viewport ([`local_ab_at`]).
+/// scene as in the viewport ([`local_ab_at`]). The output sharpen is
+/// not scaled by it: its radius is in this image's own pixels.
 // The picture, the looks, the pixel maps, and the output: each its own.
 #[allow(clippy::too_many_arguments)]
 pub fn finish_reaching<T: Copy + Default + Send>(
@@ -2341,7 +2354,9 @@ fn finish_in_bands<'l, T: Copy + Default + Send>(
     };
     let w = image.width;
     let mut out = vec![T::default(); w * image.height * 3];
-    match crate::output_sharpen::Params::of(&global.output_sharpen, reach) {
+    // The picture's sharpen, or its blur for a mask's share of it, and
+    // whether a mask's share makes each pixel's amount its own.
+    match crate::output_sharpen::Params::finishing(&global.output_sharpen, locals) {
         // One pass, each pixel to its output at once.
         None => out
             .par_chunks_mut(w * 3)
@@ -2365,7 +2380,7 @@ fn finish_in_bands<'l, T: Copy + Default + Send>(
         // pixel's neighbors there; then the band to the output, its
         // grain drawn again. Only a band is ever held, and a band comes
         // out as the same rows of the whole frame would.
-        Some(params) => {
+        Some((params, shared)) => {
             let h = image.height;
             let reach_rows = params.reach();
             for y0 in (0..h).step_by(band.max(1)) {
@@ -2373,21 +2388,49 @@ fn finish_in_bands<'l, T: Copy + Default + Send>(
                 let lo = y0.saturating_sub(reach_rows);
                 let hi = (y0 + count + reach_rows).min(h);
                 let mut held = vec![[0.0f32; 3]; w * (hi - lo)];
-                held.par_chunks_mut(w)
-                    .zip(image.data[lo * w * 3..hi * w * 3].par_chunks(w * 3))
-                    .enumerate()
-                    .for_each(|(r, (row_held, row_in))| {
-                        let mut on = Vec::with_capacity(locals.len());
-                        for (x, (o, px)) in row_held
-                            .iter_mut()
-                            .zip(row_in.as_chunks::<3>().0)
-                            .enumerate()
-                        {
-                            *o = display_at(x, lo + r, px, &mut on).0;
+                // Each pixel's amount, only where a mask puts a share on:
+                // the picture's and the shares under the masks' weights.
+                let mut amounts = vec![0.0f32; if shared { w * (hi - lo) } else { 0 }];
+                let row = |r: usize,
+                           row_held: &mut [[f32; 3]],
+                           row_in: &[f32],
+                           amounts: Option<&mut [f32]>| {
+                    let mut on = Vec::with_capacity(locals.len());
+                    let mut amounts = amounts;
+                    for (x, (o, px)) in row_held
+                        .iter_mut()
+                        .zip(row_in.as_chunks::<3>().0)
+                        .enumerate()
+                    {
+                        *o = display_at(x, lo + r, px, &mut on).0;
+                        if let Some(a) = amounts.as_deref_mut() {
+                            a[x] = crate::output_sharpen::amount_at(params.amount, &on);
                         }
-                    });
-                let sharpened =
-                    crate::output_sharpen::sharpen_rows(&held, w, hi - lo, y0 - lo, count, &params);
+                    }
+                };
+                let rows_in = image.data[lo * w * 3..hi * w * 3].par_chunks(w * 3);
+                if shared {
+                    held.par_chunks_mut(w)
+                        .zip(amounts.par_chunks_mut(w))
+                        .zip(rows_in)
+                        .enumerate()
+                        .for_each(|(r, ((h, a), i))| row(r, h, i, Some(a)));
+                } else {
+                    held.par_chunks_mut(w)
+                        .zip(rows_in)
+                        .enumerate()
+                        .for_each(|(r, (h, i))| row(r, h, i, None));
+                }
+                let band_amounts = shared.then(|| &amounts[(y0 - lo) * w..(y0 - lo + count) * w]);
+                let sharpened = crate::output_sharpen::sharpen_rows(
+                    &held,
+                    w,
+                    hi - lo,
+                    y0 - lo,
+                    count,
+                    &params,
+                    band_amounts,
+                );
                 drop(held);
                 out[y0 * w * 3..(y0 + count) * w * 3]
                     .par_chunks_mut(w * 3)
@@ -2515,7 +2558,7 @@ mod tests {
         assert_eq!(run(7), whole);
         assert_eq!(run(1), whole);
         // And the frame to the look table, sharpened whole.
-        let p = crate::output_sharpen::Params::of(&edit.output_sharpen, 1.0).unwrap();
+        let p = crate::output_sharpen::Params::of(&edit.output_sharpen).unwrap();
         let mut colors: Vec<[f32; 3]> = (0..w * h)
             .map(|i| {
                 let (x, y) = (i % w, i / w);
@@ -2833,6 +2876,7 @@ mod tests {
             profile_tone: None,
             white: None,
             detail: [0.0; 5],
+            output_share: 0.0,
             output_sharpen: OutputSharpen::default(),
             vignette_shown: false,
         };
@@ -2859,6 +2903,7 @@ mod tests {
             profile_tone: None,
             white: None,
             detail: [0.0; 5],
+            output_share: 0.0,
             output_sharpen: OutputSharpen::default(),
             vignette_shown: false,
         }
@@ -3742,6 +3787,7 @@ mod tests {
                 profile_tone: None,
                 white: None,
                 detail: [0.0; 5],
+                output_share: 0.0,
                 output_sharpen: OutputSharpen::default(),
                 vignette_shown: false,
             };
@@ -4423,6 +4469,7 @@ mod tests {
             profile_tone: None,
             white: None,
             detail: [0.0; 5],
+            output_share: 0.0,
             output_sharpen: OutputSharpen::default(),
             vignette_shown: false,
         };
@@ -5523,6 +5570,7 @@ mod tests {
             profile_tone: None,
             white: None,
             detail: [0.0; 5],
+            output_share: 0.0,
             output_sharpen: OutputSharpen::default(),
             vignette_shown: false,
         };
@@ -5567,6 +5615,7 @@ mod tests {
             profile_tone: None,
             white: None,
             detail: [0.0; 5],
+            output_share: 0.0,
             output_sharpen: OutputSharpen::default(),
             vignette_shown: false,
         };
@@ -5653,6 +5702,7 @@ mod tests {
             profile_tone: None,
             white: None,
             detail: [0.0; 5],
+            output_share: 0.0,
             output_sharpen: OutputSharpen::default(),
             vignette_shown: false,
         };

@@ -314,7 +314,8 @@ fn write_rendered(
     };
     greycard_render::export::write(
         rendered,
-        written.settings,
+        // The sheet's words in the file's XMP as the frame was made.
+        &written.settings.for_edit(edit),
         written.path,
         shifted.as_ref(),
         &origin,

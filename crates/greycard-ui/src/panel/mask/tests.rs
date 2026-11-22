@@ -368,6 +368,85 @@ fn a_masks_sharpen_is_its_own_and_a_look_control() {
     );
 }
 
+/// A mask's Output sharpen is a look control beside its Sharpen: the
+/// overlay hidden, its history row, no develop asked (it is the
+/// finish's alone), through the sidecar's JSON and back onto the panel,
+/// and the picture's own output sharpen untouched. Its slider is on a
+/// mask's Detail and not on the picture's.
+#[test]
+fn a_masks_output_sharpen_is_its_own_and_a_look_control() {
+    use greycard_edit::history::describe;
+    use i_slint_backend_testing::ElementHandle;
+    use slint::ComponentHandle;
+    let app = window(1);
+    app.window()
+        .set_size(slint::LogicalSize::new(1500.0, 4000.0));
+    let (state, _worker) = crate::testing::state_for(&app, Vec::new());
+    // Every section folded but Detail, so it is built in the panel.
+    let open_detail = || {
+        for (_, _, set) in crate::panel::edit::FOLDS {
+            set(&app, true);
+        }
+        app.set_collapsed_detail(false);
+        crate::testing::settle(&app);
+    };
+    let count = |id: &str| ElementHandle::find_by_element_id(&app, id).count();
+    let (texture, output) = (
+        "DetailSection::texture-slider",
+        "DetailSection::output-sharpen-slider",
+    );
+    app.set_panel_tab("Develop".into());
+    open_detail();
+    assert_eq!(count(texture), 1, "the picture's Detail is open");
+    assert_eq!(count(output), 0, "the picture's Detail has none");
+    app.set_panel_tab("Masks".into());
+    app.invoke_new_mask();
+    app.invoke_target_changed(1);
+    open_detail();
+    assert_eq!(count(texture), 1, "a mask's Detail is open");
+    assert_eq!(count(output), 1, "a mask's Detail has it");
+    state.borrow_mut().develop.edit.adjustments[0]
+        .mask
+        .components
+        .push(greycard_edit::mask::Component::default());
+    let edit = || {
+        let st = state.borrow();
+        read_edit(&app, &st.develop.edit, st.develop.target)
+    };
+    let before = edit();
+    app.set_show_mask(true);
+    app.set_local_output_sharpen(0.6);
+    app.invoke_view_changed();
+    assert!(!app.get_show_mask(), "a Detail slider is a look control");
+    let after = edit();
+    assert_eq!(after.adjustments[0].look.detail.output_sharpen, 0.6);
+    assert_eq!(after.output_sharpen, before.output_sharpen);
+    assert_eq!(after.detail.output_sharpen, 0.0);
+    let name = app.get_adjustment_name().to_string();
+    assert_eq!(
+        describe(&before, &after, &[]),
+        format!("{name}: Output sharpen +60")
+    );
+    // The finish's alone: no planes are asked for it.
+    assert_eq!(
+        state.borrow().develop.planes_asked,
+        Default::default(),
+        "no develop for a finish's share"
+    );
+    let back = greycard_edit::Edit::from_json(&after.to_json()).unwrap();
+    assert_eq!(back, after);
+    app.set_local_output_sharpen(0.0);
+    {
+        let st = state.borrow();
+        show_edit(&st, &back, &app, st.develop.target);
+    }
+    assert_eq!(app.get_local_output_sharpen(), 0.6);
+    assert_eq!(
+        edit().adjustments[0].look.detail,
+        back.adjustments[0].look.detail
+    );
+}
+
 /// A look change while a tool is in hand hides the overlay and
 /// drops the toggle kept for the tool going down, so it does not
 /// come back over the edit.

@@ -38,241 +38,241 @@ msgid "Create"
 msgstr "建立"
 
 #. The camera match sheet's Fit button; it also reads 'Fit N groups'
-#: crates/greycard-slint/ui/app.slint:2354
+#: crates/greycard-slint/ui/app.slint:2359
 msgid "Fit"
 msgstr "擬合"
 
 #. The status line as shown.
-#: crates/greycard-slint/ui/app.slint:2392
+#: crates/greycard-slint/ui/app.slint:2397
 msgid "preparing..."
 msgstr "正在準備..."
 
-#: crates/greycard-slint/ui/app.slint:2477
+#: crates/greycard-slint/ui/app.slint:2482
 msgid "Proof: {}"
 msgstr "校樣：{}"
 
-#: crates/greycard-slint/ui/app.slint:2477
+#: crates/greycard-slint/ui/app.slint:2482
 msgid "Proof: {} · gamut"
 msgstr "校樣：{} · 色域"
 
-#: crates/greycard-slint/ui/app.slint:2480
+#: crates/greycard-slint/ui/app.slint:2485
 msgid "File"
 msgstr "檔案"
 
 #. The five canvas shades, in Settings and the View menu
-#: crates/greycard-slint/ui/app.slint:2505
+#: crates/greycard-slint/ui/app.slint:2510
 msgid "Black"
 msgstr "黑色"
 
 #. The five canvas shades, in Settings and the View menu
-#: crates/greycard-slint/ui/app.slint:2505
+#: crates/greycard-slint/ui/app.slint:2510
 msgid "Dark grey"
 msgstr "深灰色"
 
 #. The five canvas shades, in Settings and the View menu
-#: crates/greycard-slint/ui/app.slint:2505
+#: crates/greycard-slint/ui/app.slint:2510
 msgid "Light grey"
 msgstr "淺灰色"
 
 #. The five canvas shades, in Settings and the View menu
-#: crates/greycard-slint/ui/app.slint:2505
+#: crates/greycard-slint/ui/app.slint:2510
 msgid "Mid grey"
 msgstr "中灰色"
 
 #. The five canvas shades, in Settings and the View menu
-#: crates/greycard-slint/ui/app.slint:2505
+#: crates/greycard-slint/ui/app.slint:2510
 msgid "White"
 msgstr "白色"
 
 #. The download ask's yes button, for a model or the lens database
-#: crates/greycard-slint/ui/app.slint:2616
+#: crates/greycard-slint/ui/app.slint:2621
 msgid "Download"
 msgstr "下載"
 
 #. The download ask's button that declines for now
-#: crates/greycard-slint/ui/app.slint:2618
+#: crates/greycard-slint/ui/app.slint:2623
 msgid "Not now"
 msgstr "以後再說"
 
 #. The models ask's button that downloads every model
-#: crates/greycard-slint/ui/app.slint:2625
+#: crates/greycard-slint/ui/app.slint:2630
 msgid "Download all"
 msgstr "全部下載"
 
-#: crates/greycard-slint/ui/app.slint:4158
+#: crates/greycard-slint/ui/app.slint:4166
 msgid "Queued for export, shown as it will export. Edit it from its folder."
 msgstr "已排入匯出佇列，顯示的是匯出後的樣子。請到它所在的資料夾中編輯。"
 
 #. The Loupe's mode button at the top of the develop panel
-#: crates/greycard-slint/ui/app.slint:4169
+#: crates/greycard-slint/ui/app.slint:4177
 msgid "Cull"
 msgstr "挑片"
 
-#: crates/greycard-slint/ui/app.slint:4174
+#: crates/greycard-slint/ui/app.slint:4182
 msgid "Cull mode"
 msgstr "挑片模式"
 
 #. Develop, Crop, Masks, and Retouch
-#: crates/greycard-slint/ui/app.slint:4193
+#: crates/greycard-slint/ui/app.slint:4201
 msgid "Panel tabs"
 msgstr "面板分頁"
 
 #. The Loupe's mode buttons at the top of the develop panel
-#: crates/greycard-slint/ui/app.slint:4196
+#: crates/greycard-slint/ui/app.slint:4204
 msgid "Crop"
 msgstr "裁切"
 
 #. The Loupe's mode buttons at the top of the develop panel
-#: crates/greycard-slint/ui/app.slint:4196
+#: crates/greycard-slint/ui/app.slint:4204
 msgid "Develop"
 msgstr "編修"
 
 #. The Loupe's mode buttons at the top of the develop panel
-#: crates/greycard-slint/ui/app.slint:4196
+#: crates/greycard-slint/ui/app.slint:4204
 msgid "Masks"
 msgstr "遮色片"
 
 #. The Loupe's mode buttons at the top of the develop panel
-#: crates/greycard-slint/ui/app.slint:4196
+#: crates/greycard-slint/ui/app.slint:4204
 msgid "Retouch"
 msgstr "修飾"
 
 #. View menu
-#: crates/greycard-slint/ui/app.slint:5391
+#: crates/greycard-slint/ui/app.slint:5401
 msgid "Full screen"
 msgstr "全螢幕"
 
 #. View menu
-#: crates/greycard-slint/ui/app.slint:5391
+#: crates/greycard-slint/ui/app.slint:5401
 msgid "Full screen (F11)"
 msgstr "全螢幕 (F11)"
 
 #. File menu
-#: crates/greycard-slint/ui/app.slint:5399
+#: crates/greycard-slint/ui/app.slint:5409
 msgid "Export..."
 msgstr "匯出..."
 
 #. File menu
-#: crates/greycard-slint/ui/app.slint:5399
+#: crates/greycard-slint/ui/app.slint:5409
 msgid "Stop export"
 msgstr "停止匯出"
 
 #. View menu
-#: crates/greycard-slint/ui/app.slint:5530
+#: crates/greycard-slint/ui/app.slint:5540
 msgid "Right panel"
 msgstr "右側面板"
 
 #. View menu
-#: crates/greycard-slint/ui/app.slint:5532
+#: crates/greycard-slint/ui/app.slint:5542
 msgid "Hide panel"
 msgstr "隱藏面板"
 
 #. View menu
-#: crates/greycard-slint/ui/app.slint:5532
+#: crates/greycard-slint/ui/app.slint:5542
 msgid "Show panel"
 msgstr "顯示面板"
 
 #. View menu: the filmstrip
-#: crates/greycard-slint/ui/app.slint:5569
+#: crates/greycard-slint/ui/app.slint:5579
 msgid "Filmstrip"
 msgstr "底片列"
 
 #. View menu: the filmstrip
-#: crates/greycard-slint/ui/app.slint:5571
+#: crates/greycard-slint/ui/app.slint:5581
 msgid "Hide filmstrip"
 msgstr "隱藏底片列"
 
 #. View menu: the filmstrip
-#: crates/greycard-slint/ui/app.slint:5571
+#: crates/greycard-slint/ui/app.slint:5581
 msgid "Show filmstrip"
 msgstr "顯示底片列"
 
 #. The view button at the top left: the grid
-#: crates/greycard-slint/ui/app.slint:5774
+#: crates/greycard-slint/ui/app.slint:5784
 msgid "Library"
 msgstr "圖庫"
 
-#: crates/greycard-slint/ui/app.slint:5778
+#: crates/greycard-slint/ui/app.slint:5788
 msgid "Library view"
 msgstr "圖庫檢視"
 
 #. The view button at the top left: one frame
-#: crates/greycard-slint/ui/app.slint:5792
+#: crates/greycard-slint/ui/app.slint:5802
 msgid "Loupe"
 msgstr "放大檢視"
 
-#: crates/greycard-slint/ui/app.slint:5796
+#: crates/greycard-slint/ui/app.slint:5806
 msgid "Loupe view"
 msgstr "放大檢視"
 
 #. File menu
-#: crates/greycard-slint/ui/app.slint:5884
+#: crates/greycard-slint/ui/app.slint:5894
 msgid "Open folder..."
 msgstr "開啟資料夾..."
 
 #. File menu
-#: crates/greycard-slint/ui/app.slint:5917
+#: crates/greycard-slint/ui/app.slint:5927
 msgid "Import..."
 msgstr "匯入..."
 
-#: crates/greycard-slint/ui/app.slint:5940
+#: crates/greycard-slint/ui/app.slint:5950
 msgid "Stop import"
 msgstr "停止匯入"
 
-#: crates/greycard-slint/ui/app.slint:5940
+#: crates/greycard-slint/ui/app.slint:5950
 msgid "Stopping..."
 msgstr "正在停止..."
 
-#: crates/greycard-slint/ui/app.slint:5941
+#: crates/greycard-slint/ui/app.slint:5951
 msgid "Importing the catalog..."
 msgstr "正在匯入目錄..."
 
 #. File menu, under Import
-#: crates/greycard-slint/ui/app.slint:5962
+#: crates/greycard-slint/ui/app.slint:5972
 msgid "From a card or folder..."
 msgstr "從記憶卡或資料夾..."
 
 #. File menu, under Import
-#: crates/greycard-slint/ui/app.slint:5967
+#: crates/greycard-slint/ui/app.slint:5977
 msgid "A Lightroom catalog..."
 msgstr "Lightroom 目錄..."
 
 #. Help menu: a newer version is out; {} is its number
-#: crates/greycard-slint/ui/app.slint:6326
+#: crates/greycard-slint/ui/app.slint:6336
 msgid "{} is available"
 msgstr "{} 已推出"
 
 #. Help menu: under the version note
-#: crates/greycard-slint/ui/app.slint:6335
+#: crates/greycard-slint/ui/app.slint:6345
 msgid "Not now: do not offer {} again"
 msgstr "以後再說：不再提示 {}"
 
-#: crates/greycard-slint/ui/app.slint:6343
+#: crates/greycard-slint/ui/app.slint:6353
 msgid "Settings..."
 msgstr "設定..."
 
-#: crates/greycard-slint/ui/app.slint:6351
+#: crates/greycard-slint/ui/app.slint:6361
 msgid "Help"
 msgstr "說明"
 
-#: crates/greycard-slint/ui/app.slint:6354
+#: crates/greycard-slint/ui/app.slint:6364
 msgid "Help menu"
 msgstr "說明選單"
 
 #. Help menu: the keys sheet, with the key that opens it
-#: crates/greycard-slint/ui/app.slint:6375
+#: crates/greycard-slint/ui/app.slint:6385
 msgid "Keys (?)"
 msgstr "快速鍵 (?)"
 
-#: crates/greycard-slint/ui/app.slint:6379
+#: crates/greycard-slint/ui/app.slint:6389
 msgid "User guide"
 msgstr "使用者指南"
 
-#: crates/greycard-slint/ui/app.slint:6384
+#: crates/greycard-slint/ui/app.slint:6394
 msgid "Report a problem..."
 msgstr "回報問題..."
 
-#: crates/greycard-slint/ui/app.slint:6454
+#: crates/greycard-slint/ui/app.slint:6464
 msgid "Left panel"
 msgstr "左側面板"
 
@@ -1022,302 +1022,306 @@ msgstr "永久刪除"
 msgid "Move to the trash"
 msgstr "移到垃圾桶"
 
-#: crates/greycard-slint/ui/panel/deliver.slint:110
+#: crates/greycard-slint/ui/panel/deliver.slint:113
 msgctxt "watermark place"
 msgid "Top left"
 msgstr "左上"
 
-#: crates/greycard-slint/ui/panel/deliver.slint:111
+#: crates/greycard-slint/ui/panel/deliver.slint:114
 msgctxt "watermark place"
 msgid "Top"
 msgstr "上"
 
-#: crates/greycard-slint/ui/panel/deliver.slint:112
+#: crates/greycard-slint/ui/panel/deliver.slint:115
 msgctxt "watermark place"
 msgid "Top right"
 msgstr "右上"
 
-#: crates/greycard-slint/ui/panel/deliver.slint:113
+#: crates/greycard-slint/ui/panel/deliver.slint:116
 msgctxt "watermark place"
 msgid "Left"
 msgstr "左"
 
-#: crates/greycard-slint/ui/panel/deliver.slint:114
+#: crates/greycard-slint/ui/panel/deliver.slint:117
 msgctxt "watermark place"
 msgid "Center"
 msgstr "置中"
 
-#: crates/greycard-slint/ui/panel/deliver.slint:115
+#: crates/greycard-slint/ui/panel/deliver.slint:118
 msgctxt "watermark place"
 msgid "Right"
 msgstr "右"
 
-#: crates/greycard-slint/ui/panel/deliver.slint:116
+#: crates/greycard-slint/ui/panel/deliver.slint:119
 msgctxt "watermark place"
 msgid "Bottom left"
 msgstr "左下"
 
-#: crates/greycard-slint/ui/panel/deliver.slint:117
+#: crates/greycard-slint/ui/panel/deliver.slint:120
 msgctxt "watermark place"
 msgid "Bottom"
 msgstr "下"
 
-#: crates/greycard-slint/ui/panel/deliver.slint:118
+#: crates/greycard-slint/ui/panel/deliver.slint:121
 msgctxt "watermark place"
 msgid "Bottom right"
 msgstr "右下"
 
-#: crates/greycard-slint/ui/panel/deliver.slint:269
+#: crates/greycard-slint/ui/panel/deliver.slint:272
 msgid "Export"
 msgstr "匯出"
 
-#: crates/greycard-slint/ui/panel/deliver.slint:269
+#: crates/greycard-slint/ui/panel/deliver.slint:272
 msgid "Export {n} frame"
 msgid_plural "Export {n} frames"
 msgstr[0] "匯出 {n} 張相片"
 
-#: crates/greycard-slint/ui/panel/deliver.slint:276
+#: crates/greycard-slint/ui/panel/deliver.slint:279
 msgid "{} and {n} other, each under its own edit"
 msgid_plural "{} and {n} others, each under its own edit"
 msgstr[0] "{} 和其他 {n} 張相片，各依其編輯"
 
-#: crates/greycard-slint/ui/panel/deliver.slint:284
+#: crates/greycard-slint/ui/panel/deliver.slint:287
 msgid "Preset"
 msgstr "預設集"
 
 #. Export sheet: after a preset's name once its settings were changed
-#: crates/greycard-slint/ui/panel/deliver.slint:294
+#: crates/greycard-slint/ui/panel/deliver.slint:297
 msgid "(edited)"
 msgstr "（已修改）"
 
-#: crates/greycard-slint/ui/panel/deliver.slint:305
+#: crates/greycard-slint/ui/panel/deliver.slint:308
 msgid "Save as..."
 msgstr "另存為..."
 
-#: crates/greycard-slint/ui/panel/deliver.slint:312
+#: crates/greycard-slint/ui/panel/deliver.slint:315
 msgid "Delete"
 msgstr "刪除"
 
 #. The snapshot's name, as it is typed.
-#: crates/greycard-slint/ui/panel/deliver.slint:320
+#: crates/greycard-slint/ui/panel/deliver.slint:323
 msgid "Name"
 msgstr "名稱"
 
 #. Export sheet: the built-in preset's name
-#: crates/greycard-slint/ui/panel/deliver.slint:326
+#: crates/greycard-slint/ui/panel/deliver.slint:329
 msgid "Web 2048"
 msgstr "Web 2048"
 
 #. Over a preset of that name, in any case.
-#: crates/greycard-slint/ui/panel/deliver.slint:334
+#: crates/greycard-slint/ui/panel/deliver.slint:337
 msgid "Replace"
 msgstr "取代"
 
-#: crates/greycard-slint/ui/panel/deliver.slint:357
+#: crates/greycard-slint/ui/panel/deliver.slint:360
 msgid "Format"
 msgstr "格式"
 
-#: crates/greycard-slint/ui/panel/deliver.slint:358
+#: crates/greycard-slint/ui/panel/deliver.slint:361
 msgid "TIFF 16-bit"
 msgstr "TIFF 16 位元"
 
-#: crates/greycard-slint/ui/panel/deliver.slint:361
+#: crates/greycard-slint/ui/panel/deliver.slint:364
 msgid "Quality"
 msgstr "品質"
 
-#: crates/greycard-slint/ui/panel/deliver.slint:375
+#: crates/greycard-slint/ui/panel/deliver.slint:378
 msgid "Long edge"
 msgstr "長邊"
 
 #. Export size: the full size, with the pixel counts beside it
-#: crates/greycard-slint/ui/panel/deliver.slint:377
+#: crates/greycard-slint/ui/panel/deliver.slint:380
 msgid "Full"
 msgstr "全尺寸"
 
-#: crates/greycard-slint/ui/panel/deliver.slint:381
+#: crates/greycard-slint/ui/panel/deliver.slint:384
 msgid "Pixels"
 msgstr "像素"
 
-#: crates/greycard-slint/ui/panel/deliver.slint:395
+#: crates/greycard-slint/ui/panel/deliver.slint:398
 msgid "{} × {}, as it is"
 msgstr "{} × {}，原樣"
 
-#: crates/greycard-slint/ui/panel/deliver.slint:406
+#: crates/greycard-slint/ui/panel/deliver.slint:409
 msgid "Sharpen"
 msgstr "銳利化"
 
 #. Export sharpen: the four levels
-#: crates/greycard-slint/ui/panel/deliver.slint:408
+#: crates/greycard-slint/ui/panel/deliver.slint:411
 msgid "High"
 msgstr "高"
 
 #. Export sharpen: the four levels
-#: crates/greycard-slint/ui/panel/deliver.slint:408
+#: crates/greycard-slint/ui/panel/deliver.slint:411
 msgid "Low"
 msgstr "低"
 
 #. Export sharpen: the four levels
-#: crates/greycard-slint/ui/panel/deliver.slint:408
+#: crates/greycard-slint/ui/panel/deliver.slint:411
 msgid "Off"
 msgstr "關"
 
 #. Export sharpen: the four levels
-#: crates/greycard-slint/ui/panel/deliver.slint:408
+#: crates/greycard-slint/ui/panel/deliver.slint:411
 msgid "Standard"
 msgstr "標準"
 
-#: crates/greycard-slint/ui/panel/deliver.slint:417
+#: crates/greycard-slint/ui/panel/deliver.slint:419
+msgid "Frames with Output sharpen use it instead"
+msgstr ""
+
+#: crates/greycard-slint/ui/panel/deliver.slint:433
 msgid "Embed profile"
 msgstr "嵌入描述檔"
 
-#: crates/greycard-slint/ui/panel/deliver.slint:422
+#: crates/greycard-slint/ui/panel/deliver.slint:438
 msgid "Metadata"
 msgstr "中繼資料"
 
 #. Export metadata: all, all but greycard's edit record, or none
-#: crates/greycard-slint/ui/panel/deliver.slint:424
+#: crates/greycard-slint/ui/panel/deliver.slint:440
 msgctxt "metadata"
 msgid "All"
 msgstr "全部"
 
 #. Export metadata: all, all but greycard's edit record, or none
-#: crates/greycard-slint/ui/panel/deliver.slint:424
+#: crates/greycard-slint/ui/panel/deliver.slint:440
 msgid "No edit"
 msgstr "不含編輯"
 
 #. Export metadata: all, all but greycard's edit record, or none
-#: crates/greycard-slint/ui/panel/deliver.slint:424
+#: crates/greycard-slint/ui/panel/deliver.slint:440
 msgctxt "metadata"
 msgid "None"
 msgstr "無"
 
-#: crates/greycard-slint/ui/panel/deliver.slint:430
+#: crates/greycard-slint/ui/panel/deliver.slint:446
 msgid "Subfolder"
 msgstr "子資料夾"
 
 #. Export subfolder: none, the folder itself
-#: crates/greycard-slint/ui/panel/deliver.slint:436
+#: crates/greycard-slint/ui/panel/deliver.slint:452
 msgid "None: the folder below"
 msgstr "無：即下方的資料夾"
 
-#: crates/greycard-slint/ui/panel/deliver.slint:442
+#: crates/greycard-slint/ui/panel/deliver.slint:458
 msgid "Saved in {} beside each original."
 msgstr "儲存在每張原始相片旁的 {} 中。"
 
-#: crates/greycard-slint/ui/panel/deliver.slint:471
+#: crates/greycard-slint/ui/panel/deliver.slint:487
 msgid "If it exists"
 msgstr "如已存在"
 
-#: crates/greycard-slint/ui/panel/deliver.slint:472
+#: crates/greycard-slint/ui/panel/deliver.slint:488
 msgid "Increment"
 msgstr "遞增編號"
 
-#: crates/greycard-slint/ui/panel/deliver.slint:472
+#: crates/greycard-slint/ui/panel/deliver.slint:488
 msgid "Overwrite"
 msgstr "覆寫"
 
-#: crates/greycard-slint/ui/panel/deliver.slint:472
+#: crates/greycard-slint/ui/panel/deliver.slint:488
 msgid "Skip"
 msgstr "跳過"
 
-#: crates/greycard-slint/ui/panel/deliver.slint:476
+#: crates/greycard-slint/ui/panel/deliver.slint:492
 msgid "Watermark"
 msgstr "浮水印"
 
 #. Export watermark: off, a text, or a PNG
-#: crates/greycard-slint/ui/panel/deliver.slint:478
+#: crates/greycard-slint/ui/panel/deliver.slint:494
 msgid "Image"
 msgstr "影像"
 
 #. Export watermark: off, a text, or a PNG
-#: crates/greycard-slint/ui/panel/deliver.slint:478
+#: crates/greycard-slint/ui/panel/deliver.slint:494
 msgid "Text"
 msgstr "文字"
 
 #. Export watermark: the text's default, which the user replaces
-#: crates/greycard-slint/ui/panel/deliver.slint:488
+#: crates/greycard-slint/ui/panel/deliver.slint:504
 msgid "© Your Name"
 msgstr "© 姓名"
 
-#: crates/greycard-slint/ui/panel/deliver.slint:496
+#: crates/greycard-slint/ui/panel/deliver.slint:512
 msgid "No PNG chosen"
 msgstr "未選擇 PNG"
 
-#: crates/greycard-slint/ui/panel/deliver.slint:504
+#: crates/greycard-slint/ui/panel/deliver.slint:520
 msgid "Choose..."
 msgstr "選擇..."
 
 #. three by three grid of places
-#: crates/greycard-slint/ui/panel/deliver.slint:519
+#: crates/greycard-slint/ui/panel/deliver.slint:535
 msgid "Position"
 msgstr "位置"
 
 #. Export watermark: the slider
-#: crates/greycard-slint/ui/panel/deliver.slint:534
+#: crates/greycard-slint/ui/panel/deliver.slint:550
 msgid "Size"
 msgstr "大小"
 
 #. Export watermark: the slider
-#: crates/greycard-slint/ui/panel/deliver.slint:546
+#: crates/greycard-slint/ui/panel/deliver.slint:562
 msgid "Margin"
 msgstr "邊距"
 
 #. Export watermark: the slider
-#: crates/greycard-slint/ui/panel/deliver.slint:558
+#: crates/greycard-slint/ui/panel/deliver.slint:574
 msgid "Opacity"
 msgstr "不透明度"
 
 #. reader: the row has no box of its own to be one.
-#: crates/greycard-slint/ui/panel/deliver.slint:577
+#: crates/greycard-slint/ui/panel/deliver.slint:593
 msgid "Border"
 msgstr "邊框"
 
 #. Export border: a border in the canvas shade
-#: crates/greycard-slint/ui/panel/deliver.slint:586
+#: crates/greycard-slint/ui/panel/deliver.slint:602
 msgid "Match"
 msgstr "同畫布"
 
 #. Export border: the slider
-#: crates/greycard-slint/ui/panel/deliver.slint:644
+#: crates/greycard-slint/ui/panel/deliver.slint:660
 msgid "Width"
 msgstr "寬度"
 
-#: crates/greycard-slint/ui/panel/deliver.slint:656
+#: crates/greycard-slint/ui/panel/deliver.slint:672
 msgid "Added outside the picture; the file is {} × {}."
 msgstr "加在影像之外；檔案為 {} × {}。"
 
-#: crates/greycard-slint/ui/panel/deliver.slint:657
+#: crates/greycard-slint/ui/panel/deliver.slint:673
 msgid "Added outside the picture."
 msgstr "加在影像之外。"
 
-#: crates/greycard-slint/ui/panel/deliver.slint:674
+#: crates/greycard-slint/ui/panel/deliver.slint:690
 msgid "Folder"
 msgstr "資料夾"
 
-#: crates/greycard-slint/ui/panel/deliver.slint:696
+#: crates/greycard-slint/ui/panel/deliver.slint:712
 msgid "Add to queue"
 msgstr "加入佇列"
 
 #. Export queue: the set now exporting; {} is its name
-#: crates/greycard-slint/ui/panel/deliver.slint:742
+#: crates/greycard-slint/ui/panel/deliver.slint:758
 msgid "{}, running"
 msgstr "{}，正在執行"
 
 #. Export queue: remove the set named {}
-#: crates/greycard-slint/ui/panel/deliver.slint:759
+#: crates/greycard-slint/ui/panel/deliver.slint:775
 msgid "Remove {}"
 msgstr "移除 {}"
 
-#: crates/greycard-slint/ui/panel/deliver.slint:795
+#: crates/greycard-slint/ui/panel/deliver.slint:811
 msgid "Export the queue"
 msgstr "開始匯出佇列"
 
 #. Export queue: the button that empties it
-#: crates/greycard-slint/ui/panel/deliver.slint:801
+#: crates/greycard-slint/ui/panel/deliver.slint:817
 msgid "Clear"
 msgstr "清空"
 
-#: crates/greycard-slint/ui/panel/deliver.slint:809
+#: crates/greycard-slint/ui/panel/deliver.slint:825
 msgid "Clear the queue of {n} set?"
 msgid_plural "Clear the queue of {n} sets?"
 msgstr[0] "清空佇列中的 {n} 組？"
@@ -1441,119 +1445,123 @@ msgstr "對這些相片降噪後重新合併"
 msgid "Structure"
 msgstr "結構"
 
-#: crates/greycard-slint/ui/panel/edit.slint:348
+#: crates/greycard-slint/ui/panel/edit.slint:351
 msgid "DETAIL"
 msgstr "細節"
 
-#: crates/greycard-slint/ui/panel/edit.slint:356
+#: crates/greycard-slint/ui/panel/edit.slint:359
 msgid "Texture"
 msgstr "紋理"
 
-#: crates/greycard-slint/ui/panel/edit.slint:369
+#: crates/greycard-slint/ui/panel/edit.slint:372
 msgid "Clarity"
 msgstr "清晰度"
 
-#: crates/greycard-slint/ui/panel/edit.slint:395
+#: crates/greycard-slint/ui/panel/edit.slint:398
 msgid "Dehaze"
 msgstr "去朦朧"
 
-#: crates/greycard-slint/ui/panel/edit.slint:436
+#: crates/greycard-slint/ui/panel/edit.slint:424
+msgid "Output sharpen"
+msgstr "輸出銳利化"
+
+#: crates/greycard-slint/ui/panel/edit.slint:452
 msgid "SHARPEN"
 msgstr "銳利化"
 
-#: crates/greycard-slint/ui/panel/edit.slint:443
+#: crates/greycard-slint/ui/panel/edit.slint:459
 msgid "Auto radius"
 msgstr "自動半徑"
 
-#: crates/greycard-slint/ui/panel/edit.slint:449
+#: crates/greycard-slint/ui/panel/edit.slint:465
 msgid "Radius"
 msgstr "半徑"
 
 #. Sharpen: the radius field's word while the radius is automatic
-#: crates/greycard-slint/ui/panel/edit.slint:459
+#: crates/greycard-slint/ui/panel/edit.slint:475
 msgid "auto"
 msgstr "自動"
 
 #. Sharpen: the radius field's word while the radius is automatic
-#: crates/greycard-slint/ui/panel/edit.slint:459
+#: crates/greycard-slint/ui/panel/edit.slint:475
 msgid "auto {}"
 msgstr "自動 {}"
 
-#: crates/greycard-slint/ui/panel/edit.slint:464
+#: crates/greycard-slint/ui/panel/edit.slint:480
 msgid "Iterations"
 msgstr "迭代次數"
 
-#: crates/greycard-slint/ui/panel/edit.slint:476
+#: crates/greycard-slint/ui/panel/edit.slint:492
 msgid "Auto threshold"
 msgstr "自動臨界值"
 
-#: crates/greycard-slint/ui/panel/edit.slint:482
+#: crates/greycard-slint/ui/panel/edit.slint:498
 msgid "Threshold"
 msgstr "臨界值"
 
 #. Sharpen: show where the sharpen lands
-#: crates/greycard-slint/ui/panel/edit.slint:498
+#: crates/greycard-slint/ui/panel/edit.slint:514
 msgid "Show mask"
 msgstr "顯示遮色片"
 
-#: crates/greycard-slint/ui/panel/edit.slint:516
+#: crates/greycard-slint/ui/panel/edit.slint:532
 msgid "OUTPUT SHARPEN"
 msgstr "輸出銳利化"
 
-#: crates/greycard-slint/ui/panel/edit.slint:572
+#: crates/greycard-slint/ui/panel/edit.slint:588
 msgid "VIGNETTE"
 msgstr "暗角"
 
-#: crates/greycard-slint/ui/panel/edit.slint:591
+#: crates/greycard-slint/ui/panel/edit.slint:607
 msgid "Midpoint"
 msgstr "中點"
 
-#: crates/greycard-slint/ui/panel/edit.slint:603
+#: crates/greycard-slint/ui/panel/edit.slint:619
 msgid "Feather"
 msgstr "羽化"
 
-#: crates/greycard-slint/ui/panel/edit.slint:615
+#: crates/greycard-slint/ui/panel/edit.slint:631
 msgid "Roundness"
 msgstr "圓度"
 
 #. Vignette: where it acts, the scene or the picture
-#: crates/greycard-slint/ui/panel/edit.slint:634
+#: crates/greycard-slint/ui/panel/edit.slint:650
 msgid "Style"
 msgstr "樣式"
 
 #. Vignette: a falloff in the scene; laid over the picture
-#: crates/greycard-slint/ui/panel/edit.slint:645
+#: crates/greycard-slint/ui/panel/edit.slint:661
 msgid "Natural"
 msgstr "自然"
 
 #. Vignette: a falloff in the scene; laid over the picture
-#: crates/greycard-slint/ui/panel/edit.slint:645
+#: crates/greycard-slint/ui/panel/edit.slint:661
 msgid "Overlay"
 msgstr "疊加"
 
-#: crates/greycard-slint/ui/panel/edit.slint:661
+#: crates/greycard-slint/ui/panel/edit.slint:677
 msgid "GRAIN"
 msgstr "顆粒"
 
-#: crates/greycard-slint/ui/panel/edit.slint:694
+#: crates/greycard-slint/ui/panel/edit.slint:710
 msgid "Type"
 msgstr "類型"
 
 #. Grain: the two kinds of grain
-#: crates/greycard-slint/ui/panel/edit.slint:697
+#: crates/greycard-slint/ui/panel/edit.slint:713
 msgid "Cubic"
 msgstr "立方"
 
 #. Grain: the two kinds of grain
-#: crates/greycard-slint/ui/panel/edit.slint:697
+#: crates/greycard-slint/ui/panel/edit.slint:713
 msgid "Tabular"
 msgstr "片狀"
 
-#: crates/greycard-slint/ui/panel/edit.slint:715
+#: crates/greycard-slint/ui/panel/edit.slint:731
 msgid "DEMOSAIC"
 msgstr "去馬賽克"
 
-#: crates/greycard-slint/ui/panel/edit.slint:722
+#: crates/greycard-slint/ui/panel/edit.slint:738
 msgid "Demosaic"
 msgstr "去馬賽克"
 
@@ -3192,10 +3200,6 @@ msgstr "雜訊"
 #: crates/greycard-ui/src/carry.rs:405
 msgid "Detail"
 msgstr "細節"
-
-#: crates/greycard-ui/src/carry.rs:407
-msgid "Output sharpen"
-msgstr "輸出銳利化"
 
 #: crates/greycard-ui/src/carry.rs:409
 msgid "Color mixer"
@@ -5123,8 +5127,8 @@ msgstr "附相機 JPEG，{}"
 #: crates/greycard-ui/src/panel/cull.rs:446
 #: crates/greycard-ui/src/panel/deliver.rs:1662
 #: crates/greycard-ui/src/panel/deliver.rs:1696
-#: crates/greycard-ui/src/panel/edit.rs:479
-#: crates/greycard-ui/src/panel/edit.rs:1273
+#: crates/greycard-ui/src/panel/edit.rs:480
+#: crates/greycard-ui/src/panel/edit.rs:1276
 #: crates/greycard-ui/src/panel/history.rs:473
 msgid "developing..."
 msgstr "正在處理..."
@@ -5853,138 +5857,138 @@ msgid_plural ""
 "{n} things the edit names that this machine has not got (see the log)"
 msgstr[0] "編輯所指定的 {n} 項內容此電腦上沒有（見記錄檔）"
 
-#: crates/greycard-ui/src/panel/deliver.rs:1981
+#: crates/greycard-ui/src/panel/deliver.rs:2000
 msgid "nothing to export"
 msgstr "沒有可匯出的內容"
 
-#: crates/greycard-ui/src/panel/deliver.rs:2023
+#: crates/greycard-ui/src/panel/deliver.rs:2042
 msgid "exporting {n} frame..."
 msgid_plural "exporting {n} frames..."
 msgstr[0] "正在匯出 {n} 張相片..."
 
-#: crates/greycard-ui/src/panel/deliver.rs:2072
+#: crates/greycard-ui/src/panel/deliver.rs:2091
 msgid "{name} is there already"
 msgstr "{name} 已存在"
 
-#: crates/greycard-ui/src/panel/deliver.rs:2073
+#: crates/greycard-ui/src/panel/deliver.rs:2092
 msgid "{n} file is there already"
 msgid_plural "{n} files are there already"
 msgstr[0] "{n} 個檔案已存在"
 
-#: crates/greycard-ui/src/panel/deliver.rs:2083
+#: crates/greycard-ui/src/panel/deliver.rs:2102
 msgid "{title}: overwrite?"
 msgstr "{title}：覆寫？"
 
-#: crates/greycard-ui/src/panel/deliver.rs:2105
+#: crates/greycard-ui/src/panel/deliver.rs:2124
 msgid "export canceled"
 msgstr "已取消匯出"
 
-#: crates/greycard-ui/src/panel/deliver.rs:2131
+#: crates/greycard-ui/src/panel/deliver.rs:2150
 msgid " beside each original"
 msgstr "，位於每張原始相片旁"
 
-#: crates/greycard-ui/src/panel/deliver.rs:2212
+#: crates/greycard-ui/src/panel/deliver.rs:2231
 msgid "Export to a folder"
 msgstr "匯出到資料夾"
 
-#: crates/greycard-ui/src/panel/deliver.rs:2244
+#: crates/greycard-ui/src/panel/deliver.rs:2263
 #: crates/greycard-ui/src/panel/export_queue.rs:504
 msgid "{folder} is not there"
 msgstr "{folder} 不存在"
 
-#: crates/greycard-ui/src/panel/deliver.rs:2245
+#: crates/greycard-ui/src/panel/deliver.rs:2264
 msgid "{folder} is not a folder"
 msgstr "{folder} 不是資料夾"
 
-#: crates/greycard-ui/src/panel/deliver.rs:2264
+#: crates/greycard-ui/src/panel/deliver.rs:2283
 #: crates/greycard-ui/src/sidecars.rs:243
 msgid "{folder} cannot be written to"
 msgstr "無法寫入 {folder}"
 
-#: crates/greycard-ui/src/panel/deliver.rs:2334
+#: crates/greycard-ui/src/panel/deliver.rs:2353
 msgid "choosing the folder exports go to..."
 msgstr "正在選擇匯出資料夾..."
 
-#: crates/greycard-ui/src/panel/deliver.rs:2348
+#: crates/greycard-ui/src/panel/deliver.rs:2367
 msgid "exports go to {folder}"
 msgstr "匯出到 {folder}"
 
-#: crates/greycard-ui/src/panel/deliver.rs:2350
+#: crates/greycard-ui/src/panel/deliver.rs:2369
 msgid "the export folder is as it was"
 msgstr "匯出資料夾未變更"
 
-#: crates/greycard-ui/src/panel/deliver.rs:2358
+#: crates/greycard-ui/src/panel/deliver.rs:2377
 msgid "; the export waiting on {folder} was not started"
 msgstr "；等待 {folder} 的匯出未開始"
 
-#: crates/greycard-ui/src/panel/deliver.rs:2390
+#: crates/greycard-ui/src/panel/deliver.rs:2409
 msgid "stopping the export after the frame in hand..."
 msgstr "完成目前相片後停止匯出..."
 
-#: crates/greycard-ui/src/panel/deliver.rs:2449
+#: crates/greycard-ui/src/panel/deliver.rs:2480
 msgid "export preset {name}"
 msgstr "匯出預設集 {name}"
 
-#: crates/greycard-ui/src/panel/deliver.rs:2466
+#: crates/greycard-ui/src/panel/deliver.rs:2497
 msgid "{none} is the picker's; choose another name"
 msgstr "{none} 是選擇器內建的名稱；請換一個名稱"
 
-#: crates/greycard-ui/src/panel/deliver.rs:2478
+#: crates/greycard-ui/src/panel/deliver.rs:2509
 msgid "export preset {name} saved"
 msgstr "已儲存匯出預設集 {name}"
 
-#: crates/greycard-ui/src/panel/deliver.rs:2503
+#: crates/greycard-ui/src/panel/deliver.rs:2534
 msgid "export preset {name} deleted"
 msgstr "已刪除匯出預設集 {name}"
 
 #. The frame on screen with a panel that is not its own (its
 #. root offline, its sidecar not read): nothing to export, and
 #. the worker's open picture is another frame's.
-#: crates/greycard-ui/src/panel/deliver.rs:2643
+#: crates/greycard-ui/src/panel/deliver.rs:2674
 msgid "nothing is exported"
 msgstr "沒有匯出任何內容"
 
-#: crates/greycard-ui/src/panel/deliver.rs:2690
-#: crates/greycard-ui/src/panel/deliver.rs:2697
-#: crates/greycard-ui/src/panel/deliver.rs:2785
+#: crates/greycard-ui/src/panel/deliver.rs:2721
+#: crates/greycard-ui/src/panel/deliver.rs:2728
+#: crates/greycard-ui/src/panel/deliver.rs:2816
 msgid "not exported: {why}"
 msgstr "未匯出：{why}"
 
-#: crates/greycard-ui/src/panel/deliver.rs:2733
+#: crates/greycard-ui/src/panel/deliver.rs:2764
 msgid "exporting to {folder}..."
 msgstr "正在匯出到 {folder}..."
 
-#: crates/greycard-ui/src/panel/deliver.rs:2765
+#: crates/greycard-ui/src/panel/deliver.rs:2796
 #: crates/greycard-ui/src/panel/edit_in.rs:361
 msgid "not exported: another export is under way"
 msgstr "未匯出：另一項匯出正在進行"
 
-#: crates/greycard-ui/src/panel/deliver.rs:2773
+#: crates/greycard-ui/src/panel/deliver.rs:2804
 msgid "{why}: choose another folder"
 msgstr "{why}：請選擇其他資料夾"
 
-#: crates/greycard-ui/src/panel/deliver.rs:2790
+#: crates/greycard-ui/src/panel/deliver.rs:2821
 msgid "not exported: {why}; {failed}"
 msgstr "未匯出：{why}；{failed}"
 
-#: crates/greycard-ui/src/panel/edit.rs:524
+#: crates/greycard-ui/src/panel/edit.rs:525
 msgid "no demosaic for this mosaic"
 msgstr "沒有適用於此馬賽克的去馬賽克方法"
 
-#: crates/greycard-ui/src/panel/edit.rs:525
+#: crates/greycard-ui/src/panel/edit.rs:526
 msgid "not a mosaic"
 msgstr "不是馬賽克"
 
-#: crates/greycard-ui/src/panel/edit.rs:526
+#: crates/greycard-ui/src/panel/edit.rs:527
 msgid "the raw could not be read"
 msgstr "無法讀取 RAW 檔案"
 
-#: crates/greycard-ui/src/panel/edit.rs:527
+#: crates/greycard-ui/src/panel/edit.rs:528
 msgid "reading the raw"
 msgstr "讀取 RAW 檔案時"
 
 #. The adjustments list: the whole-picture row above the masks
-#: crates/greycard-ui/src/panel/edit.rs:707
+#: crates/greycard-ui/src/panel/edit.rs:709
 msgid "Global"
 msgstr "全域"
 

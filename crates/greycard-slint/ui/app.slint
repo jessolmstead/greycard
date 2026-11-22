@@ -1873,7 +1873,11 @@ export component App inherits Window {
     }
     // The tab shown changed, by a tab or by a frame frozen in the export
     // queue: Find a lens, if it had the focus, is gone with its section.
-    changed shown-tab => { root.turn-sliders-gone(); Typing.lens-filter = false; }
+    changed shown-tab => {
+        root.turn-sliders-gone();
+        Typing.lens-filter = false;
+        LabelColumn.masks = root.shown-tab == "Masks";
+    }
     changed crop-order => { root.turn-sliders-gone(); }
     in-out property <float> geo-vertical: 0;
     in-out property <float> geo-horizontal: 0;
@@ -2095,6 +2099,7 @@ export component App inherits Window {
     in-out property <float> local-clarity: 0;
     in-out property <float> local-structure: 0;
     in-out property <float> local-sharpen: 0;
+    in-out property <float> local-output-sharpen: 0;
     in-out property <float> local-dehaze: 0;
     in-out property <bool> sharpen: true;
     // The lens: what the database found for the file, whether it
@@ -2668,6 +2673,8 @@ export component App inherits Window {
     pure callback export-name-example(string, string, string, string, int, int, int) -> string;
     pure callback export-name-refused(string) -> bool;
     callback export-sheet-opened();
+    /// A frame the sheet would export has an Output sharpen that acts.
+    in-out property <bool> export-output-sharpened: false;
     /// What the file says of where it came from: All, No edit, None.
     in-out property <string> export-metadata: "All";
     /// The watermark: Off, Text or Image, and its settings; the size
@@ -3117,6 +3124,7 @@ export component App inherits Window {
     init => {
         root.ceilings();
         LabelColumn.panel-width = root.right-w;
+        LabelColumn.masks = root.shown-tab == "Masks";
     }
     changed width => { root.ceilings(); }
     changed height => { root.ceilings(); }
@@ -4896,7 +4904,8 @@ export component App inherits Window {
                                 // Structure, Dehaze, and Sharpen: a look
                                 // control, put on at the finish from the bands
                                 // and the sharpen's delta the develop keeps
-                                // beside the picture.
+                                // beside the picture; and its share of the
+                                // output sharpen, put on at the finish.
                                 if section == "detail" && root.shown-tab == "Masks" && root.target > 0: DetailSection {
                                     reorderable: develop-stack.movable;
                                     reorder-started => { develop-stack.start(i); }
@@ -4916,6 +4925,7 @@ export component App inherits Window {
                                     detail-dehaze <=> root.local-dehaze;
                                     local: true;
                                     detail-sharpen <=> root.local-sharpen;
+                                    detail-output-sharpen <=> root.local-output-sharpen;
                                     develop-changed => { root.view-changed(); }
                                 }
                                 if section == "noise" && root.shown-tab == "Develop": NoiseSection {
@@ -6859,6 +6869,7 @@ export component App inherits Window {
         export-name-example(a, b, c, d, e, f, g) => { return root.export-name-example(a, b, c, d, e, f, g); }
         export-name-refused(a) => { return root.export-name-refused(a); }
         sheet-opened => { root.export-sheet-opened(); }
+        output-sharpened: root.export-output-sharpened;
         export-metadata <=> root.export-metadata;
         export-mark <=> root.export-mark;
         export-mark-text <=> root.export-mark-text;
