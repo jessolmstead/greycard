@@ -166,6 +166,15 @@ the reasoning lives in `docs/notes.md`.
       monitor profile is the lead
 - [ ] "Finding people" ran forever and the masks broke after, on
       Windows (issue 44): waits on the reporter's log
+- [ ] An 8-bit export is not dithered, which may band a smooth
+      gradient where Lightroom's does not (discussion 59, 2026-11-22);
+      unverified, waits on the tester's raw and both exports
+- [ ] Grain in an export made larger than the frame: check that it is
+      drawn at the export's size and not scaled with the picture (a
+      pixls tester, 2026-11-22); unverified
+- [ ] Slint built without its default features, so its OpenGL
+      renderer and glutin leave the binary (discussion 168); check
+      `cargo tree -i glutin` first
 - [ ] A right-click while a menu is open does not close it, on
       Windows (issue 179); unverified here
 - [ ] The native context menu on Windows opens away from the pointer
@@ -1344,6 +1353,8 @@ clears or a tester asks for it.
 #### User Requests
 
 - [ ] MIDI Controller support
+- [ ] The filter bar's Kind row shown disabled, not hidden, where
+      the frames hold one kind (discussion 59, 2026-11-22)
 - [ ] A `{total}` token in the import's and the export's Name, for
       "3 of 40", and renaming files already in the library by a
       pattern (discussion 59)
