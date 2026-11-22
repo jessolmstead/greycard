@@ -33,7 +33,9 @@ complete, battle-tested editor.
   raw. The library index makes finding and filtering fast without
   owning your photos.
 - **Works across machines.** Cull a shoot on a NAS from local
-  previews, and keep an archive drive in step with your edits.
+  previews, and edit it on a laptop and a desktop: each save goes to
+  the NAS's copy, and edits made on both are joined, neither lost
+  ([how](docs/guide/archives.md#working-on-two-computers)).
 - **Local AI masks** for subjects, objects, skies and people, down to
   eyes, lips, hair and clothing. All on your machine, and nothing
   phones home: the network is used to fetch a model or the lens

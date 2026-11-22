@@ -7,8 +7,10 @@ from it, keep the two copies' edits in step, and clear your rejects
 off it.
 
 Use this when you shoot to a laptop and keep everything on a bigger
-drive. If all your work lives in one place, you don't need it. Roots
-themselves are covered in [Folders and the library](library.md).
+drive, or when you edit on two computers, such as a laptop and a
+desktop ([Working on two computers](#working-on-two-computers)). If
+all your work lives in one place, you don't need it. Roots themselves
+are covered in [Folders and the library](library.md).
 
 ## Marking a root as an archive
 
@@ -46,8 +48,9 @@ the selection.
 - A frame already on the archive is not copied again, even under
   another folder or another name there. greycard recognizes it by its
   content.
-- If the copy there has an older edit, only the sidecar is updated.
-  If both copies were edited, the edits are joined (see below).
+- If one copy's edit is behind the other's, only its sidecar is
+  updated, on whichever side it is. If both copies were edited, the
+  edits are joined (see [One frame in two places](#one-frame-in-two-places)).
 - A file of the same name that is a different picture is left alone,
   and the sheet names it.
 - `rejects` folders are left out. Tick **Include the rejects folder**
@@ -107,6 +110,58 @@ it.
 A frame that is already here is not copied. Its sidecar is updated or
 joined as with **Back up**. The same checks, bar and **Cancel** apply.
 
+## Working on two computers
+
+A laptop and a desktop can share their shoots through one archive,
+such as a NAS both can reach. Each computer works on a copy of its
+own, and the archive's copy carries the edits between them.
+
+1. On each computer, add the NAS as a root and choose **Use as an
+   archive**. Keep your shoots under a local root.
+2. On the computer that has the shoot, **Back up** its folder.
+3. On the other, open the shoot in the archive's view and
+   **Bring back** a copy. You can also edit it on the archive
+   directly, while the NAS is there.
+4. Edit on either. Each save also goes to the archive's copy.
+
+The other computer's edits don't come over by themselves, and
+greycard doesn't check the archive when you open a frame or a folder.
+They arrive when you:
+
+- run **Back up** on the folder, or **Bring back** from the archive's
+  view. With nothing else to copy, its button reads **Copy the
+  sidecars of 12 frames**.
+- save that frame here. greycard finds the archive's copy changed and
+  joins the two.
+
+So run **Back up** on a shoot before you work on it on the second
+computer. A frame only the other computer changed then takes its edit
+whole. Save a frame here first, even a rating, and this computer's
+edit stays on top, with the other's one undo away in History (see
+[One frame in two places](#one-frame-in-two-places)).
+
+Collections, smart collections, and stacks go with the folders they
+touch: to the archive from a folder you have backed up from that
+computer, and to the other computer when it next looks the archive
+over ([A root on a network share](library.md#a-root-on-a-network-share)).
+A collection changed on both is kept twice, the earlier one named for
+its computer, such as "Selects (on laptop)".
+
+Some things stay where they were made:
+
+- exported files, presets, fitted looks, and settings (copy presets
+  and looks yourself, as [Presets](presets-and-history.md) and
+  [Fitting your camera's look](camera-match.md) say)
+- a delete: the frame stays on the archive and on the other computer
+- the collections and stacks of a shoot copied to the NAS outside
+  greycard, until you run **Back up** on its folder once
+
+Keep both computers' clocks right, and both on the same version of
+greycard. The clocks decide which edit is on top when both changed.
+An older version can't read a newer one's edits and leaves them
+alone: its own saves to those frames wait in the status line, and
+**Back up** skips them.
+
 ## One frame in two places
 
 A frame on your laptop and its copy on the archive are treated as one
@@ -115,16 +170,22 @@ frame.
 - **All roots** lists it once, from the local copy. If the local copy
   is gone or its drive is offline, it is listed from the archive.
 - Every time you save an edit, rating or flag, greycard also writes it
-  to the archive's copy, in the background.
+  to the archive's copy, in the background. A quick run of saves is
+  one write.
 - If the archive is offline, the status line counts what is waiting,
-  such as "3 edits waiting for Archive". They are written when it
-  answers again. Click the note to try now.
-- If you edited both copies separately, on two computers for example,
-  greycard joins them instead of picking one. The more recent edit is
-  the one you see, and both histories are kept, so the other is a
-  click away in History. The join is a step called "Reconciled with
-  the copy on" and the other computer's name. Ratings, flags and
-  labels each keep their most recent change.
+  such as "3 edits waiting for Archive". The list is kept when you
+  quit. It is written when greycard next finds the archive answering,
+  or when you save the frame again. Click the note to try now.
+- Before it writes, greycard checks whether the archive's copy
+  changed since it last wrote there. If it did, the two are compared
+  instead of one written over the other.
+- A copy that is only behind takes the other's edit. If you edited
+  both copies separately, on two computers for example, greycard
+  joins them instead of picking one. The edit of the copy saved last,
+  by its computer's clock, is the one you see. Both histories are
+  kept: the join is a step called "Reconciled with the copy on" and a
+  computer's name, and one undo brings back that computer's edit.
+  Ratings, flags and labels each keep their most recent change.
 - If a frame's drive goes offline while it is open, greycard can carry
   on from the archive's copy, and the status line says so. When you
   quit, the last edit you made there is written to the archive's copy
@@ -135,6 +196,10 @@ frame.
 If a frame has two copies on the archive and greycard can't tell which
 is its own, the note adds "can't tell which copy is its own". Back up
 that frame's folder once, so greycard knows where it goes.
+
+A frame turned a quarter on one computer and changed on the other can
+come out of a join with its crop, masks, and retouch a quarter turn
+off. Check such a frame after a join.
 
 ## Remove rejects from an archive
 

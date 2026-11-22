@@ -515,6 +515,9 @@ at the time, so it fills itself as you rate and label.
 
 Each collection is a small file in a `collections` folder beside the
 library index (see [Settings](settings.md#where-greycard-keeps-its-files)).
+A copy also goes into the shoot folders it touches, which is how it
+reaches another computer through an archive
+([Working on two computers](archives.md#working-on-two-computers)).
 
 ## Where your edits live
 

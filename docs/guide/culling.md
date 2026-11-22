@@ -325,9 +325,10 @@ top, until you open it.
 - **Move rejects** moves every rejected frame of the folder, including
   rejected frames behind a closed top. A frame moved out, or deleted,
   leaves its stack; Move back brings it back as a frame of its own.
-- Stacks are kept with your collections, on this machine. A stack
-  whose frame you rename in its folder follows it, and so does one
-  whose folder you rename under a root of the library, open or
+- Stacks are kept with your collections, and travel with them
+  ([Where collections are kept](library.md#where-collections-are-kept)).
+  A stack whose frame you rename in its folder follows it, and so does
+  one whose folder you rename under a root of the library, open or
   closed; a frame moved to another folder leaves its stack.
 
 `greycard library list` shows a closed stack's top alone, marked

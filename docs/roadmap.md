@@ -7,6 +7,10 @@ the reasoning lives in `docs/notes.md`.
 
 ## Bugs
 
+- [ ] The Back up sheet says "N frames already there have newer
+      sidecars here" for every sidecar-only item, also when the
+      archive's edit is the newer one coming home, or a join
+      (`panel/archive.rs`, `sidecars_only`)
 - [ ] A window test that finds a control by its label or its place can
       pass for the wrong reason: the panel builds only the sections in
       view, so what it finds depends on the window's height. One failed

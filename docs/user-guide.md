@@ -154,7 +154,10 @@ Working with your photos:
   a Lightroom Classic catalog
 - [Culling and rating](guide/culling.md): ratings, flags, labels,
   the lightbox, stacks, rejects and deleting
-- [Archives and backup](guide/archives.md)
+- [Archives and backup](guide/archives.md): a NAS or a big drive as
+  the long-term copy, back up and bring back, and
+  [working on two computers](guide/archives.md#working-on-two-computers),
+  such as a laptop and a desktop, with edits synced through it
 
 Editing:
 

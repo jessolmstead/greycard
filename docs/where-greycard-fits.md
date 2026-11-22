@@ -116,7 +116,7 @@ is in `roadmap.md`; nothing planned is counted as done.
 | Denoise | AI, local | conventional | DeepPRIME | profiled | profiled | profiled, and a raw-domain network that runs locally |
 | Masks | AI people, sky, objects | layers | limited | parametric, drawn | local adjustments | gradient, radial, brush, by lightness and color; subject, object, sky, landscape and people's parts by model |
 | Retouch | remove, generative | heal, clone | limited | retouch | spot removal | heal, clone, learned fill |
-| Library | the catalog is the truth | sessions and catalogs | weak | database plus sidecars | file browser | folders as truth, index as cache; browsable offline, archive backup; collections by content, surviving a move |
+| Library | the catalog is the truth | sessions and catalogs | weak | database plus sidecars | file browser | folders as truth, index as cache; browsable offline, archive backup; edits on two computers joined through the archive; collections by content, surviving a move |
 | Culling speed | fast, embedded previews | fast | slow | slow | slow | fast, from the embedded JPEG, or a local preview for an offline or network drive |
 | Tethering | basic | the reference | none | gphoto2 | none | planned |
 | Stacking | HDR, panorama | none | none | none | none | HDR, panorama, and focus, each to a linear DNG from the frame menu |
@@ -137,7 +137,7 @@ and Olympus and OM System bodies.
 
 Not yet for anyone whose camera rawler does not decode; support
 goes upstream to rawler, not into a fork. A phone app, cloud sync and a preset marketplace are not
-planned.
+planned; two computers share edits through a drive or NAS of your own.
 
 ## Where it stands
 
@@ -170,8 +170,10 @@ Built, as of 0.12.0:
   the filter with chips and takes a filter language. Ratings, flags
   and labels in the sidecar and in XMP, so they travel to Lightroom
   and darktable. A share that stops answering never holds the window.
-  Archives backed up by hash and joined edit by edit. Collections
-  that follow a picture through a move. Import from a card with
+  Archives backed up by hash, each save written to the archive's
+  copy, and a shoot edited on two computers joined with both
+  histories kept, collections and stacks too. Collections that follow
+  a picture through a move. Import from a card with
   renaming and a verified backup, or a folder added where it is. A
   Lightroom Classic catalog brought across whole, and a Lightroom
   XMP's edit opened beside its raw. A focus score for every frame.
