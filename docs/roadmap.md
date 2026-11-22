@@ -777,6 +777,18 @@ touches.
 
 - [ ] The editor's `--export` flag dropped, one release after §514
       made it an alias of `greycard export`
+- [ ] Process versions, the foundation: each state records the
+      rendering it was made under (schema 10), and until 1.0 nothing is
+      kept by it. Waits on the sidecar branch
+- [ ] A render gate: fixture edits whose pictures the gates compare
+      with kept ones, so a change that moves a picture is a decision,
+      takes a new process number, and gets its changelog line
+- [ ] The choices an edit looks up, recorded in it: the learned
+      denoiser's model beside its tier, and the lens matched
+- [ ] A generative fill kept as made, and not made again because the
+      fill's version moved
+- [ ] At 1.0, prior process versions offered: an edit keeps the
+      rendering it was made under until its owner updates it
 
 ---
 
