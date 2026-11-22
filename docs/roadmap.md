@@ -560,6 +560,9 @@ Directories stay the truth; the catalog is a rebuildable index (§72).
 A moved shoot is found, not flagged missing, and a Lightroom catalog
 comes across with its ratings and collections.
 
+- [ ] An edit made on another computer arrives when its frame or
+      folder is opened: today the archive's copy is compared only
+      before our own write to it, or at Back up and Bring back (§244)
 - [ ] `.ori` offered to greycard by the system: the Linux desktop
       entry and the Mac's Info.plist do not name it (shared-mime-info
       has no type, Apple's `com.olympus.raw-image` is `.orf`), so it
