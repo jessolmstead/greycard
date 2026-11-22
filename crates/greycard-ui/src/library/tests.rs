@@ -736,6 +736,71 @@ fn a_range_writes_its_terms_and_shows_the_typed_ones() {
     crate::testing::remove_dir_retry(&dir);
 }
 
+/// The grid's header has room for every row its filter bar draws: with
+/// the ranges' row up, side by side at a wide window and one under the
+/// other at a narrow one, the second facet row (kind, day, and keyword)
+/// still sits whole above the sheet rather than clipped under it.
+#[test]
+fn the_grid_header_holds_both_facet_rows_under_the_ranges() {
+    use i_slint_backend_testing::ElementHandle;
+    use slint::Model;
+
+    use crate::testing::{settle, state_for, window};
+    let dir = scratch("header-rows");
+    let app = window(0);
+    let (files, sidecars, reader) = folder(&dir);
+    let (state, _worker) = state_for(&app, files);
+    {
+        let mut st = state.borrow_mut();
+        st.sidecars = sidecars;
+        st.views.index_reader = Some(reader);
+        refresh_ids(&mut st);
+        crate::panel::browser::rebuild_browser(&mut st, &app);
+    }
+    assert!(app.get_filter_facets_long().row_count() > 0, "camera, lens");
+    assert!(
+        app.get_filter_facets_short().row_count() > 0,
+        "day, keyword"
+    );
+    app.set_filter_bar(true);
+    app.set_grid_open(true);
+    // The ranges side by side, then one under the other.
+    for (width, ranges_rows) in [(1500.0, 1), (420.0, 2)] {
+        app.window().set_size(slint::LogicalSize::new(width, 900.0));
+        settle(&app);
+        let sheet = ElementHandle::find_by_element_id(&app, "GridSheet::grid-sheet")
+            .next()
+            .expect("the sheet");
+        let (sheet_at, sheet_size) = crate::testing::bounds_of(&sheet);
+        let in_header = |e: &ElementHandle| {
+            let at = e.absolute_position();
+            at.x >= sheet_at.x && at.x < sheet_at.x + sheet_size.width && at.y < sheet_at.y
+        };
+        let mut ranges: Vec<f32> = ElementHandle::find_by_element_type_name(&app, "RangeRow")
+            .filter(in_header)
+            .map(|r| r.absolute_position().y)
+            .collect();
+        ranges.dedup_by(|a, b| (*a - *b).abs() < 1.0);
+        assert_eq!(ranges.len(), ranges_rows, "at {width} px: {ranges:?}");
+        let rows: Vec<(f32, f32)> = ElementHandle::find_by_element_id(&app, "FacetChips::flick")
+            .filter(in_header)
+            .map(|f| (f.absolute_position().y, f.size().height))
+            .collect();
+        assert_eq!(rows.len(), 2, "at {width} px: {rows:?}");
+        for (y, h) in rows {
+            assert!(
+                y + h <= sheet_at.y + 0.5,
+                "at {width} px a facet row at {y}..{} runs under the sheet at {}",
+                y + h,
+                sheet_at.y
+            );
+        }
+    }
+    state.borrow_mut().views.index_reader = None;
+    drop(state);
+    crate::testing::remove_dir_retry(&dir);
+}
+
 /// ISO and the focal length have no chips: `--filter iso:3200` at
 /// launch, and an older build's chips kept in a filter, come in as
 /// the range's terms in the text, and the range shows them and

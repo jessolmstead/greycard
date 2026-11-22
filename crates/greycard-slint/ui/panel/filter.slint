@@ -247,6 +247,24 @@ component RangeRow inherits HorizontalLayout {
     if root.last <= 0: Rectangle { horizontal-stretch: 1; }
 }
 
+// The header's ranges' row: the bar lays it out by these, and the grid
+// sizes its header by them, so the room it spells out holds the row.
+export global HeaderRanges {
+    /// Side by side where both fit at their least (220 px each and the
+    /// gap) in a bar `width` wide, else one under the other.
+    public pure function side-by-side(width: length) -> bool {
+        return width >= 2 * 220px + Theme.space-5;
+    }
+    /// The height the ranges take in a bar `width` wide, with the gap
+    /// above them: none for a range of fewer than two values.
+    public pure function room(iso: bool, focal: bool, width: length) -> length {
+        let n = (iso ? 1 : 0) + (focal ? 1 : 0);
+        let rows = n == 0 ? 0 : HeaderRanges.side-by-side(width) ? 1 : n;
+        return rows == 0 ? 0px
+            : rows * (Theme.control-height - 4px) + (rows - 1) * Theme.space-1 + Theme.space-2;
+    }
+}
+
 // The Sort button and its menu: at the end of the filter bar, and on
 // the grid's top row while the bar is put away. The button says what
 // the list is by and which way up, and opens the menu.
@@ -396,7 +414,7 @@ export component FilterBar inherits Rectangle {
     // where both fit at their least (220 px each and the gap), else one
     // under the other.
     property <bool> ranges-shown: root.iso-range.values.length > 1 || root.focal-range.values.length > 1;
-    property <bool> ranges-side-by-side: root.ranges-shown && root.width >= 2 * 220px + Theme.space-5;
+    property <bool> ranges-side-by-side: root.ranges-shown && HeaderRanges.side-by-side(root.width);
     property <bool> ranges-one-under-other: root.ranges-shown && !root.ranges-side-by-side;
     Rectangle {
         width: 0px;

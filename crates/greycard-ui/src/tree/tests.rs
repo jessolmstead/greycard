@@ -1336,11 +1336,12 @@ fn the_tiles_shift_the_cells_and_the_keys_skip_them() {
     let top = crate::grid::tiles_top(1, 176.0, 6);
     assert_eq!(top, 92.0);
     assert_eq!(seen.borrow().last().map(|r| (r.2, r.3)), Some((6, top)));
-    // The tile at the sheet's first place: under the header (145)
-    // and the padding, at the pane's edge (240), the padding and
-    // the slack beside six cells in 1,260.
+    // The tile at the sheet's first place: under the header (its two
+    // rows of controls, two of facets, and the ranges' row, 177) and
+    // the padding, at the pane's edge (240), the padding and the slack
+    // beside six cells in 1,260.
     let slack = crate::grid::slack(1260.0, 176.0, 6);
-    let (x0, y0) = (240.0 + crate::grid::PAD + slack, 145.0 + crate::grid::PAD);
+    let (x0, y0) = (240.0 + crate::grid::PAD + slack, 177.0 + crate::grid::PAD);
     let (at, size) = crate::testing::by_key(&app, FOLDER_TILE, "export");
     assert_eq!((at.x, at.y), (x0, y0));
     assert_eq!((size.width, size.height), (176.0, 88.0));

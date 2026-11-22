@@ -87,6 +87,9 @@ design note behind it.
 
 ### Fixes
 
+- The grid's filter bar shows its Kind, Style, Day, and Keyword chips
+  again: the ISO and Focal ranges had pushed that row out of sight
+  (discussion 59).
 - A frame's edited thumbnail and preview are kept when a mask's picture
   or a Fill's round runs just ahead of its develop.
 - A Fill over a large, strongly colored object removes it; kept fills

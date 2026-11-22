@@ -5,7 +5,7 @@
 import { Theme } from "../theme.slint";
 import { Thumb, ThumbCell, FilterChip, FacetRow, FacetRange, FolderTile, SortMenu, GridHead, GridPlace } from "../structs.slint";
 import { ButtonKeys, NameTip, PanelButton, ScrollBand, SizeSlider, ThumbBadges, ThumbMarks, ThumbStack, ThumbTag, TipArea } from "../controls.slint";
-import { FilterBar, SortButton } from "filter.slint";
+import { FilterBar, HeaderRanges, SortButton } from "filter.slint";
 import { LoadingCard } from "loading.slint";
 
 // A button on the lightbox's bar: an icon alone on the bar's dark
@@ -394,10 +394,15 @@ export component GridSheet inherits Rectangle {
             // folder's worth of thumbnails asked for again. The
             // facets' rows are there before the index has anything to
             // put in them for the same reason, and a row the folder
-            // has no facet for leaves its room empty.
+            // has no facet for leaves its room empty. The ranges' row,
+            // between them, is there only while a range has values,
+            // and the header grows by it: room left for it always would
+            // be a gap over most folders.
             height: root.lightbox ? 0px
                 : root.filter-bar ? 2 * Theme.control-height + 2 * (Theme.control-height - 4px)
                     + 5 * Theme.space-2 + 1px
+                    + HeaderRanges.room(root.filter-iso-range.values.length > 1,
+                        root.filter-focal-range.values.length > 1, self.width - 2 * Theme.space-4)
                 : Theme.control-height + 2 * Theme.space-2 + 1px;
             clip: true;
             background: Theme.surface;
