@@ -425,6 +425,46 @@ fn the_window_selects_a_bundled_language() {
     assert_eq!(crate::i18n::selected(), "");
 }
 
+/// Japanese's face goes into Slint's own collection (this thread's)
+/// without emptying a generic family Slint's text asks for, and the
+/// first face those families give, the Latin one, stays. Called as the
+/// start calls it, without the start's selecting of the language, which
+/// would turn the words of the tests beside it.
+#[test]
+fn a_cjk_face_keeps_slints_generic_families_resolving() {
+    use slint::fontique_012::fontique::{GenericFamily, QueryFamily, QueryStatus, SourceCache};
+    let _app = crate::testing::window(0);
+    let generics = [GenericFamily::SystemUi, GenericFamily::SansSerif];
+    let first_face = || {
+        let mut c = slint::fontique_012::shared_collection();
+        let mut cache = SourceCache::default();
+        let mut query = c.query(&mut cache);
+        query.set_families(generics.map(QueryFamily::Generic));
+        let mut found = None;
+        query.matches_with(|f| {
+            found = Some((f.family, f.index));
+            QueryStatus::Stop
+        });
+        found
+    };
+    let Some(before) = first_face() else {
+        eprintln!("a_cjk_face_keeps_slints_generic_families_resolving: skipped, no system fonts");
+        return;
+    };
+    let held = |g| {
+        slint::fontique_012::shared_collection()
+            .generic_families(g)
+            .next()
+            .is_some()
+    };
+    let had = generics.map(held);
+    crate::i18n::face::apply("ja");
+    for (g, had) in generics.into_iter().zip(had) {
+        assert!(!had || held(g), "{g:?} has no families after the rewrite");
+    }
+    assert_eq!(first_face(), Some(before));
+}
+
 /// The Language row lists System, English and each catalog's
 /// language in its own name; a choice is the tag the setting keeps,
 /// System empty, and an unknown tag shows as System.

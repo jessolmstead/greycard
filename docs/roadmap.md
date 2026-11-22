@@ -803,6 +803,9 @@ clears or a tester asks for it.
       the noise model's choices; a new mask's default name. And the
       filter's flag chips share the frame menu's verbs ("Pick",
       "Reject"): a "flag" context of their own
+- [ ] A CJK region's typeface for a user whose window is in another
+      language (from the system's locale), and in the watermark's
+      own font collection (§727)
 - [ ] The draft catalogs (de, es, it, nl, pl, pt_BR, zh_CN) read by native
       speakers; each has its glossary and the choices most in doubt
       listed for the reader

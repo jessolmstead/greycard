@@ -7506,47 +7506,47 @@ msgstr[1] " {n} anciennes copies supprimées de l'autre emplacement."
 msgid " {k} could not be moved; the log says why."
 msgstr " {k} n'ont pas pu être déplacés ; consultez le journal."
 
-#: crates/greycard-ui/src/panel/prefs.rs:463
+#: crates/greycard-ui/src/panel/prefs.rs:467
 msgid "No cache folder: thumbnails are rebuilt each time."
 msgstr "Aucun dossier de cache : les vignettes sont recréées à chaque fois."
 
-#: crates/greycard-ui/src/panel/prefs.rs:464
+#: crates/greycard-ui/src/panel/prefs.rs:468
 msgid "Counting..."
 msgstr "Décompte..."
 
-#: crates/greycard-ui/src/panel/prefs.rs:466
+#: crates/greycard-ui/src/panel/prefs.rs:470
 msgid "Off: thumbnails are rebuilt each time."
 msgstr "Désactivé : les vignettes sont recréées à chaque fois."
 
-#: crates/greycard-ui/src/panel/prefs.rs:471
+#: crates/greycard-ui/src/panel/prefs.rs:475
 msgid "Off. {n} picture from before, {mb} MB."
 msgid_plural "Off. {n} pictures from before, {mb} MB."
 msgstr[0] "Désactivé. {n} photo antérieure, {mb} Mo."
 msgstr[1] "Désactivé. {n} photos antérieures, {mb} Mo."
 
-#: crates/greycard-ui/src/panel/prefs.rs:482
+#: crates/greycard-ui/src/panel/prefs.rs:486
 msgid "{n} thumbnail kept, {mb} MB of {cap} MB."
 msgid_plural "{n} thumbnails kept, {mb} MB of {cap} MB."
 msgstr[0] "{n} vignette conservée, {mb} Mo sur {cap} Mo."
 msgstr[1] "{n} vignettes conservées, {mb} Mo sur {cap} Mo."
 
-#: crates/greycard-ui/src/panel/prefs.rs:490
+#: crates/greycard-ui/src/panel/prefs.rs:494
 msgid "{thumbs} {n} preview from before, {mb} MB."
 msgid_plural "{thumbs} {n} previews from before, {mb} MB."
 msgstr[0] "{thumbs} {n} aperçu antérieur, {mb} Mo."
 msgstr[1] "{thumbs} {n} aperçus antérieurs, {mb} Mo."
 
-#: crates/greycard-ui/src/panel/prefs.rs:496
+#: crates/greycard-ui/src/panel/prefs.rs:500
 msgid "{thumbs} {n} local preview, {mb} MB of {cap} MB."
 msgid_plural "{thumbs} {n} local previews, {mb} MB of {cap} MB."
 msgstr[0] "{thumbs} {n} aperçu local, {mb} Mo sur {cap} Mo."
 msgstr[1] "{thumbs} {n} aperçus locaux, {mb} Mo sur {cap} Mo."
 
-#: crates/greycard-ui/src/panel/prefs.rs:1118
+#: crates/greycard-ui/src/panel/prefs.rs:1122
 msgid "Moving the sidecars..."
 msgstr "Déplacement des fichiers annexes..."
 
-#: crates/greycard-ui/src/panel/prefs.rs:1139
+#: crates/greycard-ui/src/panel/prefs.rs:1143
 msgid "The sidecars couldn't be moved; see the log."
 msgstr "Impossible de déplacer les fichiers annexes ; voir le journal."
 

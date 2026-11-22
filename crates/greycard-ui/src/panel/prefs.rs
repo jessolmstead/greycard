@@ -158,8 +158,9 @@ pub(crate) fn keep(st: &State, change: impl FnOnce(&mut settings::Settings)) {
 /// made and before it shows: the setting's catalog (a regional tag
 /// takes its language's), or the system's for System or for a setting
 /// no catalog matches; English when neither has one. Both sides take
-/// it, Slint's bundled catalogs and `tr!`. The Language row is shown
-/// with the setting.
+/// it, Slint's bundled catalogs and `tr!`, and Japanese, Chinese, or
+/// Korean takes its region's typeface. The Language row is shown with
+/// the setting.
 pub(crate) fn start_language(app: &App, setting: &str) {
     let chosen = crate::i18n::pick(setting);
     let language = if setting == "en" {
@@ -177,6 +178,9 @@ pub(crate) fn start_language(app: &App, setting: &str) {
         "language {:?} (setting {setting:?})",
         if language.is_empty() { "en" } else { language }
     );
+    // Before anything is drawn: Slint keeps text it has shaped without
+    // noting a change of fonts, so a string shaped earlier keeps its face.
+    crate::i18n::face::apply(language);
     show_languages(app, setting);
 }
 

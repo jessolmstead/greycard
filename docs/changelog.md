@@ -7,6 +7,9 @@ design note behind it.
 
 ### The window
 
+- Japanese, Chinese, and Korean text is drawn in its own region's
+  typeface where the system has one; Linux needs a CJK font installed
+  ([§727](https://github.com/jessolmstead/greycard/blob/master/docs/notes/727-cjk-text-in-its-region-s-typeface.md)).
 - Each white balance preset has an icon beside it in the menu: sun,
   cloud, shade, bulb, tube, and flash.
 - ART's `.arp` profiles beside a raw are offered and imported as

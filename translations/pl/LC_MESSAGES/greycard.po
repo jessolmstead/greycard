@@ -7614,52 +7614,52 @@ msgstr[2] " Usunięto {n} starszych kopii z drugiego miejsca."
 msgid " {k} could not be moved; the log says why."
 msgstr " Nie udało się przenieść: {k}; przyczyna w dzienniku."
 
-#: crates/greycard-ui/src/panel/prefs.rs:463
+#: crates/greycard-ui/src/panel/prefs.rs:467
 msgid "No cache folder: thumbnails are rebuilt each time."
 msgstr ""
 "Brak folderu pamięci podręcznej: miniatury są tworzone za każdym razem."
 
-#: crates/greycard-ui/src/panel/prefs.rs:464
+#: crates/greycard-ui/src/panel/prefs.rs:468
 msgid "Counting..."
 msgstr "Liczenie..."
 
-#: crates/greycard-ui/src/panel/prefs.rs:466
+#: crates/greycard-ui/src/panel/prefs.rs:470
 msgid "Off: thumbnails are rebuilt each time."
 msgstr "Wyłączone: miniatury są tworzone za każdym razem."
 
-#: crates/greycard-ui/src/panel/prefs.rs:471
+#: crates/greycard-ui/src/panel/prefs.rs:475
 msgid "Off. {n} picture from before, {mb} MB."
 msgid_plural "Off. {n} pictures from before, {mb} MB."
 msgstr[0] "Wyłączone. Zostało z wcześniej: {n}, {mb} MB."
 msgstr[1] "Wyłączone. Zostało z wcześniej: {n}, {mb} MB."
 msgstr[2] "Wyłączone. Zostało z wcześniej: {n}, {mb} MB."
 
-#: crates/greycard-ui/src/panel/prefs.rs:482
+#: crates/greycard-ui/src/panel/prefs.rs:486
 msgid "{n} thumbnail kept, {mb} MB of {cap} MB."
 msgid_plural "{n} thumbnails kept, {mb} MB of {cap} MB."
 msgstr[0] "{n} miniatura w pamięci, {mb} MB z {cap} MB."
 msgstr[1] "{n} miniatury w pamięci, {mb} MB z {cap} MB."
 msgstr[2] "{n} miniatur w pamięci, {mb} MB z {cap} MB."
 
-#: crates/greycard-ui/src/panel/prefs.rs:490
+#: crates/greycard-ui/src/panel/prefs.rs:494
 msgid "{thumbs} {n} preview from before, {mb} MB."
 msgid_plural "{thumbs} {n} previews from before, {mb} MB."
 msgstr[0] "{thumbs} {n} wcześniejszy podgląd, {mb} MB."
 msgstr[1] "{thumbs} {n} wcześniejsze podglądy, {mb} MB."
 msgstr[2] "{thumbs} {n} wcześniejszych podglądów, {mb} MB."
 
-#: crates/greycard-ui/src/panel/prefs.rs:496
+#: crates/greycard-ui/src/panel/prefs.rs:500
 msgid "{thumbs} {n} local preview, {mb} MB of {cap} MB."
 msgid_plural "{thumbs} {n} local previews, {mb} MB of {cap} MB."
 msgstr[0] "{thumbs} {n} lokalny podgląd, {mb} MB z {cap} MB."
 msgstr[1] "{thumbs} {n} lokalne podglądy, {mb} MB z {cap} MB."
 msgstr[2] "{thumbs} {n} lokalnych podglądów, {mb} MB z {cap} MB."
 
-#: crates/greycard-ui/src/panel/prefs.rs:1118
+#: crates/greycard-ui/src/panel/prefs.rs:1122
 msgid "Moving the sidecars..."
 msgstr "Przenoszenie plików pomocniczych..."
 
-#: crates/greycard-ui/src/panel/prefs.rs:1139
+#: crates/greycard-ui/src/panel/prefs.rs:1143
 msgid "The sidecars couldn't be moved; see the log."
 msgstr "Nie udało się przenieść plików pomocniczych; szczegóły w dzienniku."
 

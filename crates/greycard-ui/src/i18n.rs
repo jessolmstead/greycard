@@ -17,6 +17,7 @@ use std::fmt::Display;
 use std::sync::LazyLock;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
+pub mod face;
 mod plural;
 // Read by the build script, which includes it by its path, and by the
 // tests' own catalogs.

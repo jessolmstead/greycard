@@ -62,7 +62,12 @@ frames.
 The window's language: **System** (default) follows your system's, or
 pick **English** or a translation, each shown in its own name, such
 as **Français**. An unknown saved language falls back to the system's language.
-The change takes effect the next time greycard starts.
+The change takes effect the next time greycard starts. When the list
+has Japanese, Chinese, or Korean, Linux needs Noto Sans CJK to show
+them, from your distribution's package for it (`noto-fonts-cjk` on
+Arch, `fonts-noto-cjk` on Debian and Ubuntu,
+`google-noto-sans-cjk-fonts` on Fedora); without it their text shows
+as boxes.
 
 ### One section open at a time
 

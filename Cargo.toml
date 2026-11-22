@@ -87,8 +87,10 @@ windows-sys = "0.59"
 winresource = "0.1"
 # One Slint for greycard-slint and greycard-ui: the editor's whole
 # feature list, so the two crates name the same Slint. Build
-# greycard-slint through greycard-ui (see its manifest).
-slint = { version = "1.19", features = ["unstable-wgpu-30", "unstable-winit-030", "renderer-femtovg-wgpu"] }
+# greycard-slint through greycard-ui (see its manifest). Fontique's
+# shared collection places a CJK language's regional face
+# (greycard-ui's `i18n::face`).
+slint = { version = "1.19", features = ["unstable-wgpu-30", "unstable-winit-030", "renderer-femtovg-wgpu", "unstable-fontique-012"] }
 
 # The pinned branch, float-deflate-pin, is upstream main at 01f3f092
 # (which has dnglab/dnglab#840, the EOS R6 Mark II's white level, and

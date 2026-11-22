@@ -33,6 +33,13 @@ users with the next release.
 5. Open a pull request with the one file. If your language's name in
    itself is not yet in the Language list, say so in the pull request.
 
+greycard bundles no font. Japanese, Chinese, and Korean take their
+region's typeface from the system's fonts, so shared ideographs keep
+their own forms. Windows and macOS ship these fonts; Linux needs Noto
+Sans CJK installed, from your distribution's package for it
+(`noto-fonts-cjk` on Arch, `fonts-noto-cjk` on Debian and Ubuntu,
+`google-noto-sans-cjk-fonts` on Fedora), or the text shows as boxes.
+
 To update a catalog after the window's wording changed, run
 `scripts/translations.sh` (see [building.md](building.md)) or ask in
 the pull request: new strings arrive empty and changed ones fuzzy.
