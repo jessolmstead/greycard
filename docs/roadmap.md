@@ -944,6 +944,10 @@ clears or a tester asks for it.
       first (§498)
 - [ ] The panel's look, refined as the editor grows (§14); in develop
       order on Develop, Crop, Masks and Retouch tabs since 2026-09-14
+- [ ] The gamut op after a look under AgX: today a look table that
+      pushes an AgX picture's colors out of range has them cut per
+      channel. Waits on the gamut op's landing, then the owner's eye
+      on a comparison, and a measure of how far existing matches move
 - [ ] Export to an ICC profile the user loads, matrix or table
       (discussion 193)
 - [ ] ProPhoto as an export color space, beside sRGB, Display P3,
