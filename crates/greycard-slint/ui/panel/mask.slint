@@ -155,6 +155,8 @@ export component AdjustmentsList inherits Section {
                 for name[i] in root.adjustment-names: mask-item := Rectangle {
                     accessible-role: button;
                     accessible-label: name;
+                    // Its key, for automation: its place, 0 Global.
+                    accessible-id: i;
                     // A press while a menu is up is nothing, as a
                     // click then only closes it: Slint's menu leaves
                     // the window's other controls in reach.
@@ -250,7 +252,7 @@ export component AdjustmentsList inherits Section {
                                 horizontal-stretch: 1;
                                 overflow: elide;
                             }
-                            if on && i > 0: Rectangle {
+                            if on && i > 0: mask-bin := Rectangle {
                                 width: Theme.control-height - 4px;
                                 accessible-role: button;
                                 accessible-label: @tr("Remove {}", name);
@@ -971,14 +973,14 @@ export component AdjustmentsSection inherits Section {
                     }
                     HorizontalLayout {
                         spacing: Theme.space-2;
-                        PanelButton {
+                        shape-subject := PanelButton {
                             text: @tr("Subject");
                             icon: @image-url("../icons/user-round.svg");
                             clicked => { root.add-shape("Subject", root.shape-mode); }
                         }
                         // The Subject model's complement: everything a look
                         // should reach but the subject, with no shape drawn.
-                        PanelButton {
+                        shape-background := PanelButton {
                             text: @tr("Background");
                             icon: @image-url("../icons/image.svg");
                             clicked => { root.add-shape("Background", root.shape-mode); }

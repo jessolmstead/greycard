@@ -403,6 +403,11 @@ fn a_typed_term_is_answered_where_it_can_be() {
     crate::testing::remove_dir_retry(&dir);
 }
 
+/// A facet row's key, its `code`: the facet's slot.
+fn slot(facet: Facet) -> i32 {
+    crate::filter::facet_slot(facet) as i32
+}
+
 /// The kind's row: counted from the paths, left out of a folder of
 /// one kind until its chip is on, first in the short row of a
 /// folder of more. Its chip, or `--filter kind:raw`, holds every
@@ -410,7 +415,7 @@ fn a_typed_term_is_answered_where_it_can_be() {
 /// every one with no index at all.
 #[test]
 fn the_kind_row_is_counted_from_the_paths_and_holds_a_frame_with_no_row() {
-    let kind_row = |rows: &[FacetRow]| rows.iter().find(|r| r.name == "Kind").cloned();
+    let kind_row = |rows: &[FacetRow]| rows.iter().find(|r| r.code == slot(Facet::Kind)).cloned();
     let chips = |row: &FacetRow| -> Vec<(String, i32, bool)> {
         (0..row.chips.row_count())
             .map(|i| {
@@ -425,7 +430,7 @@ fn the_kind_row_is_counted_from_the_paths_and_holds_a_frame_with_no_row() {
     let app = crate::testing::window(5);
     let mut st = state(&app, &dir);
     let rows = facet_rows(&st);
-    assert!(rows.iter().any(|r| r.name == "Camera"));
+    assert!(rows.iter().any(|r| r.code == slot(Facet::Camera)));
     assert!(kind_row(&rows).is_none());
     st.views.filter.toggle_facet(Facet::Kind, "tiff");
     let row = kind_row(&facet_rows(&st)).expect("a kind on");
@@ -478,7 +483,11 @@ fn the_kind_row_is_counted_from_the_paths_and_holds_a_frame_with_no_row() {
     // rows and the index done, there is nothing to say.
     st.views.index_progress = Some((1, 4));
     crate::panel::cull::show_filter(&st, &app);
-    assert!(app.get_filter_facets().iter().any(|r| r.name == "Kind"));
+    assert!(
+        app.get_filter_facets()
+            .iter()
+            .any(|r| r.code == slot(Facet::Kind))
+    );
     assert_eq!(app.get_filter_facet_note(), "Indexing the folder: 1 of 4");
     st.views.index_progress = None;
     crate::panel::cull::show_filter(&st, &app);

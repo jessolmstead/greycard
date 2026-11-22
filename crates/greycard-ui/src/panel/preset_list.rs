@@ -516,12 +516,18 @@ mod tests {
         // The star itself, clicked where the layout put it: Alpha's,
         // the first row's. Its favorite is then listed twice, and its
         // star there takes it off again.
-        assert_eq!(crate::testing::count_labeled(&app, "Add to favorites"), 3);
-        let click = |label: &str| {
-            let (at, size) = crate::testing::labeled(&app, label);
-            crate::testing::click(&app, at.x + size.width / 2.0, at.y + size.height / 2.0);
+        const STAR: &str = "PresetsSection::favorite-star";
+        // The stars, filled or not, as a screen reader is told.
+        let stars = |filled: bool| {
+            crate::testing::all_by_id(&app, STAR)
+                .iter()
+                .filter(|e| e.accessible_checked() == Some(filled))
+                .count()
         };
-        click("Add to favorites");
+        assert_eq!(stars(false), 3);
+        // Alpha's star, the topmost of its two rows when listed twice.
+        let click_alpha = || crate::testing::click_first_key(&app, STAR, 0);
+        click_alpha();
         assert_eq!(
             settings::Settings::load_from(&file).preset_favorites,
             ["alpha.gcp"]
@@ -530,17 +536,14 @@ mod tests {
             shown(&app)[..2],
             [row(true, "", false, false), row(false, "Alpha", true, true)]
         );
-        assert_eq!(
-            crate::testing::count_labeled(&app, "Remove from favorites"),
-            2
-        );
-        click("Remove from favorites");
+        assert_eq!(stars(true), 2);
+        click_alpha();
         assert!(
             settings::Settings::load_from(&file)
                 .preset_favorites
                 .is_empty()
         );
-        assert_eq!(crate::testing::count_labeled(&app, "Add to favorites"), 3);
+        assert_eq!(stars(false), 3);
 
         // Portra's star.
         app.invoke_preset_favorite_toggled(2);

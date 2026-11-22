@@ -165,6 +165,7 @@ export component CarryList inherits VerticalLayout {
                     : grid.col-w - root.indent;
                 height: root.pitch;
                 if row.kind != 2: check := Check {
+                    accessible-id: row.key;
                     width: parent.width;
                     height: parent.height;
                     label: row.label;

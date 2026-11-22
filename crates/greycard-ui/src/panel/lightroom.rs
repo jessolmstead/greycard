@@ -1480,6 +1480,11 @@ mod tests {
             .next()
             .expect("the details' fold")
             .invoke_accessible_default_action();
-        crate::testing::keeps_its_last_line(&app, "IMG_0019.CR3: exposure", (540.0, 560.0), 1000.0);
+        crate::testing::keeps_its_last_line(
+            &app,
+            "IMG_0019.CR3: exposure",
+            "LightroomSheet::scroll",
+            1000.0,
+        );
     }
 }

@@ -244,22 +244,29 @@ impl Checks {
                 CarryRow {
                     label: text(s.title()).into(),
                     a11y: text(s.title()).into(),
+                    key: s.name().into(),
                     state: state.number(),
                     ..at(line[col], 0, HEADING)
                 },
             ));
             line[col] += 1;
-            let names: Vec<String> = if s == Section::Adjustments {
-                self.masks.iter().map(|(_, n)| n.clone()).collect()
+            let names: Vec<(String, String)> = if s == Section::Adjustments {
+                self.masks
+                    .iter()
+                    .map(|(id, n)| (format!("mask.{id}"), n.clone()))
+                    .collect()
             } else {
-                s.parts().map(|p| text(p.title())).collect()
+                s.parts()
+                    .map(|p| (p.name().to_string(), text(p.title())))
+                    .collect()
             };
-            for (j, name) in names.iter().enumerate() {
+            for (j, (key, name)) in names.iter().enumerate() {
                 rows.push((
                     Target::Part(i, j),
                     CarryRow {
                         a11y: format!("{}: {name}", text(s.title())).into(),
                         label: name.into(),
+                        key: key.into(),
                         state: if self.on[i][j] { 2 } else { 0 },
                         ..at(line[col] + j / 2, j % 2, PART)
                     },
@@ -272,6 +279,7 @@ impl Checks {
                     CarryRow {
                         label: "".into(),
                         a11y: "".into(),
+                        key: "join".into(),
                         state: i32::from(self.join),
                         ..at(line[col], 0, JOIN)
                     },

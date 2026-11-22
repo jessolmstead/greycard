@@ -901,13 +901,16 @@ fn the_panel_keeps_to_its_sections_through_shrinks_in_a_row() {
 /// into its reach in the same frames.
 #[test]
 fn a_section_opened_at_the_foot_under_one_at_a_time_comes_into_view() {
-    use crate::testing::{click, panel_scroll_and_end, panel_to_end, settle};
+    use crate::testing::{click, panel_scroll_and_end, panel_to_end, section_part, settle};
     use i_slint_backend_testing::ElementHandle;
     let mut missed = Vec::new();
     // The header that sits in the view at the foot, under LIGHT,
     // at each size: the one a click can reach there. (1014 tall, the
     // head's kept time line taken, is the panel 1000 was before it.)
-    for (w, h, name) in [(1500.0, 800.0, "DETAIL"), (1683.0, 1014.0, "COLOR")] {
+    for (w, h, name) in [
+        (1500.0, 800.0, "DetailSection"),
+        (1683.0, 1014.0, "ColorSection"),
+    ] {
         let app = window(3);
         app.window().set_size(slint::LogicalSize::new(w, h));
         let (_state, _worker) = crate::testing::state_for(&app, Vec::new());
@@ -925,8 +928,7 @@ fn a_section_opened_at_the_foot_under_one_at_a_time_comes_into_view() {
             view.absolute_position().y,
             view.absolute_position().y + view.size().height,
         );
-        let header = ElementHandle::find_by_accessible_label(&app, name)
-            .next()
+        let header = section_part(&app, name, "Section::row")
             .unwrap_or_else(|| panic!("{w}x{h}: {name}'s header"));
         let y = header.absolute_position().y + header.size().height / 2.0;
         assert!(
@@ -942,9 +944,8 @@ fn a_section_opened_at_the_foot_under_one_at_a_time_comes_into_view() {
             settle(&app);
         }
         let (scroll, end) = panel_scroll_and_end(&app);
-        let at = ElementHandle::find_by_accessible_label(&app, name)
-            .next()
-            .map_or(f32::NAN, |h| h.absolute_position().y);
+        let at =
+            section_part(&app, name, "Section::row").map_or(f32::NAN, |h| h.absolute_position().y);
         if !(at >= top - 0.5 && at < bottom) {
             missed.push(format!(
                 "{w}x{h} {name}: header at {at}, view {top}..{bottom}, scroll {scroll}, reach {end}"

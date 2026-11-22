@@ -686,7 +686,6 @@ mod tests {
     /// past the menu's closing, so Enter exports.
     #[test]
     fn the_menus_export_leaves_the_sheet_the_keys() {
-        use i_slint_backend_testing::ElementHandle;
         let app = window(3);
         app.window()
             .set_size(slint::LogicalSize::new(1500.0, 950.0));
@@ -701,7 +700,11 @@ mod tests {
             app.window().dispatch_event(WindowEvent::PointerMoved {
                 position: slint::LogicalPosition::new(0.0, 0.0),
             });
-            ElementHandle::find_by_accessible_label(&app, "Export...").collect::<Vec<_>>()
+            let title = crate::i18n::text("Export...");
+            crate::testing::menu_entries(&app)
+                .into_iter()
+                .filter(|e| e.accessible_label().as_deref() == Some(title.as_str()))
+                .collect::<Vec<_>>()
         };
         let under: Vec<_> = items().iter().map(|e| e.absolute_position()).collect();
         let position = slint::LogicalPosition::new(strip_cell(&app, 0).0, strip_cell(&app, 0).1);

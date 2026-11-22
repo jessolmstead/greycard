@@ -221,7 +221,6 @@ the reasoning lives in `docs/notes.md`.
 steps aside on a card it cannot run on.
 
 - [ ] An edit from a newer version opens in an older one
-- [ ] The window's tests find a control by its id
 
 ### Speed
 
@@ -796,14 +795,17 @@ clears or a tester asks for it.
       collection, strip, and grid rows have the same guard on a click
       and are unchecked for a press; the press does not close the
       menu (Linux only, where the menu is drawn in the window)
-- [ ] Window tests find their controls by element id: 181 lookups
-      by translated words are left in 32 files (the guard,
-      `testing/by_label.rs`, lets a file's count only fall), many of
-      them data keys the scan cannot tell from a lookup; items in a
-      repeater (grading wheels, look rows, mask rows, menus) share one
-      id and need a key each; 78 lookups by position are untouched.
-      The suite in French (`GREYCARD_TEST_LANG=fr`) fails 456 tests,
-      618 before
+- [ ] The suite in French (`GREYCARD_TEST_LANG=fr`) still fails 386
+      tests, none a lookup: 378 assert on English words (status lines,
+      notes, labels) and want data compared instead; five measure a
+      layout against English word widths
+- [ ] In a decimal-comma language a slider's fractional step, minimum,
+      and maximum are lost to a screen reader: Slint writes the number
+      with the language's separator and reads it back with `str::parse`
+      (an upstream issue to file)
+- [ ] The develop view's rating badge keeps its spoken label while
+      invisible under the grid; a size in French prints "2.5 Mo" with a
+      point
 - [ ] Words left in English in a translated window, each waiting on
       new strings: the scope tabs (Wave, Parade, Vector); the models'
       descriptions under Settings, Models (greycard-ai's registry);

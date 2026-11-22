@@ -165,6 +165,9 @@ export component RetouchSection inherits Section {
                     // chosen or not.
                     accessible-role: button;
                     accessible-label: name;
+                    // Its key, for automation, and its bin's: the
+                    // patch's place in the list.
+                    accessible-id: i;
                     accessible-item-selectable: true;
                     accessible-item-selected: on;
                     accessible-action-default => { root.patch-changed(i); }
@@ -199,10 +202,11 @@ export component RetouchSection inherits Section {
                             y: 2px;
                             clicked => { root.patch-another(); }
                         }
-                        if on: Rectangle {
+                        if on: patch-bin := Rectangle {
                             width: Theme.control-height - 4px;
                             accessible-role: button;
                             accessible-label: @tr("Remove {}", name);
+                            accessible-id: i;
                             accessible-action-default => { root.delete-patch(); }
                             Image {
                                 source: @image-url("../icons/trash-2.svg");

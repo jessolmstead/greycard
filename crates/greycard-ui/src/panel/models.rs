@@ -877,15 +877,17 @@ mod tests {
         app.window()
             .set_size(slint::LogicalSize::new(1366.0, 768.0));
         crate::testing::settle(&app);
-        let (at, size) = crate::testing::labeled(&app, &label);
+        let button = "SettingsSheet::models-fetch-button";
+        assert_eq!(crate::testing::label_of(&app, button), label);
+        let (at, size) = crate::testing::by_id(&app, button);
         assert!(
             at.y >= 0.0 && at.y + size.height <= 768.0,
             "{at:?} {size:?}"
         );
         crate::testing::keeps_its_last_line(
             &app,
-            "Each under its own license",
-            (430.0, 450.0),
+            &crate::tr!("Each under its own license, kept beside it in the store."),
+            "SettingsSheet::pane",
             2400.0,
         );
         // While the machine is probed, the lines say so and the button

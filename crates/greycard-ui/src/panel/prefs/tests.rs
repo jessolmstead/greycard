@@ -84,9 +84,7 @@ fn the_lens_switch_decides_a_new_edits_lens_section() {
     app.invoke_settings_asked();
     assert!(app.get_lens_on_new(), "on by default");
     app.set_settings_category("Editing".into());
-    let label = "Lens corrections on new edits";
-    let (at, size) = crate::testing::labeled(&app, label);
-    crate::testing::click(&app, at.x + size.width / 2.0, at.y + size.height / 2.0);
+    crate::testing::click_id(&app, "SettingsSheet::lens-on-new-toggle");
     assert!(!app.get_lens_on_new());
     assert!(!state.borrow().window.lens_on_new);
 
@@ -216,8 +214,9 @@ fn no_sidecars_moves_nothing() {
 /// set by hand says it wins instead.
 #[test]
 fn the_scale_row_takes_any_percentage_for_the_next_start() {
-    const NEXT: &str = "Applies at the next start.";
-    const BY_HAND: &str = "SLINT_SCALE_FACTOR is set, and wins over this.";
+    // The scale's notes: the next start's, and the variable's.
+    const NEXT: &str = "SettingsSheet::scale-next-start";
+    const BY_HAND: &str = "SettingsSheet::scale-by-hand-note";
     let app = crate::testing::window(0);
     let (_state, _worker) = crate::testing::state_for(&app, Vec::new());
     show_ui_scale(&app, 150);
@@ -229,23 +228,32 @@ fn the_scale_row_takes_any_percentage_for_the_next_start() {
         1
     );
     assert_eq!(app.get_ui_scale(), "150");
-    // The Language row says the same under it, always: the base.
-    let base = crate::testing::count_labeled(&app, NEXT);
-    assert_eq!(base, 1);
+    // The Language row says the same under it, always.
+    assert_eq!(
+        crate::testing::count_id(&app, "SettingsSheet::language-next-start"),
+        1
+    );
+    let base = crate::testing::count_id(&app, NEXT);
+    assert_eq!(base, 0);
     let typed = |text: &str| {
         app.set_ui_scale(text.into());
         app.invoke_ui_scale_changed();
         (app.get_ui_scale().to_string(), app.get_ui_scale_percent())
     };
     assert_eq!(typed("137"), ("137".into(), 137));
-    assert_eq!(crate::testing::count_labeled(&app, NEXT), base + 1);
+    assert_eq!(crate::testing::count_id(&app, NEXT), base + 1);
+    assert_eq!(
+        crate::testing::label_of(&app, NEXT),
+        crate::testing::label_of(&app, "SettingsSheet::language-next-start"),
+        "the Language row's words"
+    );
     assert_eq!(typed("20"), ("50".into(), 50));
     assert_eq!(typed("400"), ("300".into(), 300));
     assert_eq!(typed("abc"), ("300".into(), 300), "put back");
     assert_eq!(typed(""), ("300".into(), 300), "put back");
-    assert_eq!(crate::testing::count_labeled(&app, NEXT), base + 1);
+    assert_eq!(crate::testing::count_id(&app, NEXT), base + 1);
     assert_eq!(typed("150"), ("150".into(), 150));
-    assert_eq!(crate::testing::count_labeled(&app, NEXT), base);
+    assert_eq!(crate::testing::count_id(&app, NEXT), base);
     // Typed and not entered: taken as the sheet closes.
     app.set_ui_scale("112".into());
     app.set_settings_open(false);
@@ -253,12 +261,12 @@ fn the_scale_row_takes_any_percentage_for_the_next_start() {
     crate::testing::press(&app, slint::platform::Key::Shift);
     assert_eq!(app.get_ui_scale_percent(), 112);
     app.invoke_settings_asked();
-    assert_eq!(crate::testing::count_labeled(&app, NEXT), base + 1);
+    assert_eq!(crate::testing::count_id(&app, NEXT), base + 1);
     // By hand: the variable's line, and not the next start's.
     app.set_ui_scale_by_hand(true);
     assert_eq!(typed("125"), ("125".into(), 125));
-    assert_eq!(crate::testing::count_labeled(&app, BY_HAND), 1);
-    assert_eq!(crate::testing::count_labeled(&app, NEXT), base);
+    assert_eq!(crate::testing::count_id(&app, BY_HAND), 1);
+    assert_eq!(crate::testing::count_id(&app, NEXT), base);
 }
 
 /// Start in: the last folder until a folder is chosen; a click on
@@ -275,7 +283,11 @@ fn the_start_row_takes_a_chosen_folder_or_the_last() {
         crate::testing::count_id(&app, "SettingsSheet::start-in-row"),
         1
     );
-    assert_eq!(crate::testing::count_labeled(&app, START_CHOSEN), 1);
+    assert_eq!(
+        crate::testing::segments_shown(&app, "SettingsSheet::start-in-row"),
+        2
+    );
+    crate::testing::segment(&app, "SettingsSheet::start-in-row", START_CHOSEN);
     // Canceled: still the last folder.
     app.invoke_start_picked(START_CHOSEN.into());
     assert_eq!(app.get_start_choice(), START_LAST);
@@ -286,11 +298,17 @@ fn the_start_row_takes_a_chosen_folder_or_the_last() {
     assert_eq!(app.get_start_choice(), START_CHOSEN);
     let shown = crate::report::path_shown(&dir);
     assert_eq!(app.get_start_folder(), shown.as_str());
-    assert_eq!(crate::testing::count_labeled(&app, &shown), 1);
+    assert_eq!(
+        crate::testing::label_of(&app, "SettingsSheet::start-folder-text"),
+        shown
+    );
     // Back to the last folder: the path goes.
     app.invoke_start_picked(START_LAST.into());
     assert_eq!(app.get_start_choice(), START_LAST);
-    assert_eq!(crate::testing::count_labeled(&app, &shown), 0);
+    assert_eq!(
+        crate::testing::count_id(&app, "SettingsSheet::start-folder-text"),
+        0
+    );
     crate::testing::remove_scratch(state, &dir);
 }
 
@@ -326,7 +344,8 @@ fn the_filter_bar_switch_hides_the_bar_in_the_grid_and_in_culling() {
     let app = crate::testing::window(3);
     let (state, _worker) = crate::testing::state_for(&app, Vec::new());
     app.set_filter_on(true);
-    const TIP: &str = "Sort: Name, A to Z";
+    const TIP: &str = "the test's own tip";
+    const SORT: &str = "SortButton::root";
     app.set_sort_menu(SortMenu {
         tip: TIP.into(),
         ..Default::default()
@@ -336,19 +355,21 @@ fn the_filter_bar_switch_hides_the_bar_in_the_grid_and_in_culling() {
     app.set_grid_open(true);
     let grid_on = crate::testing::count_id(&app, "FilterBar::save-button");
     assert_eq!(grid_on, 1);
-    assert_eq!(crate::testing::count_labeled(&app, TIP), 1);
-    let (bar_sort, _) = crate::testing::labeled(&app, TIP);
+    assert_eq!(crate::testing::count_id(&app, SORT), 1);
+    assert_eq!(crate::testing::label_of(&app, SORT), TIP);
+    let (bar_sort, _) = crate::testing::by_id(&app, SORT);
     app.set_filter_bar(false);
     app.invoke_filter_bar_changed();
     assert_eq!(crate::testing::count_id(&app, "FilterBar::save-button"), 0);
-    assert_eq!(crate::testing::count_labeled(&app, TIP), 1, "Sort stays");
-    let (row_sort, _) = crate::testing::labeled(&app, TIP);
+    assert_eq!(crate::testing::count_id(&app, SORT), 1, "Sort stays");
+    assert_eq!(crate::testing::label_of(&app, SORT), TIP);
+    let (row_sort, _) = crate::testing::by_id(&app, SORT);
     assert!(row_sort.y < bar_sort.y, "on the top row: {row_sort:?}");
     assert!(app.get_filter_on(), "the filter still applies");
     app.set_filter_bar(true);
     app.invoke_filter_bar_changed();
     assert_eq!(crate::testing::count_id(&app, "FilterBar::save-button"), 1);
-    assert_eq!(crate::testing::count_labeled(&app, TIP), 1);
+    assert_eq!(crate::testing::count_id(&app, SORT), 1);
     // Culling's section, with its "Show" over a stacked bar.
     app.set_grid_open(false);
     app.set_panel_tab(crate::panel::cull::CULL_TAB.into());
@@ -380,9 +401,8 @@ fn the_theme_row_sets_the_palette() {
     let chosen = |t: &crate::Theme| (t.get_selection(), t.get_focus_ring());
     let charcoal_chosen = chosen(&app.global::<crate::Theme>());
     const ROW: &str = "SettingsSheet::theme-row";
-    const THEMES: [&str; 3] = ["Charcoal", "Grey", "Light"];
     assert_eq!(crate::testing::count_id(&app, ROW), 1);
-    crate::testing::click_segment(&app, ROW, &THEMES, "Light");
+    crate::testing::click_segment(&app, ROW, "Light");
     assert_eq!(app.get_theme(), "Light");
     let theme = app.global::<crate::Theme>();
     assert_eq!(theme.get_name(), "Light");
@@ -392,9 +412,9 @@ fn the_theme_row_sets_the_palette() {
     let light_chosen = chosen(&theme);
     assert_ne!(light_chosen.0, charcoal_chosen.0);
     assert_ne!(light_chosen.1, charcoal_chosen.1);
-    crate::testing::click_segment(&app, ROW, &THEMES, "Grey");
+    crate::testing::click_segment(&app, ROW, "Grey");
     assert_eq!(app.global::<crate::Theme>().get_name(), "Grey");
-    crate::testing::click_segment(&app, ROW, &THEMES, "Charcoal");
+    crate::testing::click_segment(&app, ROW, "Charcoal");
     assert_eq!(app.global::<crate::Theme>().get_surface(), charcoal);
     app.set_theme("Mauve".into());
     app.invoke_theme_changed();
@@ -543,19 +563,17 @@ fn the_scroll_bar_rows_set_every_bar() {
         ("Fade".into(), "Thin".into())
     );
     use crate::testing::click_segment;
-    const MODES: [&str; 2] = ["Fade", "Stay"];
-    const SIZES: [&str; 3] = ["Thin", "Medium", "Wide"];
-    click_segment(&app, "SettingsSheet::scroll-bars-row", &MODES, "Stay");
+    click_segment(&app, "SettingsSheet::scroll-bars-row", "Stay");
     assert_eq!(app.get_scroll_bars(), "Stay");
     assert!(bars().get_stay());
-    click_segment(&app, "SettingsSheet::scroll-bars-row", &MODES, "Fade");
+    click_segment(&app, "SettingsSheet::scroll-bars-row", "Fade");
     assert!(!bars().get_stay());
     for (size, rest, lit, band) in [
         ("Medium", 4.0, 10.0, 18.0),
         ("Wide", 6.0, 14.0, 22.0),
         ("Thin", 2.0, 6.0, 14.0),
     ] {
-        click_segment(&app, "SettingsSheet::scroll-bar-size-row", &SIZES, size);
+        click_segment(&app, "SettingsSheet::scroll-bar-size-row", size);
         assert_eq!(app.get_scroll_bar_size(), size);
         assert_eq!(bars().get_size(), size);
         assert_eq!(bars().get_rest(), rest, "{size}");
@@ -585,8 +603,8 @@ fn the_about_category_says_the_version_and_the_folders() {
     app.invoke_settings_asked();
     assert_eq!(app.get_about_version(), greycard_version::LABEL);
     assert_eq!(
-        crate::testing::count_labeled(&app, greycard_version::LABEL),
-        1
+        crate::testing::label_of(&app, "SettingsSheet::version-text"),
+        greycard_version::LABEL
     );
     assert_eq!(
         crate::testing::count_id(&app, "SettingsSheet::check-now-button"),
@@ -602,7 +620,12 @@ fn the_about_category_says_the_version_and_the_folders() {
         let logs = cfg!(windows) && dir.ends_with(r"greycard\logs");
         assert!(dir.ends_with("greycard") || logs, "{dir}");
         let rows = shown.iter().filter(|d| *d == dir).count();
-        assert_eq!(crate::testing::count_labeled(&app, dir), rows, "{dir}");
+        let said = ["settings-path", "library-path", "caches-path", "log-path"]
+            .into_iter()
+            .filter(|id| crate::testing::count_id(&app, &format!("SettingsSheet::{id}")) == 1)
+            .filter(|id| crate::testing::label_of(&app, &format!("SettingsSheet::{id}")) == *dir)
+            .count();
+        assert_eq!(said, rows, "{dir}");
     }
     if let Some(home) = dirs::home_dir() {
         assert!(!log.contains(&*home.to_string_lossy()), "{log}");
@@ -816,11 +839,12 @@ fn develop_window() -> (App, Rc<Shared>, Rc<Worker>) {
     (app, state, worker)
 }
 
-/// The Settings sheet's row `id`: what it shows as chosen.
+/// The Settings sheet's row `id`: the label of the option it shows
+/// as chosen, in the window's language.
 fn row_shows(app: &App, id: &str) -> String {
     use i_slint_backend_testing::ElementHandle;
-    crate::testing::count_labeled(app, id);
-    let row = ElementHandle::find_by_element_id(app, &format!("SettingsSheet::{id}"))
+    let row = crate::testing::all_by_id(app, &format!("SettingsSheet::{id}"))
+        .into_iter()
         .next()
         .unwrap_or_else(|| panic!("{id} on the sheet"));
     let (at, size) = (row.absolute_position(), row.size());
@@ -836,37 +860,17 @@ fn row_shows(app: &App, id: &str) -> String {
         .to_string()
 }
 
-/// A click on `option` in the sheet's row `id`.
+/// A click on `option` (the option itself, not its words) in the
+/// sheet's row `id`.
 fn click_row(app: &App, id: &str, option: &str) {
-    use i_slint_backend_testing::ElementHandle;
-    crate::testing::count_labeled(app, option);
-    let row = ElementHandle::find_by_element_id(app, &format!("SettingsSheet::{id}"))
-        .next()
-        .unwrap_or_else(|| panic!("{id} on the sheet"));
-    let (top, foot) = (
-        row.absolute_position().y,
-        row.absolute_position().y + row.size().height,
-    );
-    let (left, right) = (
-        row.absolute_position().x,
-        row.absolute_position().x + row.size().width,
-    );
-    let segment = ElementHandle::find_by_accessible_label(app, option)
-        .find(|e| {
-            let (at, size) = (e.absolute_position(), e.size());
-            let (x, y) = (at.x + size.width / 2.0, at.y + size.height / 2.0);
-            (left..right).contains(&x) && (top..foot).contains(&y)
-        })
-        .unwrap_or_else(|| panic!("{option:?} in {id}"));
-    let (at, size) = (segment.absolute_position(), segment.size());
-    crate::testing::click(app, at.x + size.width / 2.0, at.y + size.height / 2.0);
+    crate::testing::click_segment(app, &format!("SettingsSheet::{id}"), option);
 }
 
 /// A click on the one `option` the panel shows, the sheet closed.
-fn click_panel(app: &App, id: &str, options: &[&str], option: &str) {
+fn click_panel(app: &App, id: &str, option: &str) {
     crate::testing::by_id(app, id);
     assert_eq!(crate::testing::count_id(app, id), 1, "{id}");
-    crate::testing::click_segment(app, id, options, option);
+    crate::testing::click_segment(app, id, option);
 }
 
 fn open_editing(app: &App) {
@@ -881,12 +885,18 @@ fn open_editing(app: &App) {
 #[test]
 fn the_editing_rows_are_the_panels_own_choices() {
     let (app, _state, _worker) = develop_window();
+    // The canvases' names, in the window's language: the row's
+    // options, where the settings keep the English.
+    let shown: Vec<String> = crate::render::CANVAS_NAMES
+        .iter()
+        .map(|n| crate::i18n::text(n))
+        .collect();
     assert_eq!(
         app.get_canvas_names()
             .iter()
             .map(|n| n.to_string())
             .collect::<Vec<_>>(),
-        crate::render::CANVAS_NAMES
+        shown
     );
     // The swatches paint what the shader paints outside the frame.
     let colors = app.get_canvas_colors();
@@ -898,10 +908,10 @@ fn the_editing_rows_are_the_panels_own_choices() {
     let kept = || crate::panel::startup::remember(&app);
     // The sheet's rows, read back from the settings kept.
     open_editing(&app);
-    for name in crate::render::CANVAS_NAMES.iter() {
-        click_row(&app, "canvas-row", name);
+    for (name, shown) in crate::render::CANVAS_NAMES.iter().zip(&shown) {
+        click_row(&app, "canvas-row", shown);
         assert_eq!(kept().canvas_color, *name);
-        assert_eq!(row_shows(&app, "canvas-row"), *name);
+        assert_eq!(row_shows(&app, "canvas-row"), *shown);
     }
     click_row(&app, "monitor-row", "Adobe RGB");
     assert_eq!(app.get_display_profile(), "Adobe RGB");
@@ -915,32 +925,28 @@ fn the_editing_rows_are_the_panels_own_choices() {
     click_row(&app, "monitor-row", "File");
     assert_eq!(kept().display_profile, "/profiles/monitor.icc");
     assert_eq!(
-        crate::testing::count_labeled(&app, "/profiles/monitor.icc"),
-        1
+        crate::testing::label_of(&app, "SettingsSheet::display-file-text"),
+        "/profiles/monitor.icc"
     );
     // The panel's controls, the sheet closed; the rows show them.
     app.set_settings_open(false);
-    const PROFILES: [&str; 5] = ["System", "sRGB", "Adobe RGB", "Display P3", "File"];
-    const PROOFS: [&str; 5] = ["sRGB", "Display P3", "Rec.2020", "Adobe RGB", "File"];
-    const INTENTS: [&str; 2] = ["Perceptual", "Relative"];
-    click_panel(&app, "MonitorSection::profile-row", &PROFILES, "System");
+    click_panel(&app, "MonitorSection::profile-row", "System");
     assert_eq!(kept().display_profile, "System");
-    click_panel(&app, "ProofSection::proof-row", &PROOFS, "Rec.2020");
+    click_panel(&app, "ProofSection::proof-row", "Rec.2020");
     assert_eq!(kept().proof_profile, "Rec.2020");
-    click_panel(&app, "ProofSection::intent-row", &INTENTS, "Perceptual");
+    click_panel(&app, "ProofSection::intent-row", "Perceptual");
     assert_eq!(kept().proof_intent, "Perceptual");
     // The canvas's first swatch, at the left of its row of swatches.
     let (at, size) = crate::testing::by_id(&app, "MonitorSection::canvas-swatches");
     crate::testing::click(&app, at.x + 4.0, at.y + size.height / 2.0);
     assert_eq!(kept().canvas_color, crate::render::CANVAS_NAMES[0]);
     open_editing(&app);
-    assert_eq!(
-        row_shows(&app, "canvas-row"),
-        crate::render::CANVAS_NAMES[0]
-    );
-    assert_eq!(row_shows(&app, "monitor-row"), "System");
+    // A row says its option's label, in the window's language: the
+    // option is what the settings keep.
+    assert_eq!(row_shows(&app, "canvas-row"), shown[0]);
+    assert_eq!(row_shows(&app, "monitor-row"), crate::tr!("System"));
     assert_eq!(row_shows(&app, "proof-row"), "Rec.2020");
-    assert_eq!(row_shows(&app, "intent-row"), "Perceptual");
+    assert_eq!(row_shows(&app, "intent-row"), crate::tr!("Perceptual"));
 }
 
 /// A window whose settings file is a scratch one, and the timer
@@ -995,7 +1001,10 @@ fn the_editing_choices_are_in_the_file_before_any_close() {
     let (app, _state, _worker, _timer, dir) = kept_window();
     open_editing(&app);
     let canvas = crate::render::CANVAS_NAMES[1];
-    click_row(&app, "canvas-row", canvas);
+    // The row's options are the canvases' names in the window's
+    // language; the file keeps the name.
+    let shown = app.get_canvas_names().row_data(1).expect("a second canvas");
+    click_row(&app, "canvas-row", &shown);
     click_row(&app, "monitor-row", "Adobe RGB");
     click_row(&app, "proof-row", "Display P3");
     click_row(&app, "intent-row", "Relative");
@@ -1167,23 +1176,13 @@ fn the_export_rows_are_the_export_sheets_own() {
     // The export sheet shows them, and its clicks come back.
     app.set_export_open(true);
     assert_eq!(app.get_export_format(), "PNG");
-    crate::testing::click_segment(
-        &app,
-        "ExportSheet::format-row",
-        &["JPEG", "PNG", "TIFF 16-bit", "WebP"],
-        "TIFF 16-bit",
-    );
-    crate::testing::click_segment(
-        &app,
-        "ExportSheet::space-row",
-        &["sRGB", "Display P3", "Rec.2020", "Adobe RGB"],
-        "Rec.2020",
-    );
+    crate::testing::click_segment(&app, "ExportSheet::format-row", "TIFF 16-bit");
+    crate::testing::click_segment(&app, "ExportSheet::space-row", "Rec.2020");
     assert_eq!(kept().shared.export.format, "TIFF 16-bit");
     assert_eq!(kept().shared.export.space, "Rec.2020");
     app.set_export_open(false);
     open_editing(&app);
-    assert_eq!(row_shows(&app, "format-row"), "TIFF 16-bit");
+    assert_eq!(row_shows(&app, "format-row"), crate::tr!("TIFF 16-bit"));
     assert_eq!(row_shows(&app, "space-row"), "Rec.2020");
 }
 
@@ -1373,7 +1372,7 @@ fn the_author_and_copyright_rows_fit_at_150_percent_in_french() {
         }
         crate::testing::settle(&app);
         for id in ["author-field", "copyright-field"] {
-            crate::testing::count_labeled(&app, id);
+            crate::testing::count_id(&app, id);
             let field = ElementHandle::find_by_element_id(&app, &format!("SettingsSheet::{id}"))
                 .next()
                 .unwrap_or_else(|| panic!("{language}: {id} on the sheet"));

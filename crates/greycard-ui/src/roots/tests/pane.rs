@@ -39,7 +39,7 @@ fn the_pane_lists_the_roots_with_their_counts() {
     assert!(!app.get_library_all_on());
     assert!(app.get_library_can_add_open(), "b is under no root");
     drop(st);
-    let (count, lit, _) = root_row(&app, "a");
+    let (count, lit, _) = root_row(&app, &a);
     assert_eq!((count.as_str(), lit), ("3", false));
     assert_eq!(all_roots_row(&app).0, "3");
     assert_eq!(
@@ -58,8 +58,8 @@ fn the_pane_lists_the_roots_with_their_counts() {
     drop(st);
     let (count, lit, _) = all_roots_row(&app);
     assert_eq!((count.as_str(), lit), ("4", true));
-    assert_eq!(root_row(&app, "b").0, "1");
-    assert!(!root_row(&app, "b").1);
+    assert_eq!(root_row(&app, &b).0, "1");
+    assert!(!root_row(&app, &b).1);
     assert_eq!(
         crate::testing::count_id(&app, "RootsSection::add-open-link"),
         0,
@@ -70,8 +70,8 @@ fn the_pane_lists_the_roots_with_their_counts() {
     st.views.view = View::Roots(Some(a.clone()));
     show(&st, &app);
     drop(st);
-    assert!(root_row(&app, "a").1);
-    assert!(!root_row(&app, "All roots").1);
+    assert!(root_row(&app, &a).1);
+    assert!(!all_roots_row(&app).1);
     let mut st = state.borrow_mut();
     // A name given is the chip's, and the path is still the root.
     st.views.library.roots.set_name(&a, "Archive");
@@ -139,25 +139,25 @@ fn right_click(app: &App, x: f32, y: f32) {
     }
 }
 
-/// The middle of the button a screen reader knows as `label`: the
-/// one highest up, so a root's row comes before the tree's row of
-/// the same name.
-fn middle_of(app: &App, label: &str) -> (f32, f32) {
-    let (at, size) = crate::testing::buttons(app, label)
-        .into_iter()
-        .next()
-        .unwrap_or_else(|| panic!("no button {label:?}"));
+/// A root's row in the pane, keyed by the root's path.
+const ROOT_ROW: &str = "RootsSection::root-row";
+
+/// The key of the root at `path`: the path as the pane has it.
+fn root_key(path: impl AsRef<std::path::Path>) -> String {
+    path.as_ref().to_string_lossy().into_owned()
+}
+
+/// The middle of the row of the root at `path`.
+fn middle_of(app: &App, path: impl AsRef<std::path::Path>) -> (f32, f32) {
+    let (at, size) = crate::testing::by_key(app, ROOT_ROW, root_key(path));
     (at.x + size.width / 2.0, at.y + size.height / 2.0)
 }
 
-/// A point near the left end of that button: clear of a menu opened
+/// A point near the left end of that row: clear of a menu opened
 /// from a row's right half, which drops down and to the right of
 /// the pointer over the rows below it.
-fn left_of(app: &App, label: &str) -> (f32, f32) {
-    let (at, size) = crate::testing::buttons(app, label)
-        .into_iter()
-        .next()
-        .unwrap_or_else(|| panic!("no button {label:?}"));
+fn left_of(app: &App, path: impl AsRef<std::path::Path>) -> (f32, f32) {
+    let (at, size) = crate::testing::by_key(app, ROOT_ROW, root_key(path));
     (at.x + 4.0, at.y + size.height / 2.0)
 }
 
@@ -170,19 +170,23 @@ fn middle_of_id(app: &App, id: &str) -> (f32, f32) {
 /// The pane's All roots row.
 const ALL_ROOTS: &str = "RootsSection::all-roots";
 
-/// How many buttons a screen reader knows as `label`.
-fn buttons_named(app: &App, label: &str) -> usize {
-    crate::testing::buttons(app, label).len()
+/// The name the row of the root at `path` shows, as a screen reader
+/// is told it: the root's name, data, never the window's words.
+fn root_name_shown(app: &App, path: impl AsRef<std::path::Path>) -> String {
+    let key = root_key(path);
+    crate::testing::keyed(app, ROOT_ROW, &key)
+        .unwrap_or_else(|| panic!("no root's row {key:?}"))
+        .accessible_label()
+        .unwrap_or_default()
+        .to_string()
 }
 
-/// A root's row in the pane, by its name: its count as a screen
-/// reader has it, whether it is lit, and its width.
-fn root_row(app: &App, name: &str) -> (String, bool, f32) {
-    use i_slint_backend_testing::ElementHandle;
-    crate::testing::count_labeled(app, name);
-    let row = ElementHandle::find_by_accessible_label(app, name)
-        .find(|e| e.accessible_item_selectable() == Some(true))
-        .unwrap_or_else(|| panic!("no root's row {name:?}"));
+/// A root's row in the pane, by the root's path: its count as a
+/// screen reader has it, whether it is lit, and its width.
+fn root_row(app: &App, path: impl AsRef<std::path::Path>) -> (String, bool, f32) {
+    let key = root_key(path);
+    let row = crate::testing::keyed(app, ROOT_ROW, &key)
+        .unwrap_or_else(|| panic!("no root's row {key:?}"));
     row_facts(&row)
 }
 
@@ -256,7 +260,7 @@ fn the_panes_roots_hand_back_what_was_pressed() {
         "RootsSection::add-open-link",
     ] {
         let (x, y) = match what {
-            "shoots" => middle_of(&app, what),
+            "shoots" => middle_of(&app, "/x/shoots"),
             id => middle_of_id(&app, id),
         };
         assert!(x < 240.0, "{what} is in the pane, at {x}");
@@ -267,16 +271,16 @@ fn the_panes_roots_hand_back_what_was_pressed() {
         ["picked ", "picked /x/shoots", "add", "add open"]
     );
     // The count at the row's right, and nothing lit.
-    assert_eq!(root_row(&app, "shoots").0, "3");
+    assert_eq!(root_row(&app, "/x/shoots").0, "3");
     assert_eq!(all_roots_row(&app).0, "3");
-    assert!(!root_row(&app, "shoots").1);
+    assert!(!root_row(&app, "/x/shoots").1);
     // The header keeps none of it: the pane put away takes every
     // root with it, and the loupe's pane has none.
     assert_eq!(crate::testing::count_id(&app, ALL_ROOTS), 1);
     crate::testing::press(&app, slint::platform::Key::F7);
     assert!(app.get_left_hidden());
     assert_eq!(crate::testing::count_id(&app, ALL_ROOTS), 0);
-    assert_eq!(crate::testing::count_labeled(&app, "shoots"), 0);
+    assert_eq!(crate::testing::count_keyed(&app, ROOT_ROW, "/x/shoots"), 0);
     assert_eq!(
         crate::testing::count_id(&app, "RootsSection::add-root-link"),
         0
@@ -302,19 +306,13 @@ fn the_panes_roots_hand_back_what_was_pressed() {
         .collect();
     app.set_library_roots(ModelRc::new(VecModel::from(six)));
     // A root whose drive is out says so in place of its count.
-    assert_eq!(
-        root_row(&app, "a long shoot folder name that runs on 0").0,
-        "offline"
-    );
-    assert_eq!(
-        root_row(&app, "a long shoot folder name that runs on 1").0,
-        "100"
-    );
+    assert_eq!(root_row(&app, "/x/r0").0, crate::i18n::text("offline"));
+    assert_eq!(root_row(&app, "/x/r1").0, "100");
     let last = "a long shoot folder name that runs on 5";
-    let (_, lit, width) = root_row(&app, last);
+    let (_, lit, width) = root_row(&app, "/x/r5");
     assert!(lit, "the one open is lit");
     assert!(width <= 240.0, "{width}");
-    let (x, y) = middle_of(&app, last);
+    let (x, y) = middle_of(&app, "/x/r5");
     // Cut short, the whole name is its hover text after a rest;
     // All roots, whole already, has none.
     let rest_on = |x: f32, y: f32| {
@@ -356,7 +354,7 @@ fn a_root_is_named_from_its_menu() {
     show(&state.borrow(), &app);
     slint::platform::update_timers_and_animations();
 
-    let (x, y) = middle_of(&app, "Photos");
+    let (x, y) = middle_of(&app, &photos);
     right_click(&app, x, y);
     assert!(
         app.get_menu_up(),
@@ -366,7 +364,7 @@ fn a_root_is_named_from_its_menu() {
     assert!(state.borrow().views.library.wanted.is_none());
     // The press that closes it, on the row just left of where the
     // menu opened, is let go by.
-    let (x, y) = left_of(&app, "Photos");
+    let (x, y) = left_of(&app, &photos);
     crate::testing::click(&app, x, y);
     assert!(!app.get_menu_up());
     assert!(state.borrow().views.library.wanted.is_none(), "not a pick");
@@ -401,7 +399,7 @@ fn a_root_is_named_from_its_menu() {
         ("Archive", photos.to_str().unwrap())
     );
     assert!(photos.is_dir(), "the folder is where it was");
-    assert_eq!(buttons_named(&app, "Archive"), 1);
+    assert_eq!(root_name_shown(&app, &photos), "Archive");
 
     // Opened again, the sheet has the name to change; Escape,
     // with the field holding the focus, leaves it as it was.
@@ -469,8 +467,8 @@ fn the_press_that_closes_a_roots_menu_is_nothing_more() {
     let (app, seen) = roots_in_the_pane(&["one", "two"]);
     // The menus asked for at a row's right, the closing presses
     // made at the rows' left, clear of the menu dropped over them.
-    let right = |label: &str| {
-        let (x, y) = middle_of(&app, label);
+    let right = |name: &str| {
+        let (x, y) = middle_of(&app, format!("/x/{name}"));
         (x + 60.0, y)
     };
     let one = right("one");
@@ -499,7 +497,7 @@ fn the_press_that_closes_a_roots_menu_is_nothing_more() {
         "RootsSection::add-open-link",
     ];
     let left = |what: &str| match what {
-        "one" | "two" => left_of(&app, what),
+        "one" | "two" => left_of(&app, format!("/x/{what}")),
         id => {
             let (at, size) = crate::testing::by_id(&app, id);
             (at.x + 4.0, at.y + size.height / 2.0)
@@ -620,16 +618,26 @@ fn the_panes_import_and_the_keys_still_reach_their_sheets() {
     let line = "Copying 3 of 10";
     app.set_import_running(true);
     app.set_import_status(line.into());
-    assert_eq!(crate::testing::count_labeled(&app, line), 1, "the pane's");
-    assert_eq!(crate::testing::count_labeled(&app, "Stop import"), 1);
+    let (pane_line, header_line) = ("App::import-status-line", "GridSheet::import-line-text");
+    assert_eq!(crate::testing::count_id(&app, pane_line), 1, "the pane's");
+    assert_eq!(crate::testing::label_of(&app, pane_line), line);
+    assert_eq!(crate::testing::count_id(&app, header_line), 0);
+    // The pane's one button, its Stop while an import runs.
+    assert_eq!(crate::testing::count_id(&app, "App::import-button"), 1);
+    assert_eq!(
+        crate::testing::label_of(&app, "App::import-button"),
+        crate::i18n::text("Stop import")
+    );
     crate::testing::press(&app, Key::F7);
     assert!(app.get_left_hidden());
+    assert_eq!(crate::testing::count_id(&app, pane_line), 0);
     assert_eq!(
-        crate::testing::count_labeled(&app, line),
+        crate::testing::count_id(&app, header_line),
         1,
         "the header's, the pane away"
     );
-    assert_eq!(crate::testing::count_labeled(&app, "Stop import"), 0);
+    assert_eq!(crate::testing::label_of(&app, header_line), line);
+    assert_eq!(crate::testing::count_id(&app, "App::import-button"), 0);
 }
 
 /// The preset sheet's name field holds the focus as the root
@@ -670,18 +678,17 @@ fn the_import_button_opens_a_menu_of_the_two_ways_in() {
     let s = seen.clone();
     app.on_lr_asked(move || s.borrow_mut().push("catalog"));
     slint::platform::update_timers_and_animations();
-    assert_eq!(
-        crate::testing::count_labeled(&app, "Import a Lightroom catalog..."),
-        0
-    );
+    // One button, not one for each way in.
+    assert_eq!(crate::testing::count_id(&app, "App::import-button"), 1);
+    assert!(crate::testing::menu_entries(&app).is_empty(), "no menu yet");
     for (i, want) in ["card", "catalog"].into_iter().enumerate() {
         open_import_menu(&app);
         assert_eq!(
-            crate::testing::count_labeled(&app, "From a card or folder..."),
+            crate::testing::count_menu_entries(&app, "From a card or folder..."),
             1
         );
         assert_eq!(
-            crate::testing::count_labeled(&app, "A Lightroom catalog..."),
+            crate::testing::count_menu_entries(&app, "A Lightroom catalog..."),
             1
         );
         // The menu's keys: Down to the item, Return to pick it.
@@ -730,26 +737,39 @@ fn the_import_button_stops_a_card_import_and_waits_for_a_catalog() {
     app.on_import_asked(move || *s.borrow_mut() += 1);
     app.set_import_running(true);
     slint::platform::update_timers_and_animations();
-    let (at, size) = crate::testing::labeled(&app, "Stop import");
-    crate::testing::click(&app, at.x + size.width / 2.0, at.y + size.height / 2.0);
+    let button = "App::import-button";
+    assert_eq!(
+        crate::testing::label_of(&app, button),
+        crate::i18n::text("Stop import")
+    );
+    crate::testing::click_id(&app, button);
     assert_eq!(*stops.borrow(), 1, "a click stops it");
     assert!(!app.get_menu_up(), "with no menu");
     assert_eq!(*asked.borrow(), 0);
     app.set_import_stopping(true);
     slint::platform::update_timers_and_animations();
-    let (at, size) = crate::testing::labeled(&app, "Stopping...");
-    crate::testing::click(&app, at.x + size.width / 2.0, at.y + size.height / 2.0);
+    assert_eq!(
+        crate::testing::label_of(&app, button),
+        crate::i18n::text("Stopping...")
+    );
+    crate::testing::click_id(&app, button);
     assert_eq!(*stops.borrow(), 1, "once stopping, a click does nothing");
     app.set_import_stopping(false);
     app.set_import_running(false);
     app.set_lr_running(true);
     slint::platform::update_timers_and_animations();
-    let (at, size) = crate::testing::labeled(&app, "Importing the catalog...");
-    crate::testing::click(&app, at.x + size.width / 2.0, at.y + size.height / 2.0);
+    assert_eq!(
+        crate::testing::label_of(&app, button),
+        crate::i18n::text("Importing the catalog...")
+    );
+    crate::testing::click_id(&app, button);
     assert!(!app.get_menu_up(), "a catalog writing opens no menu");
     assert_eq!(*stops.borrow(), 1);
     assert_eq!(*asked.borrow(), 0);
-    assert_eq!(crate::testing::count_labeled(&app, "Import..."), 0);
+    assert_ne!(
+        crate::testing::label_of(&app, button),
+        crate::i18n::text("Import...")
+    );
 }
 
 /// The folder tree's rows as the pane shows them: name, count, and

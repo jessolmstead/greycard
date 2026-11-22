@@ -79,7 +79,12 @@ fn a_version_cell_comes_after_its_file_and_the_arrows_walk_it() {
             ("IMG_0002.CR3".to_string(), String::new()),
         ]
     );
-    assert_eq!(crate::testing::count_labeled(&app, "Version Warm"), 1);
+    // One cell wears the version's tag, its name in it.
+    let tagged = crate::testing::all_by_id(&app, "ThumbTag::words")
+        .iter()
+        .filter(|w| w.accessible_label().as_deref() == Some("Warm"))
+        .count();
+    assert_eq!(tagged, 1);
     app.invoke_select(0);
     for want in [1, 2, 3] {
         app.invoke_step(1, false);

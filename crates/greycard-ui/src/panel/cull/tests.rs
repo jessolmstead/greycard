@@ -522,12 +522,12 @@ impl Kept {
         crate::testing::settle(&self.app);
     }
 
-    /// A click on the sheet's cell for `row`, found by the cells' id.
+    /// A click on the sheet's cell for `row`, found by the cell keyed
+    /// by its row: the press area inside it.
     fn click_cell(&self, row: usize) {
-        use i_slint_backend_testing::ElementHandle;
         slint::platform::update_timers_and_animations();
-        let cell = ElementHandle::find_by_element_id(&self.app, "GridSheet::ct")
-            .nth(row)
+        let cell = crate::testing::keyed(&self.app, "GridSheet::cell", row)
+            .and_then(|c| c.query_descendants().match_id("GridSheet::ct").find_first())
             .expect("the cell on the sheet");
         let (at, size) = (cell.absolute_position(), cell.size());
         click(&self.app, at.x + size.width / 2.0, at.y + size.height / 2.0);
@@ -4490,9 +4490,9 @@ fn the_culling_section_offers_move_back_for_a_frame_in_rejects() {
         enter_cull(&mut st, &app, 0);
     }
     assert_eq!(app.get_panel_tab(), "Cull");
-    assert_eq!(crate::testing::count_labeled(&app, "Move back to shoot"), 0);
+    assert_eq!(crate::testing::count_id(&app, MOVE_BACK), 0);
     app.invoke_select(2);
-    assert_eq!(crate::testing::count_labeled(&app, "Move back to shoot"), 1);
+    assert_eq!(crate::testing::count_id(&app, MOVE_BACK), 1);
     app.invoke_move_back_asked();
     assert!(shoot.join("b.tif").exists());
     assert!(
@@ -4503,7 +4503,7 @@ fn the_culling_section_offers_move_back_for_a_frame_in_rejects() {
         "the sidecar kept its place under the hidden folder"
     );
     assert_eq!(
-        crate::testing::count_labeled(&app, "Move back to shoot"),
+        crate::testing::count_id(&app, MOVE_BACK),
         0,
         "{}",
         app.get_status()
@@ -4723,16 +4723,39 @@ fn recorded_rejects(app: &App) -> Rc<RefCell<Vec<String>>> {
     got
 }
 
-/// The grid header's Rejects menu opened by a click inside its
-/// button's own words, and the item `downs` steps down it (the
-/// menu skips its separators) taken with Return. The menu's items
-/// are not clicked: the testing backend places them in the
+/// CULLING's Move back button.
+const MOVE_BACK: &str = "CullSection::move-back-button";
+/// CULLING's Move rejects button.
+const MOVE_REJECTS: &str = "CullSection::move-rejects-button";
+/// CULLING's Delete rejects folder button.
+const DELETE_REJECTS: &str = "CullSection::delete-rejects-button";
+/// CULLING's buttons for the rejects' copies on an archive, keyed by
+/// their place among its choices.
+const ARCHIVE_REJECTS: &str = "CullSection::archive-rejects-button";
+
+/// The rejects' actions as CULLING's buttons and the grid's menu
+/// have them, each its title in the menu, in the window's language.
+fn move_rejects_title(n: usize) -> String {
+    crate::tr!("Move {n} reject..." | "Move {n} rejects..." % n)
+}
+
+/// The grid header's Rejects menu opened by a click on its button,
+/// and the item `downs` steps down it (the menu skips its
+/// separators) taken with Return, `title` the item's. The menu's
+/// items are not clicked: the testing backend places them in the
 /// popup's own coordinates, and a click there would land on the
 /// window under it instead.
-fn rejects_menu_pick(app: &App, button: &str, item: &str, downs: usize) {
-    let (at, size) = crate::testing::labeled(app, button);
-    click(app, at.x + size.width / 2.0, at.y + size.height / 2.0);
-    assert_eq!(crate::testing::count_labeled(app, item), 1, "{item:?}");
+fn rejects_menu_pick(app: &App, title: &str, downs: usize) {
+    crate::testing::click_id(app, "GridSheet::rejects-button");
+    let titles: Vec<String> = crate::testing::menu_entries(app)
+        .iter()
+        .filter_map(|e| e.accessible_label().map(|l| l.to_string()))
+        .collect();
+    assert_eq!(
+        titles.iter().filter(|t| *t == title).count(),
+        1,
+        "{title:?} in {titles:?}"
+    );
     for _ in 0..downs {
         press(app, Key::DownArrow);
     }
@@ -4756,22 +4779,48 @@ fn the_grids_rejects_menu_asks_what_the_culling_section_asks() {
     app.set_archive_rejects_choices(ModelRc::new(VecModel::from(vec![
         slint::SharedString::from("Remove rejects from nas..."),
     ])));
+    // Each item's title in the grid's menu, its button in CULLING,
+    // and what it asks.
     let items = [
-        ("Move 2 rejects...", "move rejects"),
-        ("Move back to shoot", "move back"),
-        ("Delete rejects folder...", "delete rejects"),
-        ("Remove rejects from nas...", "archive 0"),
+        (move_rejects_title(2), MOVE_REJECTS, "move rejects"),
+        (
+            crate::tr!("Move back to {}", "shoot"),
+            MOVE_BACK,
+            "move back",
+        ),
+        (
+            crate::tr!("Delete rejects folder..."),
+            DELETE_REJECTS,
+            "delete rejects",
+        ),
+        (
+            "Remove rejects from nas...".to_string(),
+            ARCHIVE_REJECTS,
+            "archive 0",
+        ),
     ];
     app.set_grid_open(true);
-    for (downs, (item, call)) in items.iter().enumerate() {
-        rejects_menu_pick(&app, "2 rejects", item, downs + 1);
+    for (downs, (title, _, call)) in items.iter().enumerate() {
+        rejects_menu_pick(&app, title, downs + 1);
         assert_eq!(got.borrow_mut().drain(..).collect::<Vec<_>>(), [*call]);
     }
     app.set_grid_open(false);
     app.set_panel_tab(CULL_TAB.into());
-    for (item, call) in items {
-        let (at, size) = crate::testing::labeled(&app, item);
-        click(&app, at.x + size.width / 2.0, at.y + size.height / 2.0);
+    for (title, button, call) in items {
+        // The button says the menu entry's words.
+        let says = if button == ARCHIVE_REJECTS {
+            crate::testing::keyed(&app, button, 0)
+                .map(|e| crate::testing::words_of(&e))
+                .unwrap_or_default()
+        } else {
+            crate::testing::label_of(&app, button)
+        };
+        assert_eq!(says, title, "{call}");
+        if button == ARCHIVE_REJECTS {
+            crate::testing::click_key(&app, button, 0);
+        } else {
+            crate::testing::click_id(&app, button);
+        }
         assert_eq!(got.borrow_mut().drain(..).collect::<Vec<_>>(), [call]);
     }
 }
@@ -4799,8 +4848,7 @@ fn the_move_rejects_sheet_takes_the_keys_from_the_button_that_opened_it() {
         weak.unwrap().set_rejects_open(false);
     });
     let open = |app: &App| {
-        let (at, size) = crate::testing::labeled(app, "Move 2 rejects...");
-        click(app, at.x + size.width / 2.0, at.y + size.height / 2.0);
+        crate::testing::click_id(app, MOVE_REJECTS);
         slint::platform::update_timers_and_animations();
         assert!(app.get_rejects_open());
     };
@@ -4847,8 +4895,7 @@ fn the_archive_rejects_sheet_takes_the_keys_from_its_button_too() {
         weak.unwrap().set_archive_rejects_open(false);
     });
     let open = |app: &App| {
-        let (at, size) = crate::testing::labeled(app, "Remove rejects from nas...");
-        click(app, at.x + size.width / 2.0, at.y + size.height / 2.0);
+        crate::testing::click_key(app, ARCHIVE_REJECTS, 0);
         slint::platform::update_timers_and_animations();
         assert!(app.get_archive_rejects_open());
     };
@@ -4876,8 +4923,7 @@ fn a_sheet_closed_from_rust_gives_the_window_its_keys() {
     let toggles = Rc::new(RefCell::new(0));
     let seen = toggles.clone();
     app.on_cull_toggled(move || *seen.borrow_mut() += 1);
-    let (at, size) = crate::testing::labeled(&app, "Move 2 rejects...");
-    click(&app, at.x + size.width / 2.0, at.y + size.height / 2.0);
+    crate::testing::click_id(&app, MOVE_REJECTS);
     a_moment_on(&app);
     assert!(app.get_rejects_open());
     app.invoke_rejects_answered(true);
@@ -4916,19 +4962,19 @@ fn the_grids_rejects_menu_grays_and_hides_as_the_section_does() {
     // A name with no frame to move back: the count alone decides.
     app.set_back_to("shoot".into());
     app.set_grid_open(true);
-    rejects_menu_pick(&app, "Rejects", "No rejects to move", 1);
+    rejects_menu_pick(&app, &crate::tr!("No rejects to move"), 1);
     assert!(got.borrow().is_empty(), "a grayed item asks nothing");
     // Still open, a grayed pick closing nothing: what it holds.
-    assert_eq!(crate::testing::count_labeled(&app, "Move back to shoot"), 0);
+    assert_eq!(crate::testing::count_id(&app, MOVE_BACK), 0);
     assert_eq!(
-        crate::testing::count_labeled(&app, "Delete rejects folder..."),
+        crate::testing::count_menu_entries(&app, "Delete rejects folder..."),
         1
     );
     press(&app, Key::Escape);
     slint::platform::update_timers_and_animations();
     // Down past Move rejects and its separator: Delete is next,
     // with nothing between them.
-    rejects_menu_pick(&app, "Rejects", "Delete rejects folder...", 2);
+    rejects_menu_pick(&app, &crate::tr!("Delete rejects folder..."), 2);
     assert_eq!(
         got.borrow_mut().drain(..).collect::<Vec<_>>(),
         ["delete rejects"]
@@ -4992,23 +5038,32 @@ fn return_answers_the_sheets_the_grids_rejects_menu_opens() {
         slint::SharedString::from("Remove rejects from nas..."),
     ])));
     let items = [
-        ("Move 2 rejects...", 1, "move rejects", "move answered true"),
         (
-            "Delete rejects folder...",
+            move_rejects_title(2),
+            MOVE_REJECTS,
+            1,
+            "move rejects",
+            "move answered true",
+        ),
+        (
+            crate::tr!("Delete rejects folder..."),
+            DELETE_REJECTS,
             2,
             "delete rejects",
             "delete answered 1",
         ),
         (
-            "Remove rejects from nas...",
+            "Remove rejects from nas...".to_string(),
+            ARCHIVE_REJECTS,
             3,
             "archive 0",
             "archive answered 1",
         ),
     ];
     app.set_grid_open(true);
-    for (item, downs, asked, answered) in items {
-        rejects_menu_pick(&app, "2 rejects", item, downs);
+    for (item, _, downs, asked, answered) in &items {
+        let (item, downs, asked, answered) = (item.as_str(), *downs, *asked, *answered);
+        rejects_menu_pick(&app, item, downs);
         a_moment_on(&app);
         press(&app, Key::Return);
         assert_eq!(
@@ -5019,9 +5074,12 @@ fn return_answers_the_sheets_the_grids_rejects_menu_opens() {
     }
     app.set_grid_open(false);
     app.set_panel_tab(CULL_TAB.into());
-    for (item, _, asked, answered) in items {
-        let (at, size) = crate::testing::labeled(&app, item);
-        click(&app, at.x + size.width / 2.0, at.y + size.height / 2.0);
+    for (item, button, _, asked, answered) in items {
+        if button == ARCHIVE_REJECTS {
+            crate::testing::click_key(&app, button, 0);
+        } else {
+            crate::testing::click_id(&app, button);
+        }
         a_moment_on(&app);
         press(&app, Key::Return);
         assert_eq!(
@@ -5239,20 +5297,13 @@ fn the_loupe_comes_back_from_library_in_the_mode_it_was_left_in() {
     click_on(&app, "App::cull-mode-button");
     assert_eq!(seen(&app, &state), Seen::CullCamera);
     assert_eq!(pressed(&app, "App::cull-mode-button"), Some(true));
-    assert_eq!(
-        crate::testing::count_labeled(&app, "Develop mode"),
-        0,
-        "no row of its own"
-    );
     assert!(state.borrow().culling.loupe_cull);
     for back in ["pane", "double-click", "return", "g", "e"] {
         click_on(&app, "App::library-view-button");
         assert_eq!(seen(&app, &state), Seen::Library, "{back}");
-        // The old Cull toggle is gone from the grid's header, and
-        // so is its Loupe button: the one "Loupe" left is the pane's
-        // switch, the one way between the views.
-        assert_eq!(crate::testing::count_labeled(&app, "Culling"), 0);
-        assert_eq!(crate::testing::count_labeled(&app, "Loupe"), 1);
+        // The grid's header has no Loupe button of its own: the one
+        // "Loupe" is the pane's switch, the one way between the views.
+        assert_eq!(crate::testing::spoken(&app, "Loupe").len(), 1);
         match back {
             "pane" => click_on(&app, "App::loupe-view-button"),
             "double-click" => {

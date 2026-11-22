@@ -51,6 +51,10 @@ export struct CarryRow {
     /// its section too ("Detail: Dehaze"). Empty for the masks' line,
     /// whose two choices are known by their words.
     a11y: string,
+    /// What it is, for automation: a section's settings name
+    /// ("light"), a part's ("light.exposure"), a mask's id
+    /// ("mask.2"), or "join" for the masks' line.
+    key: string,
     /// 0 a heading, 1 a part or a mask, 2 how the masks land.
     kind: int,
     /// 0 off, 1 some of a heading's parts, 2 on; for the masks' line,

@@ -113,12 +113,9 @@ fn marks(app: &App) -> Vec<bool> {
         .collect()
 }
 
-/// The middle of the topmost button a screen reader knows as `label`.
-fn middle_of(app: &App, label: &str) -> (f32, f32) {
-    let (at, size) = crate::testing::buttons(app, label)
-        .into_iter()
-        .next()
-        .unwrap_or_else(|| panic!("no button {label:?}"));
+/// The middle of the pane's row of the collection `id`.
+fn middle_of(app: &App, id: &str) -> (f32, f32) {
+    let (at, size) = crate::testing::by_key(app, "CollectionsSection::collection-row", id);
     (at.x + size.width / 2.0, at.y + size.height / 2.0)
 }
 
@@ -191,7 +188,7 @@ fn the_menu_and_the_sidebar_make_fill_and_open_a_collection() {
 
     // Its row in the pane opens it: x and z, each once, x from the
     // shoot where it was added.
-    let (cx, cy) = middle_of(app, "Clients/Cover picks");
+    let (cx, cy) = middle_of(app, &id);
     click(app, cx, cy);
     land_sent(state, app, worker);
     assert_eq!(
@@ -356,7 +353,6 @@ fn a_drag_in_the_grid_reorders_the_collection() {
 /// collection's own order, not the frames' time or name.
 #[test]
 fn the_lightbox_over_a_collection_is_in_its_hand_order() {
-    use i_slint_backend_testing::ElementHandle;
     let s = setup("lightbox");
     let (app, state, worker) = (&s.app, &s.state, &s.worker);
     let id = {
@@ -383,11 +379,15 @@ fn the_lightbox_over_a_collection_is_in_its_hand_order() {
         .dispatch_event(slint::platform::WindowEvent::PointerMoved {
             position: slint::LogicalPosition::new(0.0, 0.0),
         });
+    let thumbs = app.get_thumbs();
     let mut tiles: Vec<(f32, f32, &str)> = ["x.tif", "y.tif", "z.tif"]
         .into_iter()
         .map(|name| {
-            let e = ElementHandle::find_by_accessible_label(app, name)
-                .find(|e| e.id().is_some_and(|i| i == "GridSheet::cell"))
+            // The tile of the row named so, the cells keyed by row.
+            let row = (0..thumbs.row_count())
+                .find(|&r| thumbs.row_data(r).is_some_and(|t| t.name == name))
+                .unwrap_or_else(|| panic!("no row {name}"));
+            let e = crate::testing::keyed(app, "GridSheet::cell", row)
                 .unwrap_or_else(|| panic!("no tile {name}"));
             let p = e.absolute_position();
             (p.y, p.x, name)
@@ -643,7 +643,7 @@ fn a_smart_collection_keeps_the_filter_and_puts_it_back() {
             .unwrap()
             .on
     );
-    let (cx, cy) = middle_of(app, "Just y");
+    let (cx, cy) = middle_of(app, &id);
     click(app, cx, cy);
     land_sent(state, app, worker);
     assert_eq!(state.borrow().views.filter.text, "y");
@@ -707,7 +707,7 @@ fn an_older_smart_collection_with_iso_chips_lights_when_opened() {
     let kept = std::fs::read(&file).unwrap();
     app.invoke_filter_cleared();
     show(&state.borrow(), app);
-    let (cx, cy) = middle_of(app, "Low ISO");
+    let (cx, cy) = middle_of(app, &id);
     click(app, cx, cy);
     land_sent(state, app, worker);
     assert_eq!(app.get_filter_text(), "iso:100");

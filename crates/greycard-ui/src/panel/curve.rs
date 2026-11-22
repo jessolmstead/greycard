@@ -1240,8 +1240,7 @@ mod tests {
         testing::click(&app, at.x + size.width / 2.0, at.y + size.height / 2.0);
         let row = "CurvesSection::channel-row";
         testing::by_id(&app, row);
-        let channels = ["RGB", "Red", "Green", "Blue", "R/G", "B/Y"];
-        let (at, size) = testing::segment(&app, row, &channels, "Blue");
+        let (at, size) = testing::segment(&app, row, "Blue");
         testing::click(&app, at.x + size.width / 2.0, at.y + size.height / 2.0);
         assert_eq!(app.get_curve_channel(), "Blue");
         testing::press(&app, "5");

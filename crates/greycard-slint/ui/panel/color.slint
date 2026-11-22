@@ -697,7 +697,9 @@ export component GradingSection inherits Section {
         for name[i] in [@tr("Shadows"), @tr("Midtones"), @tr("Highlights")]: VerticalLayout {
             width: (parent.width - 2 * Theme.space-2) / 3;
             alignment: end;
-            if root.grade-big != i && i < root.grade-images.length: GradeWheel {
+            if root.grade-big != i && i < root.grade-images.length: grade-wheel := GradeWheel {
+                // Its key, for automation: the range, 0 the shadows.
+                accessible-id: i;
                 picture: root.grade-images[i];
                 enabled: root.grading-enabled;
                 chosen: root.grade-range == i;
@@ -711,11 +713,12 @@ export component GradingSection inherits Section {
                 released => { root.grade-release(); }
                 double-clicked(x, y) => { root.grade-double(i); }
             }
-            Rectangle {
+            wheel-name := Rectangle {
                 height: 2 * Theme.font-xs + 8px;
                 border-radius: Theme.radius-sm;
                 background: name-area.has-hover ? Theme.hover : transparent;
                 accessible-role: button;
+                accessible-id: i;
                 // Color grading: show the {} wheel large, or small again
                 accessible-label: root.grade-big == i ? @tr("Shrink {}", name) : @tr("Enlarge {}", name);
                 accessible-action-default => { name-area.choose(); }

@@ -333,20 +333,14 @@ fn escape_lets_go_of_the_set_then_leaves() {
 fn the_bar_says_the_selection_and_the_count() {
     let (app, _state) = session(12);
     into_lightbox(&app);
-    let words = |app: &App| {
-        ElementHandle::find_by_element_type_name(app, "Text")
-            .filter_map(|e| e.accessible_label())
-            .find(|l| l.ends_with("12 frames"))
-            .map(|l| l.to_string())
-    };
-    assert_eq!(words(&app).as_deref(), Some("f00.CR3 · 12 frames"));
+    let words = |app: &App| crate::testing::label_of(app, "GridSheet::bar-words");
+    let count = crate::tr!("{n} frame" | "{n} frames" % 12);
+    assert_eq!(words(&app), format!("f00.CR3 · {count}"));
     app.invoke_frame_clicked(2, true, false);
     app.invoke_frame_clicked(3, true, false);
     move_to(&app, 710.0, 500.0);
-    assert_eq!(
-        words(&app).as_deref(),
-        Some("f00.CR3 and 2 others · 12 frames")
-    );
+    let set = crate::tr!("{} and {n} other" | "{} and {n} others" % 2, "f00.CR3");
+    assert_eq!(words(&app), format!("{set} · {count}"));
 }
 
 /// In the lightbox the slider is the tiles across: plus, minus, and
@@ -697,11 +691,11 @@ fn capped_grid() -> (App, std::rc::Rc<crate::Shared>) {
 
 /// The size the header says, in its count's line.
 fn header_px(app: &App) -> String {
-    ElementHandle::find_by_element_type_name(app, "Text")
-        .filter_map(|e| e.accessible_label())
-        .find(|l| l.ends_with(" px"))
-        .map(|l| l.rsplit("\u{b7} ").next().unwrap_or_default().to_string())
-        .expect("the count's line")
+    crate::testing::label_of(app, "GridSheet::count-line")
+        .rsplit("\u{b7} ")
+        .next()
+        .unwrap_or_default()
+        .to_string()
 }
 
 /// The slider's right end on a sheet that holds the size keeps the

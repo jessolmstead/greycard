@@ -877,7 +877,7 @@ mod tests {
         assert_eq!(app.get_look_name(), "Neon");
         // The section's body grows to its rows over a moment.
         for _ in 0..4 {
-            crate::testing::count_labeled(&app, "x");
+            crate::testing::count_id(&app, "x");
             i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(300));
             slint::platform::update_timers_and_animations();
         }

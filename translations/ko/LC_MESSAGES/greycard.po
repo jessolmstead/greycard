@@ -103,7 +103,9 @@ msgstr "모두 다운로드"
 
 #: crates/greycard-slint/ui/app.slint:4146
 msgid "Queued for export, shown as it will export. Edit it from its folder."
-msgstr "내보내기 대기 중이라 내보낼 모습으로 표시합니다. 편집은 해당 폴더에서 하십시오."
+msgstr ""
+"내보내기 대기 중이라 내보낼 모습으로 표시합니다. 편집은 해당 폴더에서 하십시"
+"오."
 
 #. The Loupe's mode button at the top of the develop panel
 #: crates/greycard-slint/ui/app.slint:4157
@@ -288,83 +290,83 @@ msgid "{} value"
 msgstr "{} 값"
 
 #. Spoken by a screen reader for a thumbnail: its stars
-#: crates/greycard-slint/ui/controls.slint:2826
+#: crates/greycard-slint/ui/controls.slint:2828
 msgid "{n} star"
 msgid_plural "{n} stars"
 msgstr[0] "별 {n}개"
 
 #. Spoken by a screen reader for a thumbnail: its flag
-#: crates/greycard-slint/ui/controls.slint:2828
+#: crates/greycard-slint/ui/controls.slint:2830
 msgid "pick"
 msgstr "채택"
 
 #. Spoken by a screen reader for a thumbnail: its flag
-#: crates/greycard-slint/ui/controls.slint:2828
+#: crates/greycard-slint/ui/controls.slint:2830
 msgid "reject"
 msgstr "제외"
 
 #. Spoken by a screen reader for a thumbnail: its label
-#: crates/greycard-slint/ui/controls.slint:2832
+#: crates/greycard-slint/ui/controls.slint:2834
 msgid "green"
 msgstr "초록"
 
 #. Spoken by a screen reader for a thumbnail: its label
-#: crates/greycard-slint/ui/controls.slint:2832
+#: crates/greycard-slint/ui/controls.slint:2834
 msgid "red"
 msgstr "빨강"
 
 #. Spoken by a screen reader for a thumbnail: its label
-#: crates/greycard-slint/ui/controls.slint:2832
+#: crates/greycard-slint/ui/controls.slint:2834
 msgid "yellow"
 msgstr "노랑"
 
 #. Spoken by a screen reader for a thumbnail: its label
-#: crates/greycard-slint/ui/controls.slint:2834
+#: crates/greycard-slint/ui/controls.slint:2836
 msgid "blue"
 msgstr "파랑"
 
 #. Spoken by a screen reader for a thumbnail: its label
-#: crates/greycard-slint/ui/controls.slint:2834
+#: crates/greycard-slint/ui/controls.slint:2836
 msgid "purple"
 msgstr "자주"
 
 #. Spoken by a screen reader: a thumbnail's badge
-#: crates/greycard-slint/ui/controls.slint:2921
+#: crates/greycard-slint/ui/controls.slint:2923
 msgid "Edited"
 msgstr "편집됨"
 
 #. Spoken by a screen reader: a thumbnail's badge
-#: crates/greycard-slint/ui/controls.slint:2935
+#: crates/greycard-slint/ui/controls.slint:2937
 msgid "Exported"
 msgstr "내보냄"
 
 #. Spoken by a screen reader: a thumbnail's badge
-#: crates/greycard-slint/ui/controls.slint:2949
+#: crates/greycard-slint/ui/controls.slint:2951
 msgid "In a collection"
 msgstr "컬렉션에 있음"
 
 #. Spoken by a screen reader: a thumbnail's badge
-#: crates/greycard-slint/ui/controls.slint:2960
+#: crates/greycard-slint/ui/controls.slint:2962
 msgid "With the camera's JPEG"
 msgstr "카메라 JPEG 있음"
 
 #. Spoken by a screen reader: a thumbnail's stack badge
-#: crates/greycard-slint/ui/controls.slint:2988
+#: crates/greycard-slint/ui/controls.slint:2990
 msgid "Frame {} of a stack of {}, open"
 msgstr "스택 {1}장 중 {0}번째, 펼침"
 
 #. Spoken by a screen reader: a thumbnail's stack badge
-#: crates/greycard-slint/ui/controls.slint:2990
+#: crates/greycard-slint/ui/controls.slint:2992
 msgid "Stack of {}"
 msgstr "{}장 스택"
 
 #. Spoken by a screen reader: a thumbnail's version badge
-#: crates/greycard-slint/ui/controls.slint:3037
+#: crates/greycard-slint/ui/controls.slint:3039
 msgid "Version {}"
 msgstr "버전 {}"
 
 #. Spoken by a screen reader: a scroll bar
-#: crates/greycard-slint/ui/controls.slint:3491
+#: crates/greycard-slint/ui/controls.slint:3493
 msgid "Scroll"
 msgstr "스크롤"
 
@@ -395,51 +397,51 @@ msgid "raw only"
 msgstr "RAW 전용"
 
 #. Look section: a look's fold button; {} is the look's name
-#: crates/greycard-slint/ui/panel/assets.slint:66
+#: crates/greycard-slint/ui/panel/assets.slint:70
 msgid "Fold {}"
 msgstr "{} 접기"
 
 #. Look section: a look's fold button; {} is the look's name
-#: crates/greycard-slint/ui/panel/assets.slint:66
+#: crates/greycard-slint/ui/panel/assets.slint:70
 msgid "Unfold {}"
 msgstr "{} 펼치기"
 
 #. Look section: the tag on a look fitted to the open frame's camera
-#: crates/greycard-slint/ui/panel/assets.slint:109
+#: crates/greycard-slint/ui/panel/assets.slint:113
 msgid "this camera"
 msgstr "이 카메라"
 
-#: crates/greycard-slint/ui/panel/assets.slint:146
+#: crates/greycard-slint/ui/panel/assets.slint:150
 msgid "Profile tone curve"
 msgstr "프로필 톤 곡선"
 
-#: crates/greycard-slint/ui/panel/assets.slint:153
+#: crates/greycard-slint/ui/panel/assets.slint:157
 msgid "Show all cameras"
 msgstr "모든 카메라 표시"
 
-#: crates/greycard-slint/ui/panel/assets.slint:210
+#: crates/greycard-slint/ui/panel/assets.slint:214
 msgid "LOOK"
 msgstr "룩"
 
 #. Spoken by a screen reader: a look's row; {} is its name
-#: crates/greycard-slint/ui/panel/assets.slint:240
+#: crates/greycard-slint/ui/panel/assets.slint:247
 msgid "Look {}"
 msgstr "룩 '{}'"
 
 #. Look section: the slider
-#: crates/greycard-slint/ui/panel/assets.slint:332
+#: crates/greycard-slint/ui/panel/assets.slint:339
 msgid "Strength"
 msgstr "강도"
 
-#: crates/greycard-slint/ui/panel/assets.slint:384
+#: crates/greycard-slint/ui/panel/assets.slint:391
 msgid "Rename..."
 msgstr "이름 바꾸기..."
 
-#: crates/greycard-slint/ui/panel/assets.slint:389
+#: crates/greycard-slint/ui/panel/assets.slint:396
 msgid "Remove this look..."
 msgstr "이 룩 제거..."
 
-#: crates/greycard-slint/ui/panel/assets.slint:401
+#: crates/greycard-slint/ui/panel/assets.slint:408
 msgid "Fit this camera's look..."
 msgstr "룩 맞추기..."
 
@@ -457,17 +459,17 @@ msgid "Uncheck all"
 msgstr "모두 선택 해제"
 
 #. where edits are kept
-#: crates/greycard-slint/ui/panel/carry-list.slint:186
+#: crates/greycard-slint/ui/panel/carry-list.slint:187
 msgid "Masks go"
 msgstr "마스크 처리"
 
 #. Sync sheet: how the masks go across
-#: crates/greycard-slint/ui/panel/carry-list.slint:189
+#: crates/greycard-slint/ui/panel/carry-list.slint:190
 msgid "Add to masks"
 msgstr "마스크에 추가"
 
 #. Sync sheet: how the masks go across
-#: crates/greycard-slint/ui/panel/carry-list.slint:189
+#: crates/greycard-slint/ui/panel/carry-list.slint:190
 msgid "Replace masks"
 msgstr "마스크 바꾸기"
 
@@ -499,11 +501,11 @@ msgstr[0] "없는 사진 {n}장 등록 해제"
 msgid "Delete..."
 msgstr "삭제..."
 
-#: crates/greycard-slint/ui/panel/collections.slint:195
+#: crates/greycard-slint/ui/panel/collections.slint:197
 msgid "No collections yet"
 msgstr "아직 컬렉션이 없습니다"
 
-#: crates/greycard-slint/ui/panel/collections.slint:206
+#: crates/greycard-slint/ui/panel/collections.slint:208
 msgid "+ New collection..."
 msgstr "+ 새 컬렉션..."
 
@@ -680,30 +682,30 @@ msgid "Shadows"
 msgstr "어두운 영역"
 
 #. Spoken by a screen reader: the color grading wheel for {}
-#: crates/greycard-slint/ui/panel/color.slint:707
+#: crates/greycard-slint/ui/panel/color.slint:709
 msgid "{} wheel"
 msgstr "{} 휠"
 
 #. Color grading: show the {} wheel large, or small again
-#: crates/greycard-slint/ui/panel/color.slint:720
+#: crates/greycard-slint/ui/panel/color.slint:723
 msgid "Enlarge {}"
 msgstr "{} 확대"
 
 #. Color grading: show the {} wheel large, or small again
-#: crates/greycard-slint/ui/panel/color.slint:720
+#: crates/greycard-slint/ui/panel/color.slint:723
 msgid "Shrink {}"
 msgstr "{} 축소"
 
-#: crates/greycard-slint/ui/panel/color.slint:784
+#: crates/greycard-slint/ui/panel/color.slint:787
 msgid "Balance"
 msgstr "균형"
 
-#: crates/greycard-slint/ui/panel/color.slint:830
+#: crates/greycard-slint/ui/panel/color.slint:833
 msgid "TINT"
 msgstr "색 입히기"
 
 #. Tint section: the slider
-#: crates/greycard-slint/ui/panel/color.slint:905
+#: crates/greycard-slint/ui/panel/color.slint:908
 msgid "Amount"
 msgstr "양"
 
@@ -904,13 +906,17 @@ msgstr "현상한 이미지"
 msgid ""
 "1-5 stars · P pick · X reject · U unflag · 6-9 label · Space 1:1 · Enter "
 "develops"
-msgstr "1-5 별 · P 채택 · X 제외 · U 플래그 해제 · 6-9 레이블 · Space 1:1 · Enter 현상"
+msgstr ""
+"1-5 별 · P 채택 · X 제외 · U 플래그 해제 · 6-9 레이블 · Space 1:1 · Enter 현"
+"상"
 
 #: crates/greycard-slint/ui/panel/cull.slint:102
 msgid ""
 "1-5 stars · P pick · X reject · U unflag · 6-9 label · Space 1:1 · V compare "
 "· Enter develops"
-msgstr "1-5 별 · P 채택 · X 제외 · U 플래그 해제 · 6-9 레이블 · Space 1:1 · V 비교 · Enter 현상"
+msgstr ""
+"1-5 별 · P 채택 · X 제외 · U 플래그 해제 · 6-9 레이블 · Space 1:1 · V 비교 · "
+"Enter 현상"
 
 #. Culling section: the row with the Left and Right buttons
 #: crates/greycard-slint/ui/panel/cull.slint:113
@@ -1831,27 +1837,27 @@ msgid_plural "{n} rejects"
 msgstr[0] "제외 {n}장"
 
 #. Spoken by a screen reader: a folder tile
-#: crates/greycard-slint/ui/panel/grid.slint:686
+#: crates/greycard-slint/ui/panel/grid.slint:688
 msgid "Folder {}"
 msgstr "폴더 '{}'"
 
 #. A tile's word when its picture could not be read
-#: crates/greycard-slint/ui/panel/grid.slint:916
+#: crates/greycard-slint/ui/panel/grid.slint:920
 msgid "Unreadable"
 msgstr "읽을 수 없음"
 
 #. A tile's word while its picture is made
-#: crates/greycard-slint/ui/panel/grid.slint:930
+#: crates/greycard-slint/ui/panel/grid.slint:934
 msgid "Developing"
 msgstr "현상 중"
 
 #. Spoken by a screen reader: the grid's scroll bar
-#: crates/greycard-slint/ui/panel/grid.slint:1252
+#: crates/greycard-slint/ui/panel/grid.slint:1256
 msgid "Grid scroll"
 msgstr "격자 스크롤"
 
 #. language.
-#: crates/greycard-slint/ui/panel/grid.slint:1326
+#: crates/greycard-slint/ui/panel/grid.slint:1330
 msgid "Close lightbox"
 msgstr "라이트 박스 닫기"
 
@@ -1859,42 +1865,42 @@ msgstr "라이트 박스 닫기"
 msgid "SNAPSHOTS"
 msgstr "스냅숏"
 
-#: crates/greycard-slint/ui/panel/history.slint:204
+#: crates/greycard-slint/ui/panel/history.slint:208
 msgid "Restore {}"
 msgstr "{} 복원"
 
-#: crates/greycard-slint/ui/panel/history.slint:205
+#: crates/greycard-slint/ui/panel/history.slint:209
 msgid "Restore"
 msgstr "복원"
 
-#: crates/greycard-slint/ui/panel/history.slint:213
+#: crates/greycard-slint/ui/panel/history.slint:218
 msgid "Rename {}"
 msgstr "{} 이름 바꾸기"
 
-#: crates/greycard-slint/ui/panel/history.slint:214
+#: crates/greycard-slint/ui/panel/history.slint:219
 msgid "Rename"
 msgstr "이름 바꾸기"
 
 #. Snapshots: remove the snapshot
-#: crates/greycard-slint/ui/panel/history.slint:227
+#: crates/greycard-slint/ui/panel/history.slint:232
 msgid "Remove"
 msgstr "제거"
 
 #. Snapshots: the list when there are none
-#: crates/greycard-slint/ui/panel/history.slint:241
+#: crates/greycard-slint/ui/panel/history.slint:246
 msgid "None yet."
 msgstr "아직 없습니다."
 
 #. Snapshots: take a snapshot of the edit as it is
-#: crates/greycard-slint/ui/panel/history.slint:250
+#: crates/greycard-slint/ui/panel/history.slint:255
 msgid "Take"
 msgstr "만들기"
 
-#: crates/greycard-slint/ui/panel/history.slint:268
+#: crates/greycard-slint/ui/panel/history.slint:273
 msgid "HISTORY"
 msgstr "작업 내역"
 
-#: crates/greycard-slint/ui/panel/history.slint:355
+#: crates/greycard-slint/ui/panel/history.slint:360
 msgid "No changes yet."
 msgstr "아직 변경 사항이 없습니다."
 
@@ -1920,7 +1926,9 @@ msgstr "사본을 검증하며 카드는 변경하지 않습니다."
 msgid ""
 "Adds a folder and its subfolders to the library where it is; nothing is "
 "copied."
-msgstr "폴더와 하위 폴더를 현재 위치 그대로 라이브러리에 추가하며 아무것도 복사하지 않습니다."
+msgstr ""
+"폴더와 하위 폴더를 현재 위치 그대로 라이브러리에 추가하며 아무것도 복사하지 "
+"않습니다."
 
 #: crates/greycard-slint/ui/panel/import-sheet.slint:151
 msgid "No folder chosen"
@@ -2158,203 +2166,203 @@ msgstr "마스크 복사"
 msgid "Paste mask"
 msgstr "마스크 붙여넣기"
 
-#: crates/greycard-slint/ui/panel/mask.slint:279
+#: crates/greycard-slint/ui/panel/mask.slint:281
 msgid "New mask"
 msgstr "새 마스크"
 
-#: crates/greycard-slint/ui/panel/mask.slint:365
+#: crates/greycard-slint/ui/panel/mask.slint:367
 msgid "MASK"
 msgstr "마스크"
 
 #. Spoken by a screen reader: the mask's name field
-#: crates/greycard-slint/ui/panel/mask.slint:396
+#: crates/greycard-slint/ui/panel/mask.slint:398
 msgid "Mask name"
 msgstr "마스크 이름"
 
-#: crates/greycard-slint/ui/panel/mask.slint:415
+#: crates/greycard-slint/ui/panel/mask.slint:417
 msgid "Invert"
 msgstr "반전"
 
-#: crates/greycard-slint/ui/panel/mask.slint:422
+#: crates/greycard-slint/ui/panel/mask.slint:424
 msgid "Refine edge"
 msgstr "가장자리 다듬기"
 
-#: crates/greycard-slint/ui/panel/mask.slint:453
+#: crates/greycard-slint/ui/panel/mask.slint:455
 msgid "Shapes"
 msgstr "모양"
 
-#: crates/greycard-slint/ui/panel/mask.slint:540
+#: crates/greycard-slint/ui/panel/mask.slint:542
 msgid "Invert this shape"
 msgstr "이 모양 반전"
 
-#: crates/greycard-slint/ui/panel/mask.slint:596
+#: crates/greycard-slint/ui/panel/mask.slint:598
 msgid "Remove this shape"
 msgstr "이 모양 제거"
 
 #. Luminance range: the fade at the dark end
-#: crates/greycard-slint/ui/panel/mask.slint:710
+#: crates/greycard-slint/ui/panel/mask.slint:712
 msgid "Low fade"
 msgstr "어두운 쪽 페이드"
 
 #. Luminance range: the fade at the light end
-#: crates/greycard-slint/ui/panel/mask.slint:738
+#: crates/greycard-slint/ui/panel/mask.slint:740
 msgid "High fade"
 msgstr "밝은 쪽 페이드"
 
 #. Color range: the button that reads a color off the picture
-#: crates/greycard-slint/ui/panel/mask.slint:766
+#: crates/greycard-slint/ui/panel/mask.slint:768
 msgid "Sample"
 msgstr "샘플"
 
 #. Color range: the fade
-#: crates/greycard-slint/ui/panel/mask.slint:811
+#: crates/greycard-slint/ui/panel/mask.slint:813
 msgid "Hue fade"
 msgstr "색조 페이드"
 
 #. Color range: the fade
-#: crates/greycard-slint/ui/panel/mask.slint:841
+#: crates/greycard-slint/ui/panel/mask.slint:843
 msgid "Chroma fade"
 msgstr "크로마 페이드"
 
 #. Add a shape: a brush; once one exists its button says Paint
-#: crates/greycard-slint/ui/panel/mask.slint:905
+#: crates/greycard-slint/ui/panel/mask.slint:907
 msgid "Brush"
 msgstr "브러시"
 
 #. Brush: what a stroke does
-#: crates/greycard-slint/ui/panel/mask.slint:908
+#: crates/greycard-slint/ui/panel/mask.slint:910
 msgid "Add"
 msgstr "추가"
 
 #. Brush: what a stroke does
-#: crates/greycard-slint/ui/panel/mask.slint:908
+#: crates/greycard-slint/ui/panel/mask.slint:910
 msgid "Erase"
 msgstr "지우기"
 
 #. Brush: what a stroke does
-#: crates/greycard-slint/ui/panel/mask.slint:908
+#: crates/greycard-slint/ui/panel/mask.slint:910
 msgid "Subtract"
 msgstr "빼기"
 
-#: crates/greycard-slint/ui/panel/mask.slint:917
+#: crates/greycard-slint/ui/panel/mask.slint:919
 msgid "Add a shape"
 msgstr "모양 추가"
 
 #. Spoken by a screen reader: the shape mode row
-#: crates/greycard-slint/ui/panel/mask.slint:942
+#: crates/greycard-slint/ui/panel/mask.slint:944
 msgid "Next shape mode"
 msgstr "다음 모양 모드"
 
 #. Shape mode: the shape cuts the mask down to where both are
-#: crates/greycard-slint/ui/panel/mask.slint:945
+#: crates/greycard-slint/ui/panel/mask.slint:947
 msgid "Intersect"
 msgstr "교차"
 
 #. Add a shape: the kinds
-#: crates/greycard-slint/ui/panel/mask.slint:952
+#: crates/greycard-slint/ui/panel/mask.slint:954
 msgid "Linear"
 msgstr "선형"
 
 #. Add a shape: the kinds
-#: crates/greycard-slint/ui/panel/mask.slint:959
+#: crates/greycard-slint/ui/panel/mask.slint:961
 msgid "Radial"
 msgstr "방사형"
 
 #. Add a shape: a brush; once one exists its button says Paint
-#: crates/greycard-slint/ui/panel/mask.slint:966
+#: crates/greycard-slint/ui/panel/mask.slint:968
 msgid "Paint"
 msgstr "칠하기"
 
-#: crates/greycard-slint/ui/panel/mask.slint:975
+#: crates/greycard-slint/ui/panel/mask.slint:977
 msgid "Subject"
 msgstr "피사체"
 
-#: crates/greycard-slint/ui/panel/mask.slint:982
+#: crates/greycard-slint/ui/panel/mask.slint:984
 msgid "Background"
 msgstr "배경"
 
-#: crates/greycard-slint/ui/panel/mask.slint:991
+#: crates/greycard-slint/ui/panel/mask.slint:993
 msgid "Sky"
 msgstr "하늘"
 
-#: crates/greycard-slint/ui/panel/mask.slint:1008
+#: crates/greycard-slint/ui/panel/mask.slint:1010
 msgid "Landscape"
 msgstr "풍경"
 
-#: crates/greycard-slint/ui/panel/mask.slint:1027
+#: crates/greycard-slint/ui/panel/mask.slint:1029
 msgid "Object"
 msgstr "개체"
 
-#: crates/greycard-slint/ui/panel/mask.slint:1046
+#: crates/greycard-slint/ui/panel/mask.slint:1048
 msgid "People"
 msgstr "사람"
 
-#: crates/greycard-slint/ui/panel/mask.slint:1058
+#: crates/greycard-slint/ui/panel/mask.slint:1060
 msgid "Whole person"
 msgstr "사람 전체"
 
-#: crates/greycard-slint/ui/panel/mask.slint:1060
+#: crates/greycard-slint/ui/panel/mask.slint:1062
 msgid "Face"
 msgstr "얼굴"
 
-#: crates/greycard-slint/ui/panel/mask.slint:1062
+#: crates/greycard-slint/ui/panel/mask.slint:1064
 msgid "Facial skin"
 msgstr "얼굴 피부"
 
-#: crates/greycard-slint/ui/panel/mask.slint:1063
+#: crates/greycard-slint/ui/panel/mask.slint:1065
 msgid "Eyebrows"
 msgstr "눈썹"
 
-#: crates/greycard-slint/ui/panel/mask.slint:1064
+#: crates/greycard-slint/ui/panel/mask.slint:1066
 msgid "Eyes"
 msgstr "눈"
 
-#: crates/greycard-slint/ui/panel/mask.slint:1065
+#: crates/greycard-slint/ui/panel/mask.slint:1067
 msgid "Iris"
 msgstr "홍채"
 
-#: crates/greycard-slint/ui/panel/mask.slint:1066
+#: crates/greycard-slint/ui/panel/mask.slint:1068
 msgid "Lips"
 msgstr "입술"
 
-#: crates/greycard-slint/ui/panel/mask.slint:1067
+#: crates/greycard-slint/ui/panel/mask.slint:1069
 msgid "Teeth"
 msgstr "치아"
 
-#: crates/greycard-slint/ui/panel/mask.slint:1069
+#: crates/greycard-slint/ui/panel/mask.slint:1071
 msgid "Body"
 msgstr "몸"
 
-#: crates/greycard-slint/ui/panel/mask.slint:1070
+#: crates/greycard-slint/ui/panel/mask.slint:1072
 msgid "Skin"
 msgstr "피부"
 
-#: crates/greycard-slint/ui/panel/mask.slint:1071
+#: crates/greycard-slint/ui/panel/mask.slint:1073
 msgid "Hair"
 msgstr "머리카락"
 
-#: crates/greycard-slint/ui/panel/mask.slint:1072
+#: crates/greycard-slint/ui/panel/mask.slint:1074
 msgid "Hands"
 msgstr "손"
 
-#: crates/greycard-slint/ui/panel/mask.slint:1074
+#: crates/greycard-slint/ui/panel/mask.slint:1076
 msgid "Clothing"
 msgstr "옷"
 
-#: crates/greycard-slint/ui/panel/mask.slint:1075
+#: crates/greycard-slint/ui/panel/mask.slint:1077
 msgctxt "clothing"
 msgid "Top"
 msgstr "상의"
 
-#: crates/greycard-slint/ui/panel/mask.slint:1076
+#: crates/greycard-slint/ui/panel/mask.slint:1078
 msgid "Bottoms"
 msgstr "하의"
 
-#: crates/greycard-slint/ui/panel/mask.slint:1077
+#: crates/greycard-slint/ui/panel/mask.slint:1079
 msgid "Shoes"
 msgstr "신발"
 
-#: crates/greycard-slint/ui/panel/mask.slint:1078
+#: crates/greycard-slint/ui/panel/mask.slint:1080
 msgid "All clothing"
 msgstr "옷 전체"
 
@@ -2366,13 +2374,15 @@ msgstr "이 카메라의 룩 맞추기"
 msgid ""
 "Fits a look per camera and picture style to its JPEGs. Groups under 20 "
 "frames borrow or are skipped."
-msgstr "카메라와 픽처 스타일마다 그 JPEG에 맞춰 룩을 맞춥니다. 사진이 20장 미만인 그룹은 다른 그룹에서 빌려 오거나 건너뜁니다."
+msgstr ""
+"카메라와 픽처 스타일마다 그 JPEG에 맞춰 룩을 맞춥니다. 사진이 20장 미만인 그"
+"룹은 다른 그룹에서 빌려 오거나 건너뜁니다."
 
-#: crates/greycard-slint/ui/panel/match-sheet.slint:151
+#: crates/greycard-slint/ui/panel/match-sheet.slint:153
 msgid "Fit {}"
 msgstr "{} 맞추기"
 
-#: crates/greycard-slint/ui/panel/match-sheet.slint:176
+#: crates/greycard-slint/ui/panel/match-sheet.slint:178
 msgid "Replace existing looks"
 msgstr "기존 룩 바꾸기"
 
@@ -2413,7 +2423,9 @@ msgid ""
 msgid_plural ""
 "What is typed goes on all {n} frames chosen; a dimmed word is on some of "
 "them."
-msgstr[0] "입력한 내용은 선택한 사진 {n}장 모두에 적용됩니다. 흐리게 표시된 단어는 일부 사진에만 있습니다."
+msgstr[0] ""
+"입력한 내용은 선택한 사진 {n}장 모두에 적용됩니다. 흐리게 표시된 단어는 일부 "
+"사진에만 있습니다."
 
 #: crates/greycard-slint/ui/panel/navigator.slint:22
 msgid "NAVIGATOR"
@@ -2479,16 +2491,16 @@ msgstr "그룹 이름"
 msgid "PRESETS"
 msgstr "프리셋"
 
-#: crates/greycard-slint/ui/panel/presets.slint:301
+#: crates/greycard-slint/ui/panel/presets.slint:305
 msgid "Save the edit or import a Lightroom preset."
 msgstr "편집을 저장하거나 Lightroom 프리셋을 가져오십시오."
 
-#: crates/greycard-slint/ui/panel/presets.slint:314
+#: crates/greycard-slint/ui/panel/presets.slint:318
 msgid "Remove {} from the list?"
 msgstr "목록에서 '{}'을(를) 제거하시겠습니까?"
 
 #. Presets section: the button that opens the sync sheet
-#: crates/greycard-slint/ui/panel/presets.slint:359
+#: crates/greycard-slint/ui/panel/presets.slint:363
 msgid "Sync..."
 msgstr "동기화..."
 
@@ -2572,7 +2584,7 @@ msgid "Generate"
 msgstr "생성"
 
 #. Fill: another variation of the fill
-#: crates/greycard-slint/ui/panel/retouch.slint:197
+#: crates/greycard-slint/ui/panel/retouch.slint:200
 msgid "Another"
 msgstr "다른 결과"
 
@@ -2619,11 +2631,11 @@ msgstr "라이브러리에서 제거"
 msgid "All roots"
 msgstr "모든 루트 폴더"
 
-#: crates/greycard-slint/ui/panel/roots.slint:451
+#: crates/greycard-slint/ui/panel/roots.slint:453
 msgid "+ Add this folder"
 msgstr "+ 이 폴더 추가"
 
-#: crates/greycard-slint/ui/panel/roots.slint:456
+#: crates/greycard-slint/ui/panel/roots.slint:458
 msgid "+ Add a root..."
 msgstr "+ 루트 폴더 추가..."
 
@@ -2710,324 +2722,328 @@ msgstr "모델"
 msgid "Settings"
 msgstr "설정"
 
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:501
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:503
 msgid "INTERFACE"
 msgstr "인터페이스"
 
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:519
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:521
 msgid "Type and controls, on top of the system's own scaling."
 msgstr "글자와 컨트롤의 크기로, 시스템 배율 위에 적용됩니다."
 
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:525
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:527
 msgid "SLINT_SCALE_FACTOR is set, and wins over this."
 msgstr "SLINT_SCALE_FACTOR가 설정되어 있어 이 설정보다 우선합니다."
 
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:531
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:533
 msgid "Applies at the next start."
 msgstr "다음에 시작할 때 적용됩니다."
 
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:538
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:540
 msgid "Theme"
 msgstr "테마"
 
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:542
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:544
 msgid "Charcoal"
 msgstr "차콜"
 
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:542
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:544
 msgid "Grey"
 msgstr "회색"
 
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:542
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:544
 msgctxt "theme"
 msgid "Light"
 msgstr "밝게"
 
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:549
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:551
 msgid "Scroll bars"
 msgstr "스크롤 막대"
 
 #. Scroll bars: fade when idle, or stay
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:554
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:556
 msgid "Fade"
 msgstr "흐리게"
 
 #. Scroll bars: fade when idle, or stay
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:554
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:556
 msgid "Stay"
 msgstr "항상 표시"
 
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:561
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:563
 msgid "Scroll bar size"
 msgstr "막대 굵기"
 
 #. Scroll bar size
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:566
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:568
 msgid "Medium"
 msgstr "보통"
 
 #. Scroll bar size
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:566
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:568
 msgid "Thin"
 msgstr "가늘게"
 
 #. Scroll bar size
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:566
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:568
 msgid "Wide"
 msgstr "굵게"
 
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:573
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:575
 msgid "Language"
 msgstr "언어"
 
 #. Interface: the develop panel's sections
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:591
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:593
 msgid "One section open at a time"
 msgstr "한 번에 한 섹션만 열기"
 
 #. their first order, after dragging them
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:599
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:601
 msgid "Reset section order"
 msgstr "섹션 순서 재설정"
 
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:617
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:619
 msgid "LIBRARY"
 msgstr "라이브러리"
 
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:624
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:626
 msgid "Start in"
 msgstr "시작 폴더"
 
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:628
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:630
 msgid "Chosen folder"
 msgstr "지정한 폴더"
 
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:628
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:630
 msgid "Last folder"
 msgstr "마지막 폴더"
 
 #. that picks the view greycard opens in, Loupe or Library
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:646
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:648
 msgid "Start view"
 msgstr "시작 보기"
 
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:654
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:656
 msgid "Show the filter bar"
 msgstr "필터 막대 표시"
 
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:660
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:662
 msgid "Cell size"
 msgstr "셀 크기"
 
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:671
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:673
 msgid "Resize with the wheel"
 msgstr "휠로 크기 조절"
 
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:677
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:679
 msgid "SIDECARS"
 msgstr "사이드카"
 
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:684
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:686
 msgid "Edits go"
 msgstr "저장 위치"
 
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:688
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:690
 msgid "Beside the raw"
 msgstr "RAW 옆"
 
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:688
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:690
 msgid "Hidden folder"
 msgstr "숨김 폴더"
 
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:698
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:700
 msgid "In a hidden .greycard folder."
 msgstr "숨김 폴더 .greycard 안에 저장합니다."
 
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:699
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:701
 msgid "IMG_0001.CR3.gcd, beside the raw."
 msgstr "IMG_0001.CR3.gcd로 RAW 옆에 저장합니다."
 
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:705
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:707
 msgid "Sidecars move when next saved."
 msgstr "사이드카는 다음에 저장할 때 이동합니다."
 
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:714
-msgid "Sidecars are not written this run (--no-sidecars), so none are moved."
-msgstr "이번 실행에서는 사이드카를 쓰지 않으므로(--no-sidecars) 아무것도 이동하지 않습니다."
-
 #: crates/greycard-slint/ui/panel/settings-sheet.slint:716
+msgid "Sidecars are not written this run (--no-sidecars), so none are moved."
+msgstr ""
+"이번 실행에서는 사이드카를 쓰지 않으므로(--no-sidecars) 아무것도 이동하지 않"
+"습니다."
+
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:718
 msgid "Counting the sidecars of {}..."
 msgstr "{}의 사이드카를 세는 중..."
 
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:718
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:720
 msgid "Every sidecar of {} is in the chosen place."
 msgstr "{}의 사이드카가 모두 지정한 위치에 있습니다."
 
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:719
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:721
 msgid "{} of {} is in the other place."
 msgid_plural "{} of {} are in the other place."
 msgstr[0] "{1} 중 {0}이(가) 다른 위치에 있습니다."
 
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:725
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:727
 msgid "Move the open frame's sidecar"
 msgstr "열린 사진의 사이드카 이동"
 
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:725
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:727
 msgid "Move the open frames' sidecars"
 msgstr "열린 사진의 사이드카 이동"
 
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:737
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:739
 msgid "Move {}"
 msgstr "{} 이동"
 
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:753
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:755
 msgid "Write XMP sidecars"
 msgstr "XMP 사이드카 쓰기"
 
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:758
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:760
 msgid "Rating, label and keywords, for Lightroom and darktable."
 msgstr "Lightroom과 darktable용 등급, 레이블, 키워드입니다."
 
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:771
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:773
 msgid "Treat a JPEG beside its raw as a separate frame"
 msgstr "RAW 옆의 JPEG를 별도의 사진으로 취급"
 
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:777
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:779
 msgid "IMG_0001.JPG is a frame of its own, with its own rating."
 msgstr "IMG_0001.JPG는 자체 등급을 가진 별도의 사진입니다."
 
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:778
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:780
 msgid "IMG_0001.JPG goes with IMG_0001.CR3: one frame, marked +JPEG."
 msgstr "IMG_0001.JPG는 IMG_0001.CR3과 한 장의 사진이 되며 +JPEG로 표시됩니다."
 
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:785
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:787
 msgid "THUMBNAILS"
 msgstr "축소판"
 
 #. Thumbnails: before the size field
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:809
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:811
 msgid "Keep up to"
 msgstr "최대 보관"
 
 #. Thumbnails: after the size field
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:819
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:821
 msgid "MB, 0 for none"
 msgstr "MB, 0이면 보관 안 함"
 
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:823
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:825
 msgid "Previews up to"
 msgstr "미리 보기 최대"
 
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:835
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:837
 msgid "Previews let you cull offline drives; about 0.5 MB a frame."
-msgstr "미리 보기가 있으면 오프라인 드라이브의 사진도 선별할 수 있습니다. 사진 1장에 약 0.5 MB입니다."
+msgstr ""
+"미리 보기가 있으면 오프라인 드라이브의 사진도 선별할 수 있습니다. 사진 1장에 "
+"약 0.5 MB입니다."
 
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:842
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:844
 msgid "NETWORK FOLDERS"
 msgstr "네트워크 폴더"
 
 #. Network folders: before the minutes field
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:850
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:852
 msgid "Rescan every"
 msgstr "다시 검색 간격"
 
 #. Network folders: after the minutes field
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:860
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:862
 msgid "minutes, 0 for never"
 msgstr "분, 0이면 안 함"
 
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:863
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:865
 msgid "Shares can't be watched, so they're rescanned."
 msgstr "공유 폴더는 감시할 수 없으므로 다시 검색합니다."
 
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:977
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:979
 msgid "Lens corrections on new edits"
 msgstr "새 편집에 렌즈 교정 적용"
 
 #. Editing: the aspect a new crop opens at
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:995
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:997
 msgid "Last used"
 msgstr "마지막 사용"
 
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:1002
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:1004
 msgid "An uncropped frame's crop opens at the aspect last picked."
 msgstr "자르지 않은 사진은 마지막으로 고른 종횡비로 자르기를 시작합니다."
 
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:1004
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:1006
 msgid "An uncropped frame's crop opens free, any shape."
 msgstr "자르지 않은 사진은 자유로운 모양으로 자르기를 시작합니다."
 
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:1005
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:1007
 msgid "An uncropped frame's crop opens at the frame's own shape."
 msgstr "자르지 않은 사진은 사진 본래의 모양으로 자르기를 시작합니다."
 
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:1055
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:1057
 msgid "Restores removed built-in presets."
 msgstr "제거한 기본 제공 프리셋을 복원합니다."
 
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:1062
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:1064
 msgid "EXPORT"
 msgstr "내보내기"
 
 #. Export presets: the button that adds one
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:1118
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:1120
 msgid "Add..."
 msgstr "추가..."
 
 #. Editing: the name every export carries
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:1127
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:1129
 msgid "Author"
 msgstr "작성자"
 
 #. Editing: the copyright notice every export carries
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:1138
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:1140
 msgid "Copyright"
 msgstr "저작권"
 
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:1158
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:1160
 msgid "MODELS"
 msgstr "모델"
 
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:1232
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:1234
 msgid "KEYS"
 msgstr "단축키"
 
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:1289
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:1294
 msgid "Reset to defaults"
 msgstr "기본값으로 재설정"
 
 #. About: the version row
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:1313
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:1318
 msgid "Version"
 msgstr "버전"
 
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:1318
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:1323
 msgid "UPDATES"
 msgstr "업데이트"
 
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:1324
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:1329
 msgid "Check for a new version at launch"
 msgstr "시작할 때 새 버전 확인"
 
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:1329
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:1334
 msgid "Once a day; sends only the version number."
 msgstr "하루에 한 번이며 버전 번호만 보냅니다."
 
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:1345
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:1350
 msgid "Check now"
 msgstr "지금 확인"
 
 #. About: the cache folder's row
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:1400
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:1405
 msgid "Caches"
 msgstr "캐시"
 
 #. About: the log folder's row
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:1423
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:1428
 msgid "Log"
 msgstr "로그"
 
-#: crates/greycard-slint/ui/panel/strip.slint:380
+#: crates/greycard-slint/ui/panel/strip.slint:382
 msgid "Strip scroll"
 msgstr "필름 스트립 스크롤"
 
@@ -3049,7 +3065,9 @@ msgstr "설정 동기화"
 msgid ""
 "Crop and retouch never copy; camera profiles only to the same camera. A part "
 "copied alone leaves the rest of its section as each frame has it."
-msgstr "자르기와 리터치는 복사되지 않으며, 카메라 프로필은 같은 카메라에만 복사됩니다. 일부 항목만 복사하면 해당 섹션의 나머지는 각 사진의 설정 그대로 남습니다."
+msgstr ""
+"자르기와 리터치는 복사되지 않으며, 카메라 프로필은 같은 카메라에만 복사됩니"
+"다. 일부 항목만 복사하면 해당 섹션의 나머지는 각 사진의 설정 그대로 남습니다."
 
 #: crates/greycard-slint/ui/panel/sync-sheet.slint:172
 msgid "Apply"
@@ -3109,7 +3127,9 @@ msgstr "Vulkan 또는 DX12"
 msgid ""
 "no GPU greycard can draw on through {api}: drawing in software and "
 "developing on the CPU, which is slow"
-msgstr "greycard가 {api} 기반으로 그릴 수 있는 GPU가 없습니다. 소프트웨어로 그리고 CPU에서 현상하므로 느립니다"
+msgstr ""
+"greycard가 {api} 기반으로 그릴 수 있는 GPU가 없습니다. 소프트웨어로 그리고 "
+"CPU에서 현상하므로 느립니다"
 
 #: crates/greycard-ui/src/adapter.rs:139
 msgid "drawing in software on {name} and developing on the CPU, which is slow"
@@ -3170,82 +3190,82 @@ msgid "Mask {}"
 msgstr "마스크 {}"
 
 #. Sync sheet: a section of the edit
-#: crates/greycard-ui/src/carry.rs:393
+#: crates/greycard-ui/src/carry.rs:401
 msgid "Light"
 msgstr "조명"
 
-#: crates/greycard-ui/src/carry.rs:395
+#: crates/greycard-ui/src/carry.rs:403
 msgid "White balance"
 msgstr "화이트 밸런스"
 
-#: crates/greycard-ui/src/carry.rs:396
+#: crates/greycard-ui/src/carry.rs:404
 msgid "Noise"
 msgstr "노이즈"
 
-#: crates/greycard-ui/src/carry.rs:397
+#: crates/greycard-ui/src/carry.rs:405
 msgid "Detail"
 msgstr "세부"
 
-#: crates/greycard-ui/src/carry.rs:399
+#: crates/greycard-ui/src/carry.rs:407
 msgid "Output sharpen"
 msgstr "출력 선명도"
 
-#: crates/greycard-ui/src/carry.rs:401
+#: crates/greycard-ui/src/carry.rs:409
 msgid "Color mixer"
 msgstr "색상 혼합"
 
-#: crates/greycard-ui/src/carry.rs:403
+#: crates/greycard-ui/src/carry.rs:411
 msgid "Black and white"
 msgstr "흑백"
 
-#: crates/greycard-ui/src/carry.rs:404
+#: crates/greycard-ui/src/carry.rs:412
 msgid "Color grading"
 msgstr "컬러 그레이딩"
 
-#: crates/greycard-ui/src/carry.rs:405
+#: crates/greycard-ui/src/carry.rs:413
 msgid "Color tint"
 msgstr "색 입히기"
 
-#: crates/greycard-ui/src/carry.rs:406
+#: crates/greycard-ui/src/carry.rs:414
 msgid "Look"
 msgstr "룩"
 
-#: crates/greycard-ui/src/carry.rs:408
+#: crates/greycard-ui/src/carry.rs:416
 msgid "Vignette"
 msgstr "비네팅"
 
-#: crates/greycard-ui/src/carry.rs:409
+#: crates/greycard-ui/src/carry.rs:417
 msgid "Grain"
 msgstr "그레인"
 
-#: crates/greycard-ui/src/carry.rs:411
+#: crates/greycard-ui/src/carry.rs:419
 msgid "Camera profile"
 msgstr "카메라 프로필"
 
 #. Sync sheet: the color mixer's parts
-#: crates/greycard-ui/src/carry.rs:428
+#: crates/greycard-ui/src/carry.rs:436
 msgid "RGB"
 msgstr "RGB"
 
 #. Sync sheet: the lens correction's parts
-#: crates/greycard-ui/src/carry.rs:433
+#: crates/greycard-ui/src/carry.rs:441
 msgid "R/G"
 msgstr "R/G"
 
-#: crates/greycard-ui/src/carry.rs:434
+#: crates/greycard-ui/src/carry.rs:442
 msgid "B/Y"
 msgstr "B/Y"
 
 #. Sync sheet: the black and white filter's part
-#: crates/greycard-ui/src/carry.rs:441
+#: crates/greycard-ui/src/carry.rs:449
 msgid "Weights"
 msgstr "가중치"
 
-#: crates/greycard-ui/src/carry.rs:448
+#: crates/greycard-ui/src/carry.rs:456
 msgid "Manual aberration"
 msgstr "수동 색수차"
 
-#: crates/greycard-ui/src/carry.rs:449
+#: crates/greycard-ui/src/carry.rs:457
 msgid "Manual distortion"
 msgstr "수동 왜곡"
 
@@ -3253,13 +3273,17 @@ msgstr "수동 왜곡"
 msgid ""
 "no file chooser: there is no D-Bus session bus; install zenity, or see the "
 "user guide"
-msgstr "파일 선택 창이 없습니다. D-Bus 세션 버스가 없습니다. zenity를 설치하거나 사용자 가이드를 참조하십시오"
+msgstr ""
+"파일 선택 창이 없습니다. D-Bus 세션 버스가 없습니다. zenity를 설치하거나 사용"
+"자 가이드를 참조하십시오"
 
 #: crates/greycard-ui/src/chooser.rs:228
 msgid ""
 "no file chooser: no desktop portal answered; install xdg-desktop-portal-gtk "
 "or zenity"
-msgstr "파일 선택 창이 없습니다. 데스크톱 포털이 응답하지 않았습니다. xdg-desktop-portal-gtk 또는 zenity를 설치하십시오"
+msgstr ""
+"파일 선택 창이 없습니다. 데스크톱 포털이 응답하지 않았습니다. xdg-desktop-"
+"portal-gtk 또는 zenity를 설치하십시오"
 
 #: crates/greycard-ui/src/chooser.rs:233
 msgid "the file chooser failed: {e}"
@@ -3346,7 +3370,8 @@ msgstr "휴지통이 {}을(를) 거부했습니다 ({})"
 msgid "; {n} frame still where it was: ask again to delete permanently"
 msgid_plural ""
 "; {n} frames still where they were: ask again to delete permanently"
-msgstr[0] "; 사진 {n}장이 원래 위치에 있습니다. 영구 삭제하려면 다시 실행하십시오"
+msgstr[0] ""
+"; 사진 {n}장이 원래 위치에 있습니다. 영구 삭제하려면 다시 실행하십시오"
 
 #: crates/greycard-ui/src/delete.rs:566
 msgid "; {n} frame not deleted ({name}: {why}{each})"
@@ -3361,7 +3386,8 @@ msgstr "; 각 항목은 로그에 있습니다"
 msgid "; {n} camera JPEG left where it was when its raw went ({name}: {why})"
 msgid_plural ""
 "; {n} camera JPEGs left where they were when their raws went ({name}: {why})"
-msgstr[0] "; RAW를 삭제할 때 카메라 JPEG {n}장이 원래 위치에 남았습니다 ({name}: {why})"
+msgstr[0] ""
+"; RAW를 삭제할 때 카메라 JPEG {n}장이 원래 위치에 남았습니다 ({name}: {why})"
 
 #: crates/greycard-ui/src/export_queue.rs:230
 msgid "{n} set"
@@ -3534,7 +3560,8 @@ msgid ""
 ", the preset's camera profile left off {n} frame (made for another camera)"
 msgid_plural ""
 ", the preset's camera profile left off {n} frames (made for another camera)"
-msgstr[0] ", 사진 {n}장에는 프리셋의 카메라 프로필을 적용하지 않음 (다른 카메라용)"
+msgstr[0] ""
+", 사진 {n}장에는 프리셋의 카메라 프로필을 적용하지 않음 (다른 카메라용)"
 
 #: crates/greycard-ui/src/import.rs:550
 msgid "; {n} folder could not be read, its frames not imported"
@@ -3707,7 +3734,9 @@ msgstr "격자나 라이트 박스에서 고른 사진 열기, 선별에서는 �
 msgid ""
 "Bigger or smaller tiles in the grid; fewer or more across the lightbox; in "
 "the Loupe, zoom in or out"
-msgstr "격자에서 타일 크게 또는 작게, 라이트 박스에서 한 줄의 사진 수 줄이기 또는 늘리기, 확대경에서 확대 또는 축소"
+msgstr ""
+"격자에서 타일 크게 또는 작게, 라이트 박스에서 한 줄의 사진 수 줄이기 또는 늘"
+"리기, 확대경에서 확대 또는 축소"
 
 #: crates/greycard-ui/src/keys.rs:259
 msgid ""
@@ -3875,7 +3904,10 @@ msgstr "슬라이더"
 msgid ""
 "Nudge the focused slider, or its typed value with ↑ ↓; Shift on an arrow for "
 "more, Ctrl on the slider for less, and Shift on a drag for finer"
-msgstr "포커스가 있는 슬라이더나 입력 중인 값을 ↑ ↓로 미세 조정, 화살표 키에 Shift를 누르면 크게, 슬라이더에서 Ctrl을 누르면 작게, 드래그 중 Shift를 누르면 더 세밀하게"
+msgstr ""
+"포커스가 있는 슬라이더나 입력 중인 값을 ↑ ↓로 미세 조정, 화살표 키에 Shift를 "
+"누르면 크게, 슬라이더에서 Ctrl을 누르면 작게, 드래그 중 Shift를 누르면 더 세"
+"밀하게"
 
 #: crates/greycard-ui/src/keys.rs:452
 msgid "The previous or the next slider"
@@ -3915,10 +3947,12 @@ msgstr "단축키 목록"
 msgid ""
 "Close a sheet, put a tool down, leave the crop, let go of a set, or go back "
 "to one frame"
-msgstr "시트 닫기, 도구 내려놓기, 자르기 끝내기, 선택 해제, 또는 사진 1장 보기로 돌아가기"
+msgstr ""
+"시트 닫기, 도구 내려놓기, 자르기 끝내기, 선택 해제, 또는 사진 1장 보기로 돌아"
+"가기"
 
 #. Keys sheet: two keys that do the same
-#: crates/greycard-ui/src/keys.rs:622
+#: crates/greycard-ui/src/keys.rs:622 crates/greycard-ui/src/keys/tests.rs:311
 msgid "{} or {}"
 msgstr "{} 또는 {}"
 
@@ -3929,6 +3963,7 @@ msgstr "클릭"
 
 #. What the sheets write for an action bound to no key.
 #: crates/greycard-ui/src/keys.rs:1083
+#: crates/greycard-ui/src/keys/tests.rs:1360
 msgctxt "key binding"
 msgid "None"
 msgstr "없음"
@@ -4010,7 +4045,9 @@ msgstr "{label}의 제외한 사진 이동 중: {total}장 중 {done}장"
 #: crates/greycard-ui/src/panel/archive.rs:341
 msgid ""
 "moving the rejects on {label}: {done} of {total}; stopping after this frame"
-msgstr "{label}의 제외한 사진 이동 중: {total}장 중 {done}장; 이 사진을 마치고 중지합니다"
+msgstr ""
+"{label}의 제외한 사진 이동 중: {total}장 중 {done}장; 이 사진을 마치고 중지합"
+"니다"
 
 #: crates/greycard-ui/src/panel/archive.rs:347
 msgid "deleting the rejects from {label}: {done} of {total}"
@@ -4020,7 +4057,9 @@ msgstr "{label}에서 제외한 사진 삭제 중: {total}장 중 {done}장"
 msgid ""
 "deleting the rejects from {label}: {done} of {total}; stopping after this "
 "frame"
-msgstr "{label}에서 제외한 사진 삭제 중: {total}장 중 {done}장; 이 사진을 마치고 중지합니다"
+msgstr ""
+"{label}에서 제외한 사진 삭제 중: {total}장 중 {done}장; 이 사진을 마치고 중지"
+"합니다"
 
 #: crates/greycard-ui/src/panel/archive.rs:391
 msgid "Back up..."
@@ -4088,7 +4127,8 @@ msgstr "복사할 항목이 선택되지 않았습니다"
 
 #: crates/greycard-ui/src/panel/archive.rs:540
 msgid "there is no archive to copy to: mark a root as one from its menu"
-msgstr "복사할 아카이브가 없습니다: 루트 폴더의 메뉴에서 아카이브로 지정하십시오"
+msgstr ""
+"복사할 아카이브가 없습니다: 루트 폴더의 메뉴에서 아카이브로 지정하십시오"
 
 #: crates/greycard-ui/src/panel/archive.rs:551
 #: crates/greycard-ui/src/panel/archive/rejects.rs:184
@@ -4099,7 +4139,9 @@ msgstr "아직 {label}의 응답을 기다리는 중입니다. 잠시 후 다시
 msgid ""
 "these frames are under more than one root: back up a root's or a folder's at "
 "a time"
-msgstr "이 사진들은 여러 루트 폴더에 걸쳐 있습니다: 루트 폴더나 폴더 단위로 백업하십시오"
+msgstr ""
+"이 사진들은 여러 루트 폴더에 걸쳐 있습니다: 루트 폴더나 폴더 단위로 백업하십"
+"시오"
 
 #: crates/greycard-ui/src/panel/archive.rs:633
 msgid "looking at what is on {label}..."
@@ -4128,13 +4170,16 @@ msgstr "확인 중..."
 msgid ""
 "forgot that {source} was backed up to {dest}: that folder is no longer on "
 "{archive}"
-msgstr "{source}을(를) {dest}에 백업한 기록을 지웠습니다: 그 폴더가 더 이상 {archive}에 없습니다"
+msgstr ""
+"{source}을(를) {dest}에 백업한 기록을 지웠습니다: 그 폴더가 더 이상 {archive}"
+"에 없습니다"
 
 #: crates/greycard-ui/src/panel/archive.rs:760
 msgid "forgot {n} backup whose folder is no longer on {archive}: {names}"
 msgid_plural ""
 "forgot {n} backups whose folders are no longer on {archive}: {names}"
-msgstr[0] "폴더가 더 이상 {archive}에 없는 백업 기록 {n}건을 지웠습니다: {names}"
+msgstr[0] ""
+"폴더가 더 이상 {archive}에 없는 백업 기록 {n}건을 지웠습니다: {names}"
 
 #: crates/greycard-ui/src/panel/archive.rs:815
 msgid "{name} isn't reachable; nothing was copied"
@@ -4147,7 +4192,9 @@ msgstr "아카이브 확인을 시작할 수 없습니다"
 
 #: crates/greycard-ui/src/panel/archive.rs:862
 msgid "{label} timed out after {seconds} s; nothing was copied"
-msgstr "{label}의 응답이 {seconds}초 후 시간 초과되었습니다. 아무것도 복사하지 않았습니다"
+msgstr ""
+"{label}의 응답이 {seconds}초 후 시간 초과되었습니다. 아무것도 복사하지 않았습"
+"니다"
 
 #: crates/greycard-ui/src/panel/archive.rs:875
 #: crates/greycard-ui/src/panel/archive/rejects.rs:241
@@ -4177,7 +4224,8 @@ msgid ""
 "{n} frame already there has newer sidecars here; only the sidecars copy."
 msgid_plural ""
 "{n} frames already there have newer sidecars here; only the sidecars copy."
-msgstr[0] "이미 있는 사진 {n}장은 이쪽 사이드카가 더 새로우므로 사이드카만 복사합니다."
+msgstr[0] ""
+"이미 있는 사진 {n}장은 이쪽 사이드카가 더 새로우므로 사이드카만 복사합니다."
 
 #: crates/greycard-ui/src/panel/archive.rs:972
 msgid ""
@@ -4186,7 +4234,9 @@ msgid ""
 msgid_plural ""
 "{n} frames already there have newer sidecars on the archive; only the "
 "sidecars copy."
-msgstr[0] "이미 있는 사진 {n}장은 아카이브의 사이드카가 더 새로우므로 사이드카만 복사합니다."
+msgstr[0] ""
+"이미 있는 사진 {n}장은 아카이브의 사이드카가 더 새로우므로 사이드카만 복사합"
+"니다."
 
 #: crates/greycard-ui/src/panel/archive.rs:981
 msgid "{n} frame already on {label}, skipped."
@@ -4198,7 +4248,9 @@ msgid ""
 "{n} frame already on {label}, {elsewhere} under a different folder, skipped."
 msgid_plural ""
 "{n} frames already on {label}, {elsewhere} under a different folder, skipped."
-msgstr[0] "{label}에 이미 있는 사진 {n}장(그중 {elsewhere}장은 다른 폴더에 있음)을 건너뛰었습니다."
+msgstr[0] ""
+"{label}에 이미 있는 사진 {n}장(그중 {elsewhere}장은 다른 폴더에 있음)을 건너"
+"뛰었습니다."
 
 #: crates/greycard-ui/src/panel/archive.rs:994
 msgid "{n} frame already here, skipped."
@@ -4209,7 +4261,9 @@ msgstr[0] "여기에 이미 있는 사진 {n}장을 건너뛰었습니다."
 msgid "{n} frame already here, {elsewhere} under a different folder, skipped."
 msgid_plural ""
 "{n} frames already here, {elsewhere} under a different folder, skipped."
-msgstr[0] "여기에 이미 있는 사진 {n}장(그중 {elsewhere}장은 다른 폴더에 있음)을 건너뛰었습니다."
+msgstr[0] ""
+"여기에 이미 있는 사진 {n}장(그중 {elsewhere}장은 다른 폴더에 있음)을 건너뛰었"
+"습니다."
 
 #: crates/greycard-ui/src/panel/archive.rs:1005
 msgid "Nothing to copy."
@@ -4266,11 +4320,14 @@ msgstr "폴더는 {label}({folder}) 안에 있어야 합니다."
 msgid ""
 "not copied: another job on an archive started meanwhile; ask again once it "
 "is done"
-msgstr "복사하지 않았습니다: 그동안 아카이브에서 다른 작업이 시작되었습니다. 끝난 후 다시 실행하십시오"
+msgstr ""
+"복사하지 않았습니다: 그동안 아카이브에서 다른 작업이 시작되었습니다. 끝난 후 "
+"다시 실행하십시오"
 
 #: crates/greycard-ui/src/panel/archive.rs:1152
 msgid "not copied: a capture, an export or a timing run never copies"
-msgstr "복사하지 않았습니다: 캡처, 내보내기, 시간 측정 실행에서는 복사하지 않습니다"
+msgstr ""
+"복사하지 않았습니다: 캡처, 내보내기, 시간 측정 실행에서는 복사하지 않습니다"
 
 #: crates/greycard-ui/src/panel/archive.rs:1201
 msgid "backing up {n} frame to {label}..."
@@ -4288,7 +4345,9 @@ msgstr "복사를 시작할 수 없습니다. 아무것도 복사하지 않았�
 
 #: crates/greycard-ui/src/panel/archive.rs:1325
 msgid "{label} timed out after {seconds} s; stopping after this frame"
-msgstr "{label}의 응답이 {seconds}초 후 시간 초과되었습니다. 이 사진을 마치고 중지합니다"
+msgstr ""
+"{label}의 응답이 {seconds}초 후 시간 초과되었습니다. 이 사진을 마치고 중지합"
+"니다"
 
 #: crates/greycard-ui/src/panel/archive.rs:1344
 msgid ""
@@ -4424,7 +4483,8 @@ msgstr[0] "이 중 {n}장은 어느 아카이브에도 없습니다."
 
 #: crates/greycard-ui/src/panel/archive.rs:1746
 msgid " Unsure whether it is also on another root; Back up checks it fully."
-msgstr " 다른 루트 폴더에도 있는지 확실하지 않습니다. '백업'에서 완전히 확인합니다."
+msgstr ""
+" 다른 루트 폴더에도 있는지 확실하지 않습니다. '백업'에서 완전히 확인합니다."
 
 #: crates/greycard-ui/src/panel/archive.rs:1748
 msgid " Unsure whether it is on an archive; Back up checks it fully."
@@ -4476,7 +4536,9 @@ msgstr "아카이브가 없습니다: 루트 폴더의 메뉴에서 아카이브
 msgid ""
 "Remove rejects works on one folder: pick one in the tree with With "
 "subfolders off"
-msgstr "'제외한 사진 제거'는 폴더 하나에서 작동합니다: '하위 폴더 포함'을 끄고 트리에서 하나를 선택하십시오"
+msgstr ""
+"'제외한 사진 제거'는 폴더 하나에서 작동합니다: '하위 폴더 포함'을 끄고 트리에"
+"서 하나를 선택하십시오"
 
 #: crates/greycard-ui/src/panel/archive/rejects.rs:166
 #: crates/greycard-ui/src/panel/delete.rs:332
@@ -4487,7 +4549,9 @@ msgstr "열린 항목이 없습니다"
 msgid ""
 "the open folder is on {label}: its rejects folder is {label}'s own, and "
 "Delete rejects folder is the way to take it off"
-msgstr "열린 폴더가 {label}에 있습니다: 그 제외 폴더는 {label} 자체의 것이므로, 없애려면 '제외 폴더 삭제'를 사용하십시오"
+msgstr ""
+"열린 폴더가 {label}에 있습니다: 그 제외 폴더는 {label} 자체의 것이므로, 없애"
+"려면 '제외 폴더 삭제'를 사용하십시오"
 
 #: crates/greycard-ui/src/panel/archive/rejects.rs:197
 msgid "looking for the rejects on {label}..."
@@ -4505,7 +4569,8 @@ msgstr "{}에 사진이 없습니다"
 #: crates/greycard-ui/src/panel/archive/rejects.rs:304
 msgid "{n} reject here has {copies} on {label}, {size}:"
 msgid_plural "{n} rejects here have {copies} on {label}, {size}:"
-msgstr[0] "여기 있는 제외한 사진 {n}장의 {copies}가 {label}에 있습니다({size}):"
+msgstr[0] ""
+"여기 있는 제외한 사진 {n}장의 {copies}가 {label}에 있습니다({size}):"
 
 #: crates/greycard-ui/src/panel/archive/rejects.rs:315
 msgid "and {} more"
@@ -4518,7 +4583,9 @@ msgstr[0] "{dir}의 제외한 사진 {n}장의 사본을 {label}에서 찾지 �
 
 #: crates/greycard-ui/src/panel/archive/rejects.rs:336
 msgid "{label} isn't reachable: moves will queue, deletes can't run."
-msgstr "{label}에 연결할 수 없습니다: 이동은 대기열에 들어가고, 삭제는 실행할 수 없습니다."
+msgstr ""
+"{label}에 연결할 수 없습니다: 이동은 대기열에 들어가고, 삭제는 실행할 수 없습"
+"니다."
 
 #: crates/greycard-ui/src/panel/archive/rejects.rs:344
 msgid "No copy found on {label}: {names}."
@@ -4539,7 +4606,8 @@ msgstr "삭제하면 휴지통으로 옮깁니다."
 #: crates/greycard-ui/src/panel/archive/rejects.rs:362
 msgid ""
 "The trash failed on {label} earlier; a permanent delete can't be undone."
-msgstr "이전에 {label}에서 휴지통을 쓰지 못했습니다. 영구 삭제는 되돌릴 수 없습니다."
+msgstr ""
+"이전에 {label}에서 휴지통을 쓰지 못했습니다. 영구 삭제는 되돌릴 수 없습니다."
 
 #: crates/greycard-ui/src/panel/archive/rejects.rs:366
 msgid "No trash on {label}: deletes are permanent."
@@ -4574,7 +4642,9 @@ msgstr "{label}에서 영구 삭제"
 msgid ""
 "nothing done: another job on an archive is under way; ask again once it is "
 "done"
-msgstr "아무것도 하지 않았습니다: 아카이브에서 다른 작업이 진행 중입니다. 끝난 후 다시 실행하십시오"
+msgstr ""
+"아무것도 하지 않았습니다: 아카이브에서 다른 작업이 진행 중입니다. 끝난 후 다"
+"시 실행하십시오"
 
 #: crates/greycard-ui/src/panel/archive/rejects.rs:437
 msgid "not deleted: {} isn't reachable"
@@ -4583,7 +4653,9 @@ msgstr "삭제하지 않았습니다: {}에 연결할 수 없습니다"
 #: crates/greycard-ui/src/panel/archive/rejects.rs:448
 msgid ""
 "nothing done: a capture, an export or a timing run never moves or deletes"
-msgstr "아무것도 하지 않았습니다: 캡처, 내보내기, 시간 측정 실행에서는 이동하거나 삭제하지 않습니다"
+msgstr ""
+"아무것도 하지 않았습니다: 캡처, 내보내기, 시간 측정 실행에서는 이동하거나 삭"
+"제하지 않습니다"
 
 #: crates/greycard-ui/src/panel/archive/rejects.rs:501
 msgid "deleting the rejects from {label}..."
@@ -4620,7 +4692,9 @@ msgid ""
 msgid_plural ""
 "{label} isn't reachable; the move of {n} rejects is queued until it's "
 "back{dropped}"
-msgstr[0] "{label}에 연결할 수 없습니다. 제외한 사진 {n}장의 이동은 다시 연결될 때까지 대기열에 있습니다{dropped}"
+msgstr[0] ""
+"{label}에 연결할 수 없습니다. 제외한 사진 {n}장의 이동은 다시 연결될 때까지 "
+"대기열에 있습니다{dropped}"
 
 #: crates/greycard-ui/src/panel/archive/rejects.rs:683
 msgid "{label} isn't reachable, and the move couldn't be queued: {e}"
@@ -4628,7 +4702,9 @@ msgstr "{label}에 연결할 수 없고, 이동을 대기열에 넣지 못했습
 
 #: crates/greycard-ui/src/panel/archive/rejects.rs:692
 msgid "not deleted: {label} isn't reachable; try again when it's back"
-msgstr "삭제하지 않았습니다: {label}에 연결할 수 없습니다. 다시 연결되면 다시 시도하십시오"
+msgstr ""
+"삭제하지 않았습니다: {label}에 연결할 수 없습니다. 다시 연결되면 다시 시도하"
+"십시오"
 
 #: crates/greycard-ui/src/panel/archive/rejects.rs:699
 msgid "{label} isn't reachable after all; its queued moves wait"
@@ -4638,7 +4714,9 @@ msgstr "결국 {label}에 연결할 수 없습니다. 대기열의 이동은 계
 msgid "; the {n} frame not reached are queued until {label} is back{dropped}"
 msgid_plural ""
 "; the {n} frames not reached are queued until {label} is back{dropped}"
-msgstr[0] "; 처리하지 못한 사진 {n}장은 {label}에 다시 연결될 때까지 대기열에 있습니다{dropped}"
+msgstr[0] ""
+"; 처리하지 못한 사진 {n}장은 {label}에 다시 연결될 때까지 대기열에 있습니다"
+"{dropped}"
 
 #: crates/greycard-ui/src/panel/archive/rejects.rs:721
 msgid "; the {n} frame not reached could not be queued: {e}"
@@ -4668,7 +4746,9 @@ msgid ""
 msgid_plural ""
 "; dropped from the archive queue as malformed: {n} entries ({first}; the log "
 "has the rest)"
-msgstr[0] "; 형식이 잘못되어 아카이브 대기열에서 {n}건 삭제함({first}; 나머지는 로그에 있음)"
+msgstr[0] ""
+"; 형식이 잘못되어 아카이브 대기열에서 {n}건 삭제함({first}; 나머지는 로그에 "
+"있음)"
 
 #: crates/greycard-ui/src/panel/archive/rejects.rs:826
 msgid "nothing was moved on {label}"
@@ -4728,7 +4808,8 @@ msgstr[0] "; {why} 사진 {n}장은 처리하지 않음"
 #: crates/greycard-ui/src/panel/archive/rejects.rs:995
 msgid "{label} is back: moving its {n} reject queued..."
 msgid_plural "{label} is back: moving its {n} rejects queued..."
-msgstr[0] "{label}에 다시 연결되었습니다: 대기열의 제외한 사진 {n}장을 옮기는 중..."
+msgstr[0] ""
+"{label}에 다시 연결되었습니다: 대기열의 제외한 사진 {n}장을 옮기는 중..."
 
 #: crates/greycard-ui/src/panel/assets.rs:45
 msgid "No lens profiles installed; lenses aren't corrected."
@@ -4743,7 +4824,10 @@ msgid ""
 "The lensfun database, about {size} KB from {host}.\n"
 "License: {license} ({url}).\n"
 "Kept in {kept_in}."
-msgstr "lensfun 데이터베이스, {host}에서 약 {size} KB.\n라이선스: {license}({url}).\n저장 위치: {kept_in}."
+msgstr ""
+"lensfun 데이터베이스, {host}에서 약 {size} KB.\n"
+"라이선스: {license}({url}).\n"
+"저장 위치: {kept_in}."
 
 #: crates/greycard-ui/src/panel/assets.rs:62
 #: crates/greycard-ui/src/panel/assets.rs:283
@@ -4758,7 +4842,9 @@ msgstr "캐시 디렉터리 없음"
 
 #: crates/greycard-ui/src/panel/assets.rs:80
 msgid "Their own license. Not now won't ask again; it's also in LENS."
-msgstr "각각 고유한 라이선스입니다. '나중에'를 누르면 다시 묻지 않습니다. '렌즈'에서도 받을 수 있습니다."
+msgstr ""
+"각각 고유한 라이선스입니다. '나중에'를 누르면 다시 묻지 않습니다. '렌즈'에서"
+"도 받을 수 있습니다."
 
 #: crates/greycard-ui/src/panel/assets.rs:82
 msgid "Their own license."
@@ -4775,7 +4861,9 @@ msgstr "고유한 라이선스입니다."
 #: crates/greycard-ui/src/panel/assets.rs:160
 msgid ""
 "Your Subject model runs on the CPU here; a GPU version is {size} MB. {note}"
-msgstr "이 컴퓨터에서는 피사체 모델이 CPU에서 실행됩니다. GPU 버전은 {size} MB입니다. {note}"
+msgstr ""
+"이 컴퓨터에서는 피사체 모델이 CPU에서 실행됩니다. GPU 버전은 {size} MB입니"
+"다. {note}"
 
 #: crates/greycard-ui/src/panel/assets.rs:169
 msgid "Download {name}?"
@@ -4786,7 +4874,10 @@ msgid ""
 "{size} MB from {host}.\n"
 "License: {license} ({url}).\n"
 "Kept in {kept_in}."
-msgstr "{host}에서 {size} MB.\n라이선스: {license}({url}).\n저장 위치: {kept_in}."
+msgstr ""
+"{host}에서 {size} MB.\n"
+"라이선스: {license}({url}).\n"
+"저장 위치: {kept_in}."
 
 #: crates/greycard-ui/src/panel/assets.rs:181
 #: crates/greycard-ui/src/panel/models.rs:588
@@ -4805,13 +4896,21 @@ msgid ""
 "MB kept.\n"
 "License: {license} ({url}).\n"
 "Kept in {kept_in}."
-msgstr "{reason}. 따라서 AI 기능이 꺼져 있습니다.\n\n{name}을(를) 사용하면 CPU에서만, 더 느리게 실행됩니다: {host}에서 {download} MB, 저장 용량 {kept} MB.\n라이선스: {license}({url}).\n저장 위치: {kept_in}."
+msgstr ""
+"{reason}. 따라서 AI 기능이 꺼져 있습니다.\n"
+"\n"
+"{name}을(를) 사용하면 CPU에서만, 더 느리게 실행됩니다: {host}에서 {download} "
+"MB, 저장 용량 {kept} MB.\n"
+"라이선스: {license}({url}).\n"
+"저장 위치: {kept_in}."
 
 #: crates/greycard-ui/src/panel/assets.rs:295
 msgid ""
 "Microsoft's own build, as published. Not now keeps the AI features off this "
 "session."
-msgstr "Microsoft가 배포한 빌드 그대로입니다. '나중에'를 누르면 이번 세션에서는 AI 기능이 꺼진 채로 유지됩니다."
+msgstr ""
+"Microsoft가 배포한 빌드 그대로입니다. '나중에'를 누르면 이번 세션에서는 AI 기"
+"능이 꺼진 채로 유지됩니다."
 
 #: crates/greycard-ui/src/panel/assets.rs:335
 msgid "Whole person keeps its coarser edge without the Subject model"
@@ -4821,7 +4920,9 @@ msgstr "피사체 모델이 없으면 '사람 전체'의 가장자리가 거칠�
 msgid ""
 "For a Whole person's finer edge, hair against the sky; the mask is made "
 "meanwhile with a coarser one. {note}"
-msgstr "'사람 전체'의 가장자리(하늘을 배경으로 한 머리카락 등)를 더 정밀하게 합니다. 그동안에는 더 거친 가장자리로 마스크를 만듭니다. {note}"
+msgstr ""
+"'사람 전체'의 가장자리(하늘을 배경으로 한 머리카락 등)를 더 정밀하게 합니다. "
+"그동안에는 더 거친 가장자리로 마스크를 만듭니다. {note}"
 
 #: crates/greycard-ui/src/panel/assets.rs:407
 msgid "No configuration directory to keep presets in."
@@ -4903,7 +5004,9 @@ msgstr[0] "프리셋 {n}개 중 {done}개를 가져왔습니다"
 msgid ""
 "What had no place here is named as Lightroom names it; set it by hand where "
 "a picture wants it."
-msgstr "여기에 대응하는 항목이 없는 설정은 Lightroom의 이름으로 표시합니다. 필요한 이미지에서는 직접 설정하십시오."
+msgstr ""
+"여기에 대응하는 항목이 없는 설정은 Lightroom의 이름으로 표시합니다. 필요한 이"
+"미지에서는 직접 설정하십시오."
 
 #. Lens picker: the first row, the lens the file names
 #: crates/greycard-ui/src/panel/assets.rs:634
@@ -4977,7 +5080,8 @@ msgstr "다시 맞추기..."
 
 #: crates/greycard-ui/src/panel/assets.rs:1675
 msgid "No looks yet. Add .cube or HaldCLUT .png files to {folder}."
-msgstr "아직 룩이 없습니다. .cube 또는 HaldCLUT .png 파일을 {folder}에 추가하십시오."
+msgstr ""
+"아직 룩이 없습니다. .cube 또는 HaldCLUT .png 파일을 {folder}에 추가하십시오."
 
 #: crates/greycard-ui/src/panel/assets.rs:1678
 msgid "No look directory on this machine."
@@ -5155,7 +5259,8 @@ msgstr "이 사진을 마치고 중지합니다..."
 
 #: crates/greycard-ui/src/panel/camera_match.rs:108
 msgid "Done. Change a group, the scope or Replace existing looks to fit again."
-msgstr "완료했습니다. 다시 맞추려면 그룹, 범위 또는 '기존 룩 바꾸기'를 변경하십시오."
+msgstr ""
+"완료했습니다. 다시 맞추려면 그룹, 범위 또는 '기존 룩 바꾸기'를 변경하십시오."
 
 #: crates/greycard-ui/src/panel/camera_match.rs:206
 msgid "Fits under {curve}; the look applies only there."
@@ -5290,7 +5395,9 @@ msgstr "모든 루트 폴더"
 #: crates/greycard-ui/src/panel/collections.rs:294
 msgid ""
 "{name} is empty: add frames with B, or Add to collection in the frame menu"
-msgstr "{name} 컬렉션이 비어 있습니다: B 키나 사진 메뉴의 '컬렉션에 추가'로 사진을 추가하십시오"
+msgstr ""
+"{name} 컬렉션이 비어 있습니다: B 키나 사진 메뉴의 '컬렉션에 추가'로 사진을 추"
+"가하십시오"
 
 #: crates/greycard-ui/src/panel/collections.rs:299
 msgid ""
@@ -5299,7 +5406,8 @@ msgid ""
 msgid_plural ""
 "{name}: {n} frames shown, {missing} missing (moved or deleted, and kept "
 "until found)"
-msgstr[0] "{name}: 사진 {n}장 표시, {missing}장 없음(이동 또는 삭제됨, 찾을 때까지 유지)"
+msgstr[0] ""
+"{name}: 사진 {n}장 표시, {missing}장 없음(이동 또는 삭제됨, 찾을 때까지 유지)"
 
 #: crates/greycard-ui/src/panel/collections.rs:307
 msgid "{name}: {n} frame"
@@ -5331,17 +5439,23 @@ msgstr[0] "사진 {n}장을 {name}에서 뺐습니다"
 #: crates/greycard-ui/src/panel/collections.rs:550
 msgid ""
 "the library is being indexed; nothing forgotten from {name} until it is done"
-msgstr "라이브러리 색인 중입니다. 끝날 때까지 {name}에서 아무것도 등록 해제하지 않습니다"
+msgstr ""
+"라이브러리 색인 중입니다. 끝날 때까지 {name}에서 아무것도 등록 해제하지 않습"
+"니다"
 
 #: crates/greycard-ui/src/panel/collections.rs:601
 msgid "the library index could not be read; nothing forgotten from {name}"
-msgstr "라이브러리 색인을 읽을 수 없습니다. {name}에서 아무것도 등록 해제하지 않았습니다"
+msgstr ""
+"라이브러리 색인을 읽을 수 없습니다. {name}에서 아무것도 등록 해제하지 않았습"
+"니다"
 
 #: crates/greycard-ui/src/panel/collections.rs:612
 msgid "{words}; nothing forgotten: the sidecar of {n} frame could not be read"
 msgid_plural ""
 "{words}; nothing forgotten: the sidecar of {n} frames could not be read"
-msgstr[0] "{words}; 아무것도 등록 해제하지 않았습니다: 사진 {n}장의 사이드카를 읽을 수 없습니다"
+msgstr[0] ""
+"{words}; 아무것도 등록 해제하지 않았습니다: 사진 {n}장의 사이드카를 읽을 수 "
+"없습니다"
 
 #: crates/greycard-ui/src/panel/collections.rs:617
 msgid "{words}; nothing to forget"
@@ -5354,11 +5468,15 @@ msgid ""
 msgid_plural ""
 "{words}; nothing forgotten: {n} frames on a drive that is offline or not "
 "answering"
-msgstr[0] "{words}; 아무것도 등록 해제하지 않았습니다: 사진 {n}장이 오프라인이거나 응답하지 않는 드라이브에 있습니다"
+msgstr[0] ""
+"{words}; 아무것도 등록 해제하지 않았습니다: 사진 {n}장이 오프라인이거나 응답"
+"하지 않는 드라이브에 있습니다"
 
 #: crates/greycard-ui/src/panel/collections.rs:625
 msgid "{words}; nothing forgotten: the index has yet to read some of them"
-msgstr "{words}; 아무것도 등록 해제하지 않았습니다: 색인이 아직 일부를 읽지 않았습니다"
+msgstr ""
+"{words}; 아무것도 등록 해제하지 않았습니다: 색인이 아직 일부를 읽지 않았습니"
+"다"
 
 #: crates/greycard-ui/src/panel/collections.rs:628
 msgid "{words}; forgot {n} missing"
@@ -5502,7 +5620,8 @@ msgstr "제외 플래그가 지정된 사진이 없습니다"
 msgid "{n} frame flagged reject, with its sidecar, will be moved to {folder}."
 msgid_plural ""
 "{n} frames flagged reject, with their sidecars, will be moved to {folder}."
-msgstr[0] "제외 플래그가 지정된 사진 {n}장을 사이드카와 함께 {folder}(으)로 이동합니다."
+msgstr[0] ""
+"제외 플래그가 지정된 사진 {n}장을 사이드카와 함께 {folder}(으)로 이동합니다."
 
 #: crates/greycard-ui/src/panel/cull.rs:2675
 msgid "the rejects could not be moved: {why}"
@@ -5511,7 +5630,8 @@ msgstr "제외한 사진을 이동할 수 없습니다: {why}"
 #: crates/greycard-ui/src/panel/cull.rs:2690
 msgid "moved {n} frame{companions} and {sidecars} to {folder}"
 msgid_plural "moved {n} frames{companions} and {sidecars} to {folder}"
-msgstr[0] "사진 {n}장{companions} 및 {sidecars}을(를) {folder}(으)로 이동했습니다"
+msgstr[0] ""
+"사진 {n}장{companions} 및 {sidecars}을(를) {folder}(으)로 이동했습니다"
 
 #: crates/greycard-ui/src/panel/cull.rs:2755
 msgid "; {n} left where it was ({why})"
@@ -5538,7 +5658,8 @@ msgstr "되돌린 사진이 없습니다"
 #: crates/greycard-ui/src/panel/cull.rs:2871
 msgid "moved {n} frame{companions} and {sidecars} back to {folder}"
 msgid_plural "moved {n} frames{companions} and {sidecars} back to {folder}"
-msgstr[0] "사진 {n}장{companions} 및 {sidecars}을(를) {folder}(으)로 되돌렸습니다"
+msgstr[0] ""
+"사진 {n}장{companions} 및 {sidecars}을(를) {folder}(으)로 되돌렸습니다"
 
 #: crates/greycard-ui/src/panel/cull.rs:2881
 msgid "the folder above each of the {n} rejects folder"
@@ -5560,7 +5681,9 @@ msgstr "휴지통으로 이동합니다."
 
 #: crates/greycard-ui/src/panel/delete.rs:198
 msgid "The trash failed here earlier; a permanent delete can't be undone."
-msgstr "이전에 이곳에서 휴지통을 사용하지 못했습니다. 영구 삭제는 실행 취소할 수 없습니다."
+msgstr ""
+"이전에 이곳에서 휴지통을 사용하지 못했습니다. 영구 삭제는 실행 취소할 수 없습"
+"니다."
 
 #: crates/greycard-ui/src/panel/delete.rs:199
 msgid "No trash here: this is permanent."
@@ -5573,7 +5696,9 @@ msgid ""
 msgid_plural ""
 "{n} versions left out: a file's delete takes its versions with it; a version "
 "is deleted from its own cell"
-msgstr[0] "버전 {n}개 제외: 파일을 삭제하면 그 버전도 함께 삭제됩니다. 버전은 해당 버전의 셀에서 삭제하십시오"
+msgstr[0] ""
+"버전 {n}개 제외: 파일을 삭제하면 그 버전도 함께 삭제됩니다. 버전은 해당 버전"
+"의 셀에서 삭제하십시오"
 
 #: crates/greycard-ui/src/panel/delete.rs:262
 #: crates/greycard-ui/src/panel/delete.rs:437
@@ -5609,7 +5734,8 @@ msgstr "제외 폴더를 읽을 수 없습니다: {e}"
 msgid ""
 "the rejects here are all on an archive: delete them from the archive's own "
 "view"
-msgstr "이곳의 제외한 사진은 모두 아카이브에 있습니다: 아카이브 보기에서 삭제하십시오"
+msgstr ""
+"이곳의 제외한 사진은 모두 아카이브에 있습니다: 아카이브 보기에서 삭제하십시오"
 
 #: crates/greycard-ui/src/panel/delete.rs:446
 msgid "no frame here is in a rejects folder"
@@ -5664,11 +5790,13 @@ msgid ""
 msgid_plural ""
 " {n} frames on an archive left alone: delete them from the archive's own "
 "view."
-msgstr[0] " 아카이브에 있는 사진 {n}장은 그대로 둡니다: 아카이브 보기에서 삭제하십시오."
+msgstr[0] ""
+" 아카이브에 있는 사진 {n}장은 그대로 둡니다: 아카이브 보기에서 삭제하십시오."
 
 #: crates/greycard-ui/src/panel/delete.rs:560
 msgid "not deleted: a capture, an export or a timing run never deletes"
-msgstr "삭제하지 않았습니다: 캡처, 내보내기, 시간 측정 실행에서는 삭제하지 않습니다"
+msgstr ""
+"삭제하지 않았습니다: 캡처, 내보내기, 시간 측정 실행에서는 삭제하지 않습니다"
 
 #: crates/greycard-ui/src/panel/delete.rs:592
 msgid "deleting {n} frame..."
@@ -5686,7 +5814,9 @@ msgid ""
 msgid_plural ""
 "the delete failed, and nothing more was deleted ({n} frames went before it "
 "did; the log has why)"
-msgstr[0] "삭제에 실패하여 더 이상 삭제하지 않았습니다(실패 전에 사진 {n}장 삭제됨; 이유는 로그에 있습니다)"
+msgstr[0] ""
+"삭제에 실패하여 더 이상 삭제하지 않았습니다(실패 전에 사진 {n}장 삭제됨; 이유"
+"는 로그에 있습니다)"
 
 #: crates/greycard-ui/src/panel/deliver.rs:111
 msgid "making {n} picture..."
@@ -6077,7 +6207,8 @@ msgstr " (내보내기 프리셋 '{name}')"
 msgid ""
 "{file}, exported {when}{preset}; click to go back to the state it was "
 "exported from"
-msgstr "{file}, {when}에 내보냄{preset}; 클릭하면 내보낼 때의 상태로 돌아갑니다"
+msgstr ""
+"{file}, {when}에 내보냄{preset}; 클릭하면 내보낼 때의 상태로 돌아갑니다"
 
 #: crates/greycard-ui/src/panel/history.rs:813
 msgid "the current state: {name}"
@@ -6258,7 +6389,9 @@ msgstr "건물 찾는 중"
 #: crates/greycard-ui/src/panel/rawtherapee.rs:110
 msgid ""
 "This run writes no sidecars (--no-sidecars), so nothing can be imported."
-msgstr "이번 실행은 사이드카를 쓰지 않으므로(--no-sidecars) 아무것도 가져올 수 없습니다."
+msgstr ""
+"이번 실행은 사이드카를 쓰지 않으므로(--no-sidecars) 아무것도 가져올 수 없습니"
+"다."
 
 #: crates/greycard-ui/src/panel/lightroom.rs:111
 msgid "Import {name} from Lightroom"
@@ -6294,7 +6427,9 @@ msgstr "카탈로그 가져오는 중: 읽는 중..."
 msgid ""
 "imported the catalog: {frames} written, {left} left alone, {collections}, "
 "{stacks}"
-msgstr "카탈로그를 가져왔습니다: {frames}장 기록, {left}장 그대로, {collections}, {stacks}"
+msgstr ""
+"카탈로그를 가져왔습니다: {frames}장 기록, {left}장 그대로, {collections}, "
+"{stacks}"
 
 #: crates/greycard-ui/src/panel/lightroom.rs:517
 msgid "{n} collection"
@@ -6346,7 +6481,9 @@ msgid ""
 msgid_plural ""
 "{n} pictures {place} use it; they will show the look as missing and render "
 "without it."
-msgstr[0] "{place} 이미지 {n}장이 이 룩을 사용합니다. 해당 이미지에는 룩이 없다고 표시되고 룩 없이 렌더링됩니다."
+msgstr[0] ""
+"{place} 이미지 {n}장이 이 룩을 사용합니다. 해당 이미지에는 룩이 없다고 표시되"
+"고 룩 없이 렌더링됩니다."
 
 #: crates/greycard-ui/src/panel/look_remove.rs:171
 #: crates/greycard-ui/src/panel/look_rename.rs:328
@@ -6366,19 +6503,25 @@ msgstr "파일은 시스템 휴지통으로 이동하며, 거기서 복원할 �
 msgid ""
 "The trash refused files from the look folder earlier. Try the trash again, "
 "or delete them permanently. A permanent delete cannot be undone."
-msgstr "이전에 휴지통이 룩 폴더의 파일을 거부했습니다. 휴지통을 다시 시도하거나 영구 삭제하십시오. 영구 삭제는 실행 취소할 수 없습니다."
+msgstr ""
+"이전에 휴지통이 룩 폴더의 파일을 거부했습니다. 휴지통을 다시 시도하거나 영구 "
+"삭제하십시오. 영구 삭제는 실행 취소할 수 없습니다."
 
 #: crates/greycard-ui/src/panel/look_remove.rs:191
 msgid ""
 "There is no system trash here, so the file will be deleted permanently. This "
 "cannot be undone."
-msgstr "이곳에는 시스템 휴지통이 없으므로 파일이 영구 삭제됩니다. 실행 취소할 수 없습니다."
+msgstr ""
+"이곳에는 시스템 휴지통이 없으므로 파일이 영구 삭제됩니다. 실행 취소할 수 없습"
+"니다."
 
 #: crates/greycard-ui/src/panel/look_remove.rs:195
 msgid ""
 "There is no system trash here, so the files will be deleted permanently. "
 "This cannot be undone."
-msgstr "이곳에는 시스템 휴지통이 없으므로 파일이 영구 삭제됩니다. 실행 취소할 수 없습니다."
+msgstr ""
+"이곳에는 시스템 휴지통이 없으므로 파일이 영구 삭제됩니다. 실행 취소할 수 없습"
+"니다."
 
 #: crates/greycard-ui/src/panel/look_remove.rs:205
 #: crates/greycard-ui/src/panel/look_remove.rs:432
@@ -6402,7 +6545,8 @@ msgstr "룩 디렉터리에 제거할 {name} 파일이 없습니다"
 #: crates/greycard-ui/src/panel/look_remove.rs:244
 msgid "{names} is a link and stays; nothing is removed through one"
 msgid_plural "{names} are links and stay; nothing is removed through one"
-msgstr[0] "{names}은(는) 링크이므로 남습니다. 링크를 통해서는 아무것도 제거하지 않습니다"
+msgstr[0] ""
+"{names}은(는) 링크이므로 남습니다. 링크를 통해서는 아무것도 제거하지 않습니다"
 
 #: crates/greycard-ui/src/panel/look_remove.rs:269
 #: crates/greycard-ui/src/panel/look_rename.rs:440
@@ -6428,7 +6572,8 @@ msgstr "{shown}의 테이블 {1}개 중 {0}개를 제거하시겠습니까?"
 #: crates/greycard-ui/src/panel/look_remove.rs:291
 msgid ""
 "The look stays for pictures through {}, so none of them shows it as missing."
-msgstr "{}을(를) 통해 룩이 이미지에 남으므로, 룩이 없다고 표시되는 이미지는 없습니다."
+msgstr ""
+"{}을(를) 통해 룩이 이미지에 남으므로, 룩이 없다고 표시되는 이미지는 없습니다."
 
 #: crates/greycard-ui/src/panel/look_remove.rs:297
 msgid "Remove the look {shown}?"
@@ -6436,7 +6581,8 @@ msgstr "룩 '{shown}'을(를) 제거하시겠습니까?"
 
 #: crates/greycard-ui/src/panel/look_remove.rs:427
 msgid "not removed: a capture, an export or a timing run never deletes"
-msgstr "제거하지 않았습니다: 캡처, 내보내기, 시간 측정 실행에서는 삭제하지 않습니다"
+msgstr ""
+"제거하지 않았습니다: 캡처, 내보내기, 시간 측정 실행에서는 삭제하지 않습니다"
 
 #: crates/greycard-ui/src/panel/look_remove.rs:436
 msgid "removing {}..."
@@ -6468,7 +6614,8 @@ msgstr "{0}: {2} 중 {1} {how}"
 
 #: crates/greycard-ui/src/panel/look_remove.rs:519
 msgid "; the trash refused {}: {}; ask again to delete permanently"
-msgstr "; 휴지통이 {}을(를) 거부했습니다: {}; 영구 삭제하려면 다시 실행하십시오"
+msgstr ""
+"; 휴지통이 {}을(를) 거부했습니다: {}; 영구 삭제하려면 다시 실행하십시오"
 
 #: crates/greycard-ui/src/panel/look_remove.rs:532
 msgid "; {} not removed: {why}"
@@ -6485,7 +6632,9 @@ msgstr[0] "파일 {n}개"
 msgid ""
 "Only the case differs from its name now, and Windows and macOS take the two "
 "for one name. Rename it to another name first, then to this one."
-msgstr "현재 이름과 대소문자만 다르며, Windows와 macOS는 두 이름을 같은 이름으로 취급합니다. 먼저 다른 이름으로 바꾼 다음 이 이름으로 바꾸십시오."
+msgstr ""
+"현재 이름과 대소문자만 다르며, Windows와 macOS는 두 이름을 같은 이름으로 취급"
+"합니다. 먼저 다른 이름으로 바꾼 다음 이 이름으로 바꾸십시오."
 
 #: crates/greycard-ui/src/panel/look_rename.rs:212
 msgid "There is a look called \"{new}\" already."
@@ -6542,7 +6691,9 @@ msgid ""
 msgid_plural ""
 "{n} pictures {place} name it; their edits, history and snapshots will name "
 "the new one."
-msgstr[0] "{place} 이미지 {n}장이 이 룩을 지정합니다. 그 편집, 작업 내역, 스냅숏은 새 이름을 지정하게 됩니다."
+msgstr[0] ""
+"{place} 이미지 {n}장이 이 룩을 지정합니다. 그 편집, 작업 내역, 스냅숏은 새 이"
+"름을 지정하게 됩니다."
 
 #: crates/greycard-ui/src/panel/look_rename.rs:333
 msgid "{n} preset names it and will name the new one."
@@ -6564,18 +6715,23 @@ msgid ""
 msgid_plural ""
 "{who} already name \"{new}\", a look that is not in the folder, and will use "
 "this look."
-msgstr[0] "{who}은(는) 이미 폴더에 없는 룩 '{new}'을(를) 지정하고 있으므로, 이 룩을 사용하게 됩니다."
+msgstr[0] ""
+"{who}은(는) 이미 폴더에 없는 룩 '{new}'을(를) 지정하고 있으므로, 이 룩을 사용"
+"하게 됩니다."
 
 #: crates/greycard-ui/src/panel/look_rename.rs:371
 msgid ""
 "Edits in other folders that name {old} will show it as missing; renaming it "
 "back to {old} brings them back."
-msgstr "다른 폴더에서 {old}을(를) 지정한 편집에는 룩이 없다고 표시됩니다. 이름을 다시 {old}(으)로 바꾸면 돌아옵니다."
+msgstr ""
+"다른 폴더에서 {old}을(를) 지정한 편집에는 룩이 없다고 표시됩니다. 이름을 다"
+"시 {old}(으)로 바꾸면 돌아옵니다."
 
 #: crates/greycard-ui/src/panel/look_rename.rs:383
 msgid ""
 " The list shows it by the title inside its file, \"{label}\", which stays."
-msgstr " 목록에는 파일 안의 제목 '{label}'(으)로 표시되며, 이 제목은 바뀌지 않습니다."
+msgstr ""
+" 목록에는 파일 안의 제목 '{label}'(으)로 표시되며, 이 제목은 바뀌지 않습니다."
 
 #: crates/greycard-ui/src/panel/look_rename.rs:400
 msgid "no look is chosen to rename"
@@ -6623,7 +6779,9 @@ msgstr "{what}은(는) 읽거나 쓸 수 없어 아직 {old}을(를) 지정합�
 msgid ""
 "{} could not be reached (offline, on an archive and not read yet, or "
 "sidecars off) and may still name {old}"
-msgstr "{}에 연결할 수 없어(오프라인, 아직 읽지 않은 아카이브에 있음, 또는 사이드카 꺼짐) 아직 {old}을(를) 지정하고 있을 수 있습니다"
+msgstr ""
+"{}에 연결할 수 없어(오프라인, 아직 읽지 않은 아카이브에 있음, 또는 사이드카 "
+"꺼짐) 아직 {old}을(를) 지정하고 있을 수 있습니다"
 
 #: crates/greycard-ui/src/panel/look_rename.rs:828
 msgid "{n} picture's sidecar"
@@ -6649,7 +6807,8 @@ msgstr "; {}은(는) 이전 이름으로 남습니다({why})"
 
 #: crates/greycard-ui/src/panel/look_rename.rs:869
 msgid "{old} has no file in the look directory now; nothing was renamed"
-msgstr "{old}은(는) 이제 룩 디렉터리에 파일이 없습니다. 이름을 바꾼 것이 없습니다"
+msgstr ""
+"{old}은(는) 이제 룩 디렉터리에 파일이 없습니다. 이름을 바꾼 것이 없습니다"
 
 #: crates/greycard-ui/src/panel/look_rename.rs:874
 msgid "{old} is its name already"
@@ -6673,7 +6832,9 @@ msgstr "{old}의 이름을 {new}(으)로 바꾸는 중..."
 
 #: crates/greycard-ui/src/panel/look_rename.rs:1434
 msgid "not renamed: a capture, an export or a timing run never renames"
-msgstr "이름을 바꾸지 않았습니다: 캡처, 내보내기, 시간 측정 실행에서는 이름을 바꾸지 않습니다"
+msgstr ""
+"이름을 바꾸지 않았습니다: 캡처, 내보내기, 시간 측정 실행에서는 이름을 바꾸지 "
+"않습니다"
 
 #: crates/greycard-ui/src/panel/look_rename.rs:1439
 msgid "not renamed: the folder's edits were still being read"
@@ -6698,19 +6859,23 @@ msgstr "배경 찾는 중"
 #: crates/greycard-ui/src/panel/mask.rs:310
 msgid ""
 "click a color in the picture to center the window on it; Esc to keep the skin"
-msgstr "이미지에서 색을 클릭하면 범위의 중심을 그 색에 맞춥니다. Esc로 피부 범위 유지"
+msgstr ""
+"이미지에서 색을 클릭하면 범위의 중심을 그 색에 맞춥니다. Esc로 피부 범위 유지"
 
 #: crates/greycard-ui/src/panel/mask.rs:586
 msgid ""
 "finding the whole person; loading Subject for its edge takes a few seconds "
 "the first time"
-msgstr "사람 전체 찾는 중; 처음에는 가장자리용 피사체 모델을 불러오는 데 몇 초 걸립니다"
+msgstr ""
+"사람 전체 찾는 중; 처음에는 가장자리용 피사체 모델을 불러오는 데 몇 초 걸립니"
+"다"
 
 #: crates/greycard-ui/src/panel/mask.rs:764
 msgid ""
 "the GPU Subject model could not be fetched ({message}); the original is "
 "offered instead"
-msgstr "GPU용 피사체 모델을 받을 수 없습니다({message}); 대신 원래 모델을 사용합니다"
+msgstr ""
+"GPU용 피사체 모델을 받을 수 없습니다({message}); 대신 원래 모델을 사용합니다"
 
 #: crates/greycard-ui/src/panel/mask.rs:770
 msgid "{name} could not be fetched: {message}"
@@ -6722,7 +6887,8 @@ msgstr "칠하기; 스크롤로 크기 조절; Esc로 끝내기"
 
 #: crates/greycard-ui/src/panel/mask.rs:842
 msgid "click to add, right-click to exclude, or drag a box; Esc to finish"
-msgstr "클릭하여 추가, 오른쪽 클릭하여 제외, 또는 드래그하여 상자 지정; Esc로 끝내기"
+msgstr ""
+"클릭하여 추가, 오른쪽 클릭하여 제외, 또는 드래그하여 상자 지정; Esc로 끝내기"
 
 #: crates/greycard-ui/src/panel/mask.rs:843
 msgid "click to add sky, right-click to remove; Esc to finish"
@@ -6850,8 +7016,10 @@ msgid "skipped: {}"
 msgstr "건너뜀: {}"
 
 #: crates/greycard-ui/src/panel/models.rs:309
+#: crates/greycard-ui/src/panel/models.rs:889
 msgid "Each under its own license, kept beside it in the store."
-msgstr "각 모델은 자체 라이선스를 따르며, 라이선스는 저장소의 모델 옆에 있습니다."
+msgstr ""
+"각 모델은 자체 라이선스를 따르며, 라이선스는 저장소의 모델 옆에 있습니다."
 
 #: crates/greycard-ui/src/panel/models.rs:314
 msgid "No cache directory, so nothing can be downloaded."
@@ -6876,7 +7044,9 @@ msgid ""
 msgid_plural ""
 "{n} models, {size} from {host}. Or each comes as needed, the first time it's "
 "used."
-msgstr[0] "모델 {n}개, {host}에서 {size}. 또는 각 모델을 처음 사용할 때 필요에 따라 받습니다."
+msgstr[0] ""
+"모델 {n}개, {host}에서 {size}. 또는 각 모델을 처음 사용할 때 필요에 따라 받습"
+"니다."
 
 #: crates/greycard-ui/src/panel/models.rs:597
 msgid " {} comes first."
@@ -6887,13 +7057,18 @@ msgid ""
 "\n"
 "\n"
 "{n} skipped here: {why}."
-msgstr "\n\n여기서는 {n}개 건너뜀: {why}."
+msgstr ""
+"\n"
+"\n"
+"여기서는 {n}개 건너뜀: {why}."
 
 #: crates/greycard-ui/src/panel/models.rs:632
 msgid ""
 "Licenses: {}; each full text sits beside its model in the store. Asked once; "
 "Download all is also in Settings, Models."
-msgstr "라이선스: {}; 각 전문은 저장소의 모델 옆에 있습니다. 한 번만 묻습니다. '모두 다운로드'는 설정의 모델에도 있습니다."
+msgstr ""
+"라이선스: {}; 각 전문은 저장소의 모델 옆에 있습니다. 한 번만 묻습니다. '모두 "
+"다운로드'는 설정의 모델에도 있습니다."
 
 #: crates/greycard-ui/src/panel/models.rs:640
 msgid "each model comes the first time it's used"
@@ -7121,7 +7296,9 @@ msgstr "RawTherapee 프로필을 가져오지 못했습니다: {e}"
 msgid ""
 "the profiles are not offered again for this folder; greycard rawtherapee "
 "imports them from the command line"
-msgstr "이 폴더에서는 프로필 가져오기를 다시 제안하지 않습니다. 명령줄에서 greycard rawtherapee로 가져올 수 있습니다"
+msgstr ""
+"이 폴더에서는 프로필 가져오기를 다시 제안하지 않습니다. 명령줄에서 greycard "
+"rawtherapee로 가져올 수 있습니다"
 
 #: crates/greycard-ui/src/panel/recent.rs:190
 msgid "opening {}..."
@@ -7143,7 +7320,9 @@ msgstr "{}이(가) 더 이상 없습니다"
 #: crates/greycard-ui/src/panel/retouch.rs:17
 msgid ""
 "click or drag to repair; scroll for size; drag pins to move; Esc to finish"
-msgstr "클릭하거나 드래그하여 복구, 스크롤로 크기 조절, 핀을 드래그하여 이동, Esc로 끝내기"
+msgstr ""
+"클릭하거나 드래그하여 복구, 스크롤로 크기 조절, 핀을 드래그하여 이동, Esc로 "
+"끝내기"
 
 #. A card short of the generative remove: its need and the card's
 #. memory, whole or free now, in GiB to a tenth.
@@ -7266,7 +7445,10 @@ msgstr "{from}: 읽을 수 없음, 화면 출력에서 변환 없음"
 msgid ""
 "Library and Loupe, top left (or G), switch between the grid and one frame; "
 "Cull and Develop (C and D) are the Loupe's two modes; ? lists the keys"
-msgstr "왼쪽 위의 라이브러리와 확대경(또는 G)으로 격자와 사진 한 장 보기를 전환합니다. 선별과 현상(C와 D)은 확대경의 두 모드입니다. ?를 누르면 단축키 목록이 나옵니다"
+msgstr ""
+"왼쪽 위의 라이브러리와 확대경(또는 G)으로 격자와 사진 한 장 보기를 전환합니"
+"다. 선별과 현상(C와 D)은 확대경의 두 모드입니다. ?를 누르면 단축키 목록이 나"
+"옵니다"
 
 #: crates/greycard-ui/src/panel/sync.rs:137
 msgid "From {from} onto {n} other frame."
@@ -7277,20 +7459,27 @@ msgstr[0] "{from}에서 다른 사진 {n}장으로."
 msgid ""
 "This frame's as-shot light cannot be read (it is no raw, or its raw does not "
 "say): its Temperature and Tint are set."
-msgstr "이 사진의 촬영 시 광원을 읽을 수 없습니다(RAW가 아니거나 RAW에 기록이 없습니다): 색온도와 틴트는 '지정'으로 적용됩니다."
+msgstr ""
+"이 사진의 촬영 시 광원을 읽을 수 없습니다(RAW가 아니거나 RAW에 기록이 없습니"
+"다): 색온도와 틴트는 '지정'으로 적용됩니다."
 
 #: crates/greycard-ui/src/panel/sync.rs:182
 msgid ""
 "Set gives every frame this frame's value. Shift moves each frame from its "
 "own by this frame's difference from its as-shot light (Temperature, Tint) or "
 "from 0 EV (Exposure)."
-msgstr "'지정'은 모든 사진에 이 사진의 값을 줍니다. '증감'은 각 사진의 자체 값에, 이 사진의 촬영 시 광원과의 차이(색온도, 틴트) 또는 0 EV와의 차이(노출)만큼 더합니다."
+msgstr ""
+"'지정'은 모든 사진에 이 사진의 값을 줍니다. '증감'은 각 사진의 자체 값에, 이 "
+"사진의 촬영 시 광원과의 차이(색온도, 틴트) 또는 0 EV와의 차이(노출)만큼 더합"
+"니다."
 
 #: crates/greycard-ui/src/panel/sync.rs:188
 msgid ""
 "Each frame moves from its own value: {}. That is this frame's difference "
 "from its as-shot light and from 0 EV."
-msgstr "각 사진은 자체 값에서 이동합니다: {}. 이는 이 사진의 촬영 시 광원 및 0 EV와의 차이입니다."
+msgstr ""
+"각 사진은 자체 값에서 이동합니다: {}. 이는 이 사진의 촬영 시 광원 및 0 EV와"
+"의 차이입니다."
 
 #: crates/greycard-ui/src/panel/sync.rs:723
 msgid ", each shifted {}"
@@ -7424,7 +7613,9 @@ msgstr "대상: {onto}."
 
 #: crates/greycard-ui/src/panel/sync.rs:1733
 msgid "nothing copied yet: right-click a frame for Copy settings, or Ctrl+C"
-msgstr "아직 복사한 내용이 없습니다: 사진을 오른쪽 클릭하여 '설정 복사'를 선택하거나 Ctrl+C를 누르십시오"
+msgstr ""
+"아직 복사한 내용이 없습니다: 사진을 오른쪽 클릭하여 '설정 복사'를 선택하거나 "
+"Ctrl+C를 누르십시오"
 
 #: crates/greycard-ui/src/panel/sync.rs:1738
 #: crates/greycard-ui/src/panel/sync.rs:2054
@@ -7452,11 +7643,13 @@ msgstr[0] "{what}을(를) 사진 {n}장에 붙여넣었습니다"
 
 #: crates/greycard-ui/src/panel/sync.rs:2186
 msgid "the selection changed while the sheet was open; nothing pasted"
-msgstr "시트가 열려 있는 동안 선택이 바뀌었습니다. 아무것도 붙여넣지 않았습니다"
+msgstr ""
+"시트가 열려 있는 동안 선택이 바뀌었습니다. 아무것도 붙여넣지 않았습니다"
 
 #: crates/greycard-ui/src/panel/sync.rs:2237
 msgid "the selection changed while the sheet was open; nothing synced"
-msgstr "시트가 열려 있는 동안 선택이 바뀌었습니다. 아무것도 동기화하지 않았습니다"
+msgstr ""
+"시트가 열려 있는 동안 선택이 바뀌었습니다. 아무것도 동기화하지 않았습니다"
 
 #: crates/greycard-ui/src/panel/sync.rs:2242
 msgid "nothing to sync onto"
@@ -7586,7 +7779,9 @@ msgstr "버전 이름 바꾸기"
 msgid ""
 "A version of {file}, with an edit of its own; the rating, flag, label and "
 "keywords are the file's"
-msgstr "{file}의 버전으로, 자체 편집이 있습니다. 등급, 플래그, 레이블, 키워드는 파일과 공유합니다"
+msgstr ""
+"{file}의 버전으로, 자체 편집이 있습니다. 등급, 플래그, 레이블, 키워드는 파일"
+"과 공유합니다"
 
 #: crates/greycard-ui/src/panel/versions.rs:171
 msgid "The version's name"
@@ -7754,13 +7949,17 @@ msgstr "색을 클릭하여 마스크의 색조를 그 색에 맞추기, Esc로 
 #: crates/greycard-ui/src/panel/viewport.rs:873
 msgid ""
 "defringe is off while picking; zoom to 1:1 and click a fringe; Esc to finish"
-msgstr "선택하는 동안 언저리 제거가 꺼집니다. 1:1로 확대하고 언저리를 클릭, Esc로 끝내기"
+msgstr ""
+"선택하는 동안 언저리 제거가 꺼집니다. 1:1로 확대하고 언저리를 클릭, Esc로 끝"
+"내기"
 
 #: crates/greycard-ui/src/panel/viewport.rs:877
 msgid ""
 "click a color for its band, drag up or down for saturation, sideways for "
 "hue; Esc to finish"
-msgstr "색을 클릭하여 해당 색 대역 선택, 위아래로 드래그하여 채도, 좌우로 색조, Esc로 끝내기"
+msgstr ""
+"색을 클릭하여 해당 색 대역 선택, 위아래로 드래그하여 채도, 좌우로 색조, Esc"
+"로 끝내기"
 
 #. The file chooser's filter name for profiles
 #: crates/greycard-ui/src/panel/viewport.rs:1430
@@ -7783,7 +7982,9 @@ msgstr "그곳에는 언저리가 없습니다: 그 색은 주변 색과 다르�
 msgid ""
 "that color is nearly grey (chroma {chroma}, under the floor's {floor}): "
 "lower Chroma to take it in"
-msgstr "그 색은 거의 회색입니다(크로마 {chroma}, 하한 {floor} 미만): 포함하려면 '크로마'를 낮추십시오"
+msgstr ""
+"그 색은 거의 회색입니다(크로마 {chroma}, 하한 {floor} 미만): 포함하려면 '크로"
+"마'를 낮추십시오"
 
 #: crates/greycard-ui/src/placeholder.rs:184
 msgid "{word}: {what}, {at}; developing..."
@@ -7851,7 +8052,9 @@ msgstr "그곳의 {owner}도 '{}' 이름에 해당합니다"
 msgid ""
 "the form is open in the browser, and the log's folder: drag greycard-ui.log "
 "into the form"
-msgstr "브라우저에서 양식을 열고 로그 폴더도 열었습니다: greycard-ui.log를 양식으로 드래그하십시오"
+msgstr ""
+"브라우저에서 양식을 열고 로그 폴더도 열었습니다: greycard-ui.log를 양식으로 "
+"드래그하십시오"
 
 #: crates/greycard-ui/src/report.rs:370
 msgid "the form is open in the browser; there is no log to attach"
@@ -7950,12 +8153,15 @@ msgstr "추가하지 못했습니다: {e}"
 
 #: crates/greycard-ui/src/roots/pane.rs:353
 msgid "{} is in the library now; right-click its row to name it"
-msgstr "{}을(를) 라이브러리에 추가했습니다. 행을 오른쪽 클릭하여 이름을 붙일 수 있습니다"
+msgstr ""
+"{}을(를) 라이브러리에 추가했습니다. 행을 오른쪽 클릭하여 이름을 붙일 수 있습"
+"니다"
 
 #: crates/greycard-ui/src/roots/pane.rs:363
 msgid "{root} is in the library now, in place of {n} folder under it"
 msgid_plural "{root} is in the library now, in place of {n} folders under it"
-msgstr[0] "{root}을(를) 라이브러리에 추가했습니다. 그 아래 폴더 {n}개를 대신합니다"
+msgstr[0] ""
+"{root}을(를) 라이브러리에 추가했습니다. 그 아래 폴더 {n}개를 대신합니다"
 
 #: crates/greycard-ui/src/roots/pane.rs:375
 msgid "already in the library, under {}"
@@ -7971,7 +8177,8 @@ msgstr "이름을 바꾸지 못했습니다: {e}"
 
 #: crates/greycard-ui/src/roots/pane.rs:561
 msgid "{folder} is called {name} in the library; the folder is as it was"
-msgstr "라이브러리에서 {folder}의 이름은 이제 {name}입니다. 폴더 자체는 그대로입니다"
+msgstr ""
+"라이브러리에서 {folder}의 이름은 이제 {name}입니다. 폴더 자체는 그대로입니다"
 
 #: crates/greycard-ui/src/roots/pane.rs:565
 msgid "{} goes by its folder's name"
@@ -8287,12 +8494,15 @@ msgstr ": 제외됨"
 msgid ""
 "{}'s sidecar was not found, though the library has an edit, an export or a "
 "version of it on record; nothing is written over it"
-msgstr "{}의 사이드카를 찾을 수 없지만 라이브러리에 편집, 내보내기 또는 버전 기록이 있습니다. 덮어쓰지 않습니다"
+msgstr ""
+"{}의 사이드카를 찾을 수 없지만 라이브러리에 편집, 내보내기 또는 버전 기록이 "
+"있습니다. 덮어쓰지 않습니다"
 
 #: crates/greycard-ui/src/sidecars.rs:238
 msgid "its sidecar is from a newer greycard; update to save"
 msgid_plural "their sidecars are from a newer greycard; update to save"
-msgstr[0] "사이드카가 더 새로운 greycard의 것입니다. 저장하려면 업데이트하십시오"
+msgstr[0] ""
+"사이드카가 더 새로운 greycard의 것입니다. 저장하려면 업데이트하십시오"
 
 #: crates/greycard-ui/src/sidecars.rs:240
 msgid "the disk is full"
@@ -8309,16 +8519,20 @@ msgstr[0] "편집 {n}건이 저장되지 않음"
 
 #: crates/greycard-ui/src/sidecars.rs:350
 msgid "{name} was edited elsewhere; other copy kept as {file}"
-msgstr "{name}이(가) 다른 곳에서 편집되었습니다. 다른 사본은 {file} 파일로 보관했습니다"
+msgstr ""
+"{name}이(가) 다른 곳에서 편집되었습니다. 다른 사본은 {file} 파일로 보관했습니"
+"다"
 
 #: crates/greycard-ui/src/sidecars.rs:354
 msgid "{n} frame was edited elsewhere; other copy kept beside it"
 msgid_plural "{n} frames were edited elsewhere; other copies kept beside them"
-msgstr[0] "사진 {n}장이 다른 곳에서 편집되었습니다. 다른 사본은 옆에 보관했습니다"
+msgstr[0] ""
+"사진 {n}장이 다른 곳에서 편집되었습니다. 다른 사본은 옆에 보관했습니다"
 
 #: crates/greycard-ui/src/sidecars.rs:370
 msgid "{name}: unreadable sidecar kept as {file}; edit saved"
-msgstr "{name}: 읽을 수 없는 사이드카를 {file} 파일로 보관했습니다. 편집은 저장됨"
+msgstr ""
+"{name}: 읽을 수 없는 사이드카를 {file} 파일로 보관했습니다. 편집은 저장됨"
 
 #: crates/greycard-ui/src/sidecars.rs:374
 msgid "{n} unreadable sidecar kept beside its frame; edit saved"
@@ -8556,7 +8770,9 @@ msgstr "{name} 안에 아무것도 없습니다"
 msgid ""
 "nothing directly in {name}: turn on With subfolders to see the frames under "
 "it"
-msgstr "{name} 바로 안에는 아무것도 없습니다: 아래의 사진을 보려면 '하위 폴더 포함'을 켜십시오"
+msgstr ""
+"{name} 바로 안에는 아무것도 없습니다: 아래의 사진을 보려면 '하위 폴더 포"
+"함'을 켜십시오"
 
 #: crates/greycard-ui/src/update.rs:295
 msgid "You have the latest version"

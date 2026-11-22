@@ -245,10 +245,14 @@ export component PresetsSection inherits Section {
                         // The star: filled for a favorite, outlined
                         // under the pointer otherwise, and a click
                         // either way.
-                        Rectangle {
+                        favorite-star := Rectangle {
                             width: Theme.control-height - 6px;
                             accessible-role: button;
                             accessible-label: row.favorite ? PresetWords.remove-favorite : PresetWords.add-favorite;
+                            // Its key, for automation: the preset's place
+                            // in the names, which a favorite listed twice
+                            // has on both its rows.
+                            accessible-id: row.index;
                             accessible-checkable: true;
                             accessible-checked: row.favorite;
                             accessible-action-default => { root.favorite-toggled(row.index); }

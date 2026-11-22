@@ -181,7 +181,9 @@ export component CollectionsSection inherits Section {
                     spacing: 1px;
                     // Clear of the scroll bar's band, as the folders' rows are.
                     padding-right: Theme.scrollbar-band;
-                    for c in root.collections: CollectionRow {
+                    for c in root.collections: collection-row := CollectionRow {
+                        // Its key, for automation: the collection's id.
+                        accessible-id: c.id;
                         chip: c;
                         ctrl-click-menu: root.ctrl-click-menu;
                         menu-shown => { return root.menu-shown(); }

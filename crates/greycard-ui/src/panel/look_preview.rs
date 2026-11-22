@@ -455,7 +455,7 @@ mod tests {
         }
         // The section's body grows to its rows over a moment.
         for _ in 0..4 {
-            crate::testing::count_labeled(&app, "x");
+            crate::testing::count_id(&app, "x");
             wait(300);
         }
         Setup { app, state, dir }
@@ -467,9 +467,10 @@ mod tests {
         crate::testing::remove_scratch(s.state, &s.dir);
     }
 
-    /// The middle of the row of the look `name`.
+    /// The middle of the row of the look `name`, as the edit stores
+    /// it, the row's key.
     fn row(app: &App, name: &str) -> slint::LogicalPosition {
-        let (at, size) = crate::testing::labeled(app, &format!("Look {name}"));
+        let (at, size) = crate::testing::by_key(app, "LookSection::look-row", name);
         slint::LogicalPosition::new(at.x + size.width / 2.0, at.y + size.height / 2.0)
     }
 
@@ -580,7 +581,7 @@ mod tests {
                 .preview
                 .is_none()
         );
-        point_at(&s.app, row(&s.app, "None"));
+        point_at(&s.app, row(&s.app, greycard_edit::look::NONE));
         rest();
         assert!(READ.with(|r| r.borrow().is_empty()), "nothing to read");
         assert_eq!(drawn_now(&s), None);
@@ -616,7 +617,7 @@ mod tests {
         point_at(&s.app, row(&s.app, "Neon"));
         rest();
         let neon = READ.with(|r| r.borrow_mut().pop()).unwrap();
-        point_at(&s.app, row(&s.app, "None"));
+        point_at(&s.app, row(&s.app, greycard_edit::look::NONE));
         landed(&mut s.state.borrow_mut(), &s.app, neon.0, neon.1);
         assert_eq!(drawn_now(&s), MONO);
         rest();
@@ -634,7 +635,7 @@ mod tests {
         rest();
         arrive(&s.state, &s.app);
         assert_eq!(drawn_now(&s), NEON);
-        point_at(&s.app, row(&s.app, "None"));
+        point_at(&s.app, row(&s.app, greycard_edit::look::NONE));
         assert_eq!(drawn_now(&s), NEON);
         rest();
         assert_eq!(drawn_now(&s), None);
@@ -879,7 +880,7 @@ mod tests {
             assert_eq!(drawn_now(&s), MONO);
             // The section's body grows to its rows again.
             for _ in 0..4 {
-                crate::testing::count_labeled(&s.app, "x");
+                crate::testing::count_id(&s.app, "x");
                 wait(300);
             }
         }

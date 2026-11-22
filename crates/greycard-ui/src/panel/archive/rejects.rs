@@ -1681,25 +1681,22 @@ mod tests {
         c.done();
     }
 
-    /// The buttons themselves, clicked by their labels: the CULLING
-    /// section's entry, the red delete permanently, and the move.
+    /// The buttons themselves, clicked: the CULLING section's entry,
+    /// the red delete permanently, and the move.
     #[test]
     fn the_buttons_clicked_answer_as_they_say() {
         let c = culled("clicks");
         c.app.set_panel_tab("Cull".into());
-        let click = |label: &str| {
-            let (at, size) = crate::testing::labeled(&c.app, label);
-            crate::testing::click(&c.app, at.x + size.width / 2.0, at.y + size.height / 2.0);
-        };
         c.state
             .borrow_mut()
             .sheets
             .trash_refused
             .insert(c.there.clone());
-        click("Remove rejects from nas...");
+        // The section's one archive's button.
+        crate::testing::click_key(&c.app, "CullSection::archive-rejects-button", 0);
         assert_eq!(c.land(), 1);
         assert!(c.app.get_archive_rejects_open());
-        click("Delete from nas permanently");
+        crate::testing::click_id(&c.app, "ArchiveRejectsSheet::permanent-button");
         assert!(!c.app.get_archive_rejects_open());
         assert_eq!(c.land(), 1);
         assert!(!c.there.join("a.tif").exists() && !c.there.join("b.tif").exists());
@@ -1718,8 +1715,7 @@ mod tests {
         let c = culled("click-move");
         c.app.set_panel_tab("Cull".into());
         c.sheet();
-        let (at, size) = crate::testing::labeled(&c.app, "Move to rejects on nas");
-        crate::testing::click(&c.app, at.x + size.width / 2.0, at.y + size.height / 2.0);
+        crate::testing::click_id(&c.app, "ArchiveRejectsSheet::move-button");
         assert_eq!(c.land(), 1);
         assert!(crate::cull::rejects_dir(&c.there).join("a.tif").is_file());
         c.done();

@@ -294,7 +294,7 @@ export component NoiseSection inherits Section {
             enabled: root.unavailable == "" && !root.merging;
             current <=> root.again-tier;
         }
-        PanelButton {
+        merge-again-button := PanelButton {
             text: @tr("Denoise the frames and merge again");
             enabled: root.unavailable == "" && !root.merging;
             clicked => { root.merge-again(); }

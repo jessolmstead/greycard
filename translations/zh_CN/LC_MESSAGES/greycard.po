@@ -286,83 +286,83 @@ msgid "{} value"
 msgstr "{}的数值"
 
 #. Spoken by a screen reader for a thumbnail: its stars
-#: crates/greycard-slint/ui/controls.slint:2826
+#: crates/greycard-slint/ui/controls.slint:2828
 msgid "{n} star"
 msgid_plural "{n} stars"
 msgstr[0] "{n} 星"
 
 #. Spoken by a screen reader for a thumbnail: its flag
-#: crates/greycard-slint/ui/controls.slint:2828
+#: crates/greycard-slint/ui/controls.slint:2830
 msgid "pick"
 msgstr "留用"
 
 #. Spoken by a screen reader for a thumbnail: its flag
-#: crates/greycard-slint/ui/controls.slint:2828
+#: crates/greycard-slint/ui/controls.slint:2830
 msgid "reject"
 msgstr "排除"
 
 #. Spoken by a screen reader for a thumbnail: its label
-#: crates/greycard-slint/ui/controls.slint:2832
+#: crates/greycard-slint/ui/controls.slint:2834
 msgid "green"
 msgstr "绿色"
 
 #. Spoken by a screen reader for a thumbnail: its label
-#: crates/greycard-slint/ui/controls.slint:2832
+#: crates/greycard-slint/ui/controls.slint:2834
 msgid "red"
 msgstr "红色"
 
 #. Spoken by a screen reader for a thumbnail: its label
-#: crates/greycard-slint/ui/controls.slint:2832
+#: crates/greycard-slint/ui/controls.slint:2834
 msgid "yellow"
 msgstr "黄色"
 
 #. Spoken by a screen reader for a thumbnail: its label
-#: crates/greycard-slint/ui/controls.slint:2834
+#: crates/greycard-slint/ui/controls.slint:2836
 msgid "blue"
 msgstr "蓝色"
 
 #. Spoken by a screen reader for a thumbnail: its label
-#: crates/greycard-slint/ui/controls.slint:2834
+#: crates/greycard-slint/ui/controls.slint:2836
 msgid "purple"
 msgstr "紫色"
 
 #. Spoken by a screen reader: a thumbnail's badge
-#: crates/greycard-slint/ui/controls.slint:2921
+#: crates/greycard-slint/ui/controls.slint:2923
 msgid "Edited"
 msgstr "已编辑"
 
 #. Spoken by a screen reader: a thumbnail's badge
-#: crates/greycard-slint/ui/controls.slint:2935
+#: crates/greycard-slint/ui/controls.slint:2937
 msgid "Exported"
 msgstr "已导出"
 
 #. Spoken by a screen reader: a thumbnail's badge
-#: crates/greycard-slint/ui/controls.slint:2949
+#: crates/greycard-slint/ui/controls.slint:2951
 msgid "In a collection"
 msgstr "在收藏夹中"
 
 #. Spoken by a screen reader: a thumbnail's badge
-#: crates/greycard-slint/ui/controls.slint:2960
+#: crates/greycard-slint/ui/controls.slint:2962
 msgid "With the camera's JPEG"
 msgstr "带相机 JPEG"
 
 #. Spoken by a screen reader: a thumbnail's stack badge
-#: crates/greycard-slint/ui/controls.slint:2988
+#: crates/greycard-slint/ui/controls.slint:2990
 msgid "Frame {} of a stack of {}, open"
 msgstr "堆叠中的第 {} 张，共 {} 张，已展开"
 
 #. Spoken by a screen reader: a thumbnail's stack badge
-#: crates/greycard-slint/ui/controls.slint:2990
+#: crates/greycard-slint/ui/controls.slint:2992
 msgid "Stack of {}"
 msgstr "堆叠，共 {} 张"
 
 #. Spoken by a screen reader: a thumbnail's version badge
-#: crates/greycard-slint/ui/controls.slint:3037
+#: crates/greycard-slint/ui/controls.slint:3039
 msgid "Version {}"
 msgstr "版本 {}"
 
 #. Spoken by a screen reader: a scroll bar
-#: crates/greycard-slint/ui/controls.slint:3491
+#: crates/greycard-slint/ui/controls.slint:3493
 msgid "Scroll"
 msgstr "滚动条"
 
@@ -393,51 +393,51 @@ msgid "raw only"
 msgstr "仅限 RAW"
 
 #. Look section: a look's fold button; {} is the look's name
-#: crates/greycard-slint/ui/panel/assets.slint:66
+#: crates/greycard-slint/ui/panel/assets.slint:70
 msgid "Fold {}"
 msgstr "折叠 {}"
 
 #. Look section: a look's fold button; {} is the look's name
-#: crates/greycard-slint/ui/panel/assets.slint:66
+#: crates/greycard-slint/ui/panel/assets.slint:70
 msgid "Unfold {}"
 msgstr "展开 {}"
 
 #. Look section: the tag on a look fitted to the open frame's camera
-#: crates/greycard-slint/ui/panel/assets.slint:109
+#: crates/greycard-slint/ui/panel/assets.slint:113
 msgid "this camera"
 msgstr "本相机"
 
-#: crates/greycard-slint/ui/panel/assets.slint:146
+#: crates/greycard-slint/ui/panel/assets.slint:150
 msgid "Profile tone curve"
 msgstr "配置文件色调曲线"
 
-#: crates/greycard-slint/ui/panel/assets.slint:153
+#: crates/greycard-slint/ui/panel/assets.slint:157
 msgid "Show all cameras"
 msgstr "显示所有相机"
 
-#: crates/greycard-slint/ui/panel/assets.slint:210
+#: crates/greycard-slint/ui/panel/assets.slint:214
 msgid "LOOK"
 msgstr "风格"
 
 #. Spoken by a screen reader: a look's row; {} is its name
-#: crates/greycard-slint/ui/panel/assets.slint:240
+#: crates/greycard-slint/ui/panel/assets.slint:247
 msgid "Look {}"
 msgstr "风格 {}"
 
 #. Look section: the slider
-#: crates/greycard-slint/ui/panel/assets.slint:332
+#: crates/greycard-slint/ui/panel/assets.slint:339
 msgid "Strength"
 msgstr "强度"
 
-#: crates/greycard-slint/ui/panel/assets.slint:384
+#: crates/greycard-slint/ui/panel/assets.slint:391
 msgid "Rename..."
 msgstr "重命名..."
 
-#: crates/greycard-slint/ui/panel/assets.slint:389
+#: crates/greycard-slint/ui/panel/assets.slint:396
 msgid "Remove this look..."
 msgstr "移除此风格..."
 
-#: crates/greycard-slint/ui/panel/assets.slint:401
+#: crates/greycard-slint/ui/panel/assets.slint:408
 msgid "Fit this camera's look..."
 msgstr "拟合本相机的风格..."
 
@@ -455,17 +455,17 @@ msgid "Uncheck all"
 msgstr "全不选"
 
 #. where edits are kept
-#: crates/greycard-slint/ui/panel/carry-list.slint:186
+#: crates/greycard-slint/ui/panel/carry-list.slint:187
 msgid "Masks go"
 msgstr "蒙版"
 
 #. Sync sheet: how the masks go across
-#: crates/greycard-slint/ui/panel/carry-list.slint:189
+#: crates/greycard-slint/ui/panel/carry-list.slint:190
 msgid "Add to masks"
 msgstr "添加到蒙版"
 
 #. Sync sheet: how the masks go across
-#: crates/greycard-slint/ui/panel/carry-list.slint:189
+#: crates/greycard-slint/ui/panel/carry-list.slint:190
 msgid "Replace masks"
 msgstr "替换蒙版"
 
@@ -497,11 +497,11 @@ msgstr[0] "忘记 {n} 张缺失的照片"
 msgid "Delete..."
 msgstr "删除..."
 
-#: crates/greycard-slint/ui/panel/collections.slint:195
+#: crates/greycard-slint/ui/panel/collections.slint:197
 msgid "No collections yet"
 msgstr "还没有收藏夹"
 
-#: crates/greycard-slint/ui/panel/collections.slint:206
+#: crates/greycard-slint/ui/panel/collections.slint:208
 msgid "+ New collection..."
 msgstr "+ 新建收藏夹..."
 
@@ -678,30 +678,30 @@ msgid "Shadows"
 msgstr "阴影"
 
 #. Spoken by a screen reader: the color grading wheel for {}
-#: crates/greycard-slint/ui/panel/color.slint:707
+#: crates/greycard-slint/ui/panel/color.slint:709
 msgid "{} wheel"
 msgstr "{}色轮"
 
 #. Color grading: show the {} wheel large, or small again
-#: crates/greycard-slint/ui/panel/color.slint:720
+#: crates/greycard-slint/ui/panel/color.slint:723
 msgid "Enlarge {}"
 msgstr "放大{}色轮"
 
 #. Color grading: show the {} wheel large, or small again
-#: crates/greycard-slint/ui/panel/color.slint:720
+#: crates/greycard-slint/ui/panel/color.slint:723
 msgid "Shrink {}"
 msgstr "缩小{}色轮"
 
-#: crates/greycard-slint/ui/panel/color.slint:784
+#: crates/greycard-slint/ui/panel/color.slint:787
 msgid "Balance"
 msgstr "平衡"
 
-#: crates/greycard-slint/ui/panel/color.slint:830
+#: crates/greycard-slint/ui/panel/color.slint:833
 msgid "TINT"
 msgstr "着色"
 
 #. Tint section: the slider
-#: crates/greycard-slint/ui/panel/color.slint:905
+#: crates/greycard-slint/ui/panel/color.slint:908
 msgid "Amount"
 msgstr "数量"
 
@@ -1833,27 +1833,27 @@ msgid_plural "{n} rejects"
 msgstr[0] "{n} 张排除的照片"
 
 #. Spoken by a screen reader: a folder tile
-#: crates/greycard-slint/ui/panel/grid.slint:686
+#: crates/greycard-slint/ui/panel/grid.slint:688
 msgid "Folder {}"
 msgstr "文件夹 {}"
 
 #. A tile's word when its picture could not be read
-#: crates/greycard-slint/ui/panel/grid.slint:916
+#: crates/greycard-slint/ui/panel/grid.slint:920
 msgid "Unreadable"
 msgstr "无法读取"
 
 #. A tile's word while its picture is made
-#: crates/greycard-slint/ui/panel/grid.slint:930
+#: crates/greycard-slint/ui/panel/grid.slint:934
 msgid "Developing"
 msgstr "正在处理"
 
 #. Spoken by a screen reader: the grid's scroll bar
-#: crates/greycard-slint/ui/panel/grid.slint:1252
+#: crates/greycard-slint/ui/panel/grid.slint:1256
 msgid "Grid scroll"
 msgstr "网格滚动条"
 
 #. language.
-#: crates/greycard-slint/ui/panel/grid.slint:1326
+#: crates/greycard-slint/ui/panel/grid.slint:1330
 msgid "Close lightbox"
 msgstr "关闭灯箱"
 
@@ -1861,42 +1861,42 @@ msgstr "关闭灯箱"
 msgid "SNAPSHOTS"
 msgstr "快照"
 
-#: crates/greycard-slint/ui/panel/history.slint:204
+#: crates/greycard-slint/ui/panel/history.slint:208
 msgid "Restore {}"
 msgstr "恢复 {}"
 
-#: crates/greycard-slint/ui/panel/history.slint:205
+#: crates/greycard-slint/ui/panel/history.slint:209
 msgid "Restore"
 msgstr "恢复"
 
-#: crates/greycard-slint/ui/panel/history.slint:213
+#: crates/greycard-slint/ui/panel/history.slint:218
 msgid "Rename {}"
 msgstr "重命名 {}"
 
-#: crates/greycard-slint/ui/panel/history.slint:214
+#: crates/greycard-slint/ui/panel/history.slint:219
 msgid "Rename"
 msgstr "重命名"
 
 #. Snapshots: remove the snapshot
-#: crates/greycard-slint/ui/panel/history.slint:227
+#: crates/greycard-slint/ui/panel/history.slint:232
 msgid "Remove"
 msgstr "移除"
 
 #. Snapshots: the list when there are none
-#: crates/greycard-slint/ui/panel/history.slint:241
+#: crates/greycard-slint/ui/panel/history.slint:246
 msgid "None yet."
 msgstr "还没有。"
 
 #. Snapshots: take a snapshot of the edit as it is
-#: crates/greycard-slint/ui/panel/history.slint:250
+#: crates/greycard-slint/ui/panel/history.slint:255
 msgid "Take"
 msgstr "拍摄快照"
 
-#: crates/greycard-slint/ui/panel/history.slint:268
+#: crates/greycard-slint/ui/panel/history.slint:273
 msgid "HISTORY"
 msgstr "历史记录"
 
-#: crates/greycard-slint/ui/panel/history.slint:355
+#: crates/greycard-slint/ui/panel/history.slint:360
 msgid "No changes yet."
 msgstr "还没有更改。"
 
@@ -2160,203 +2160,203 @@ msgstr "拷贝蒙版"
 msgid "Paste mask"
 msgstr "粘贴蒙版"
 
-#: crates/greycard-slint/ui/panel/mask.slint:279
+#: crates/greycard-slint/ui/panel/mask.slint:281
 msgid "New mask"
 msgstr "新建蒙版"
 
-#: crates/greycard-slint/ui/panel/mask.slint:365
+#: crates/greycard-slint/ui/panel/mask.slint:367
 msgid "MASK"
 msgstr "蒙版"
 
 #. Spoken by a screen reader: the mask's name field
-#: crates/greycard-slint/ui/panel/mask.slint:396
+#: crates/greycard-slint/ui/panel/mask.slint:398
 msgid "Mask name"
 msgstr "蒙版名称"
 
-#: crates/greycard-slint/ui/panel/mask.slint:415
+#: crates/greycard-slint/ui/panel/mask.slint:417
 msgid "Invert"
 msgstr "反相"
 
-#: crates/greycard-slint/ui/panel/mask.slint:422
+#: crates/greycard-slint/ui/panel/mask.slint:424
 msgid "Refine edge"
 msgstr "调整边缘"
 
-#: crates/greycard-slint/ui/panel/mask.slint:453
+#: crates/greycard-slint/ui/panel/mask.slint:455
 msgid "Shapes"
 msgstr "形状"
 
-#: crates/greycard-slint/ui/panel/mask.slint:540
+#: crates/greycard-slint/ui/panel/mask.slint:542
 msgid "Invert this shape"
 msgstr "反相此形状"
 
-#: crates/greycard-slint/ui/panel/mask.slint:596
+#: crates/greycard-slint/ui/panel/mask.slint:598
 msgid "Remove this shape"
 msgstr "移除此形状"
 
 #. Luminance range: the fade at the dark end
-#: crates/greycard-slint/ui/panel/mask.slint:710
+#: crates/greycard-slint/ui/panel/mask.slint:712
 msgid "Low fade"
 msgstr "暗部过渡"
 
 #. Luminance range: the fade at the light end
-#: crates/greycard-slint/ui/panel/mask.slint:738
+#: crates/greycard-slint/ui/panel/mask.slint:740
 msgid "High fade"
 msgstr "亮部过渡"
 
 #. Color range: the button that reads a color off the picture
-#: crates/greycard-slint/ui/panel/mask.slint:766
+#: crates/greycard-slint/ui/panel/mask.slint:768
 msgid "Sample"
 msgstr "取样"
 
 #. Color range: the fade
-#: crates/greycard-slint/ui/panel/mask.slint:811
+#: crates/greycard-slint/ui/panel/mask.slint:813
 msgid "Hue fade"
 msgstr "色相过渡"
 
 #. Color range: the fade
-#: crates/greycard-slint/ui/panel/mask.slint:841
+#: crates/greycard-slint/ui/panel/mask.slint:843
 msgid "Chroma fade"
 msgstr "色度过渡"
 
 #. Add a shape: a brush; once one exists its button says Paint
-#: crates/greycard-slint/ui/panel/mask.slint:905
+#: crates/greycard-slint/ui/panel/mask.slint:907
 msgid "Brush"
 msgstr "画笔"
 
 #. Brush: what a stroke does
-#: crates/greycard-slint/ui/panel/mask.slint:908
+#: crates/greycard-slint/ui/panel/mask.slint:910
 msgid "Add"
 msgstr "添加"
 
 #. Brush: what a stroke does
-#: crates/greycard-slint/ui/panel/mask.slint:908
+#: crates/greycard-slint/ui/panel/mask.slint:910
 msgid "Erase"
 msgstr "擦除"
 
 #. Brush: what a stroke does
-#: crates/greycard-slint/ui/panel/mask.slint:908
+#: crates/greycard-slint/ui/panel/mask.slint:910
 msgid "Subtract"
 msgstr "减去"
 
-#: crates/greycard-slint/ui/panel/mask.slint:917
+#: crates/greycard-slint/ui/panel/mask.slint:919
 msgid "Add a shape"
 msgstr "添加形状"
 
 #. Spoken by a screen reader: the shape mode row
-#: crates/greycard-slint/ui/panel/mask.slint:942
+#: crates/greycard-slint/ui/panel/mask.slint:944
 msgid "Next shape mode"
 msgstr "下一种形状模式"
 
 #. Shape mode: the shape cuts the mask down to where both are
-#: crates/greycard-slint/ui/panel/mask.slint:945
+#: crates/greycard-slint/ui/panel/mask.slint:947
 msgid "Intersect"
 msgstr "相交"
 
 #. Add a shape: the kinds
-#: crates/greycard-slint/ui/panel/mask.slint:952
+#: crates/greycard-slint/ui/panel/mask.slint:954
 msgid "Linear"
 msgstr "线性渐变"
 
 #. Add a shape: the kinds
-#: crates/greycard-slint/ui/panel/mask.slint:959
+#: crates/greycard-slint/ui/panel/mask.slint:961
 msgid "Radial"
 msgstr "径向渐变"
 
 #. Add a shape: a brush; once one exists its button says Paint
-#: crates/greycard-slint/ui/panel/mask.slint:966
+#: crates/greycard-slint/ui/panel/mask.slint:968
 msgid "Paint"
 msgstr "绘制"
 
-#: crates/greycard-slint/ui/panel/mask.slint:975
+#: crates/greycard-slint/ui/panel/mask.slint:977
 msgid "Subject"
 msgstr "主体"
 
-#: crates/greycard-slint/ui/panel/mask.slint:982
+#: crates/greycard-slint/ui/panel/mask.slint:984
 msgid "Background"
 msgstr "背景"
 
-#: crates/greycard-slint/ui/panel/mask.slint:991
+#: crates/greycard-slint/ui/panel/mask.slint:993
 msgid "Sky"
 msgstr "天空"
 
-#: crates/greycard-slint/ui/panel/mask.slint:1008
+#: crates/greycard-slint/ui/panel/mask.slint:1010
 msgid "Landscape"
 msgstr "风景"
 
-#: crates/greycard-slint/ui/panel/mask.slint:1027
+#: crates/greycard-slint/ui/panel/mask.slint:1029
 msgid "Object"
 msgstr "对象"
 
-#: crates/greycard-slint/ui/panel/mask.slint:1046
+#: crates/greycard-slint/ui/panel/mask.slint:1048
 msgid "People"
 msgstr "人物"
 
-#: crates/greycard-slint/ui/panel/mask.slint:1058
+#: crates/greycard-slint/ui/panel/mask.slint:1060
 msgid "Whole person"
 msgstr "整个人"
 
-#: crates/greycard-slint/ui/panel/mask.slint:1060
+#: crates/greycard-slint/ui/panel/mask.slint:1062
 msgid "Face"
 msgstr "面部"
 
-#: crates/greycard-slint/ui/panel/mask.slint:1062
+#: crates/greycard-slint/ui/panel/mask.slint:1064
 msgid "Facial skin"
 msgstr "面部皮肤"
 
-#: crates/greycard-slint/ui/panel/mask.slint:1063
+#: crates/greycard-slint/ui/panel/mask.slint:1065
 msgid "Eyebrows"
 msgstr "眉毛"
 
-#: crates/greycard-slint/ui/panel/mask.slint:1064
+#: crates/greycard-slint/ui/panel/mask.slint:1066
 msgid "Eyes"
 msgstr "眼睛"
 
-#: crates/greycard-slint/ui/panel/mask.slint:1065
+#: crates/greycard-slint/ui/panel/mask.slint:1067
 msgid "Iris"
 msgstr "虹膜"
 
-#: crates/greycard-slint/ui/panel/mask.slint:1066
+#: crates/greycard-slint/ui/panel/mask.slint:1068
 msgid "Lips"
 msgstr "嘴唇"
 
-#: crates/greycard-slint/ui/panel/mask.slint:1067
+#: crates/greycard-slint/ui/panel/mask.slint:1069
 msgid "Teeth"
 msgstr "牙齿"
 
-#: crates/greycard-slint/ui/panel/mask.slint:1069
+#: crates/greycard-slint/ui/panel/mask.slint:1071
 msgid "Body"
 msgstr "身体"
 
-#: crates/greycard-slint/ui/panel/mask.slint:1070
+#: crates/greycard-slint/ui/panel/mask.slint:1072
 msgid "Skin"
 msgstr "皮肤"
 
-#: crates/greycard-slint/ui/panel/mask.slint:1071
+#: crates/greycard-slint/ui/panel/mask.slint:1073
 msgid "Hair"
 msgstr "头发"
 
-#: crates/greycard-slint/ui/panel/mask.slint:1072
+#: crates/greycard-slint/ui/panel/mask.slint:1074
 msgid "Hands"
 msgstr "手"
 
-#: crates/greycard-slint/ui/panel/mask.slint:1074
+#: crates/greycard-slint/ui/panel/mask.slint:1076
 msgid "Clothing"
 msgstr "衣服"
 
-#: crates/greycard-slint/ui/panel/mask.slint:1075
+#: crates/greycard-slint/ui/panel/mask.slint:1077
 msgctxt "clothing"
 msgid "Top"
 msgstr "上衣"
 
-#: crates/greycard-slint/ui/panel/mask.slint:1076
+#: crates/greycard-slint/ui/panel/mask.slint:1078
 msgid "Bottoms"
 msgstr "下装"
 
-#: crates/greycard-slint/ui/panel/mask.slint:1077
+#: crates/greycard-slint/ui/panel/mask.slint:1079
 msgid "Shoes"
 msgstr "鞋子"
 
-#: crates/greycard-slint/ui/panel/mask.slint:1078
+#: crates/greycard-slint/ui/panel/mask.slint:1080
 msgid "All clothing"
 msgstr "所有衣服"
 
@@ -2372,11 +2372,11 @@ msgstr ""
 "按相机和照片风格，依据其 JPEG 拟合风格。不足 20 张的组会借用其他组的风格，或"
 "被跳过。"
 
-#: crates/greycard-slint/ui/panel/match-sheet.slint:151
+#: crates/greycard-slint/ui/panel/match-sheet.slint:153
 msgid "Fit {}"
 msgstr "拟合 {}"
 
-#: crates/greycard-slint/ui/panel/match-sheet.slint:176
+#: crates/greycard-slint/ui/panel/match-sheet.slint:178
 msgid "Replace existing looks"
 msgstr "替换现有风格"
 
@@ -2483,16 +2483,16 @@ msgstr "组名称"
 msgid "PRESETS"
 msgstr "预设"
 
-#: crates/greycard-slint/ui/panel/presets.slint:301
+#: crates/greycard-slint/ui/panel/presets.slint:305
 msgid "Save the edit or import a Lightroom preset."
 msgstr "保存当前编辑，或导入 Lightroom 预设。"
 
-#: crates/greycard-slint/ui/panel/presets.slint:314
+#: crates/greycard-slint/ui/panel/presets.slint:318
 msgid "Remove {} from the list?"
 msgstr "从列表中移除 {}？"
 
 #. Presets section: the button that opens the sync sheet
-#: crates/greycard-slint/ui/panel/presets.slint:359
+#: crates/greycard-slint/ui/panel/presets.slint:363
 msgid "Sync..."
 msgstr "同步..."
 
@@ -2576,7 +2576,7 @@ msgid "Generate"
 msgstr "生成"
 
 #. Fill: another variation of the fill
-#: crates/greycard-slint/ui/panel/retouch.slint:197
+#: crates/greycard-slint/ui/panel/retouch.slint:200
 msgid "Another"
 msgstr "换一个"
 
@@ -2623,11 +2623,11 @@ msgstr "从图库中移去"
 msgid "All roots"
 msgstr "所有根文件夹"
 
-#: crates/greycard-slint/ui/panel/roots.slint:451
+#: crates/greycard-slint/ui/panel/roots.slint:453
 msgid "+ Add this folder"
 msgstr "+ 添加此文件夹"
 
-#: crates/greycard-slint/ui/panel/roots.slint:456
+#: crates/greycard-slint/ui/panel/roots.slint:458
 msgid "+ Add a root..."
 msgstr "+ 添加根文件夹..."
 
@@ -2714,324 +2714,324 @@ msgstr "模型"
 msgid "Settings"
 msgstr "设置"
 
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:501
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:503
 msgid "INTERFACE"
 msgstr "界面"
 
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:519
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:521
 msgid "Type and controls, on top of the system's own scaling."
 msgstr "文字和控件的大小，叠加在系统自身的缩放之上。"
 
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:525
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:527
 msgid "SLINT_SCALE_FACTOR is set, and wins over this."
 msgstr "已设置 SLINT_SCALE_FACTOR，它优先于此项。"
 
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:531
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:533
 msgid "Applies at the next start."
 msgstr "下次启动时生效。"
 
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:538
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:540
 msgid "Theme"
 msgstr "主题"
 
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:542
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:544
 msgid "Charcoal"
 msgstr "炭黑"
 
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:542
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:544
 msgid "Grey"
 msgstr "灰色"
 
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:542
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:544
 msgctxt "theme"
 msgid "Light"
 msgstr "浅色"
 
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:549
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:551
 msgid "Scroll bars"
 msgstr "滚动条"
 
 #. Scroll bars: fade when idle, or stay
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:554
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:556
 msgid "Fade"
 msgstr "淡出"
 
 #. Scroll bars: fade when idle, or stay
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:554
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:556
 msgid "Stay"
 msgstr "常驻"
 
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:561
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:563
 msgid "Scroll bar size"
 msgstr "滚动条大小"
 
 #. Scroll bar size
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:566
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:568
 msgid "Medium"
 msgstr "中"
 
 #. Scroll bar size
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:566
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:568
 msgid "Thin"
 msgstr "细"
 
 #. Scroll bar size
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:566
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:568
 msgid "Wide"
 msgstr "宽"
 
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:573
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:575
 msgid "Language"
 msgstr "语言"
 
 #. Interface: the develop panel's sections
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:591
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:593
 msgid "One section open at a time"
 msgstr "一次只展开一个部分"
 
 #. their first order, after dragging them
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:599
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:601
 msgid "Reset section order"
 msgstr "复位各部分的顺序"
 
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:617
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:619
 msgid "LIBRARY"
 msgstr "图库"
 
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:624
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:626
 msgid "Start in"
 msgstr "启动时打开"
 
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:628
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:630
 msgid "Chosen folder"
 msgstr "指定的文件夹"
 
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:628
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:630
 msgid "Last folder"
 msgstr "上次的文件夹"
 
 #. that picks the view greycard opens in, Loupe or Library
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:646
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:648
 msgid "Start view"
 msgstr "启动视图"
 
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:654
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:656
 msgid "Show the filter bar"
 msgstr "显示过滤栏"
 
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:660
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:662
 msgid "Cell size"
 msgstr "单元格大小"
 
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:671
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:673
 msgid "Resize with the wheel"
 msgstr "用滚轮调整大小"
 
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:677
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:679
 msgid "SIDECARS"
 msgstr "附属文件"
 
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:684
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:686
 msgid "Edits go"
 msgstr "编辑存放于"
 
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:688
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:690
 msgid "Beside the raw"
 msgstr "RAW 文件旁"
 
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:688
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:690
 msgid "Hidden folder"
 msgstr "隐藏文件夹"
 
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:698
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:700
 msgid "In a hidden .greycard folder."
 msgstr "在隐藏的 .greycard 文件夹中。"
 
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:699
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:701
 msgid "IMG_0001.CR3.gcd, beside the raw."
 msgstr "IMG_0001.CR3.gcd，在 RAW 文件旁。"
 
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:705
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:707
 msgid "Sidecars move when next saved."
 msgstr "附属文件会在下次保存时移动。"
 
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:714
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:716
 msgid "Sidecars are not written this run (--no-sidecars), so none are moved."
 msgstr "本次运行不写入附属文件 (--no-sidecars)，因此不移动任何附属文件。"
 
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:716
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:718
 msgid "Counting the sidecars of {}..."
 msgstr "正在统计{}的附属文件..."
 
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:718
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:720
 msgid "Every sidecar of {} is in the chosen place."
 msgstr "{}的所有附属文件都在所选位置。"
 
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:719
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:721
 msgid "{} of {} is in the other place."
 msgid_plural "{} of {} are in the other place."
 msgstr[0] "{1}中有 {0}在另一位置。"
 
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:725
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:727
 msgid "Move the open frame's sidecar"
 msgstr "移动所打开照片的附属文件"
 
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:725
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:727
 msgid "Move the open frames' sidecars"
 msgstr "移动所打开照片的附属文件"
 
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:737
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:739
 msgid "Move {}"
 msgstr "移动 {}"
 
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:753
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:755
 msgid "Write XMP sidecars"
 msgstr "写入 XMP 附属文件"
 
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:758
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:760
 msgid "Rating, label and keywords, for Lightroom and darktable."
 msgstr "星级、色标和关键字，供 Lightroom 和 darktable 读取。"
 
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:771
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:773
 msgid "Treat a JPEG beside its raw as a separate frame"
 msgstr "将 RAW 文件旁的 JPEG 视为单独的照片"
 
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:777
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:779
 msgid "IMG_0001.JPG is a frame of its own, with its own rating."
 msgstr "IMG_0001.JPG 是一张独立的照片，有自己的星级。"
 
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:778
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:780
 msgid "IMG_0001.JPG goes with IMG_0001.CR3: one frame, marked +JPEG."
 msgstr "IMG_0001.JPG 与 IMG_0001.CR3 合为一张照片，标记为 +JPEG。"
 
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:785
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:787
 msgid "THUMBNAILS"
 msgstr "缩略图"
 
 #. Thumbnails: before the size field
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:809
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:811
 msgid "Keep up to"
 msgstr "最多保留"
 
 #. Thumbnails: after the size field
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:819
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:821
 msgid "MB, 0 for none"
 msgstr "MB，0 表示不保留"
 
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:823
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:825
 msgid "Previews up to"
 msgstr "预览最多"
 
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:835
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:837
 msgid "Previews let you cull offline drives; about 0.5 MB a frame."
 msgstr "有了预览，脱机的驱动器也能选片；每张约 0.5 MB。"
 
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:842
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:844
 msgid "NETWORK FOLDERS"
 msgstr "网络文件夹"
 
 #. Network folders: before the minutes field
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:850
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:852
 msgid "Rescan every"
 msgstr "重新扫描间隔"
 
 #. Network folders: after the minutes field
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:860
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:862
 msgid "minutes, 0 for never"
 msgstr "分钟，0 表示从不"
 
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:863
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:865
 msgid "Shares can't be watched, so they're rescanned."
 msgstr "共享文件夹无法监视，因此会定期重新扫描。"
 
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:977
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:979
 msgid "Lens corrections on new edits"
 msgstr "新编辑默认开启镜头校正"
 
 #. Editing: the aspect a new crop opens at
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:995
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:997
 msgid "Last used"
 msgstr "上次使用"
 
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:1002
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:1004
 msgid "An uncropped frame's crop opens at the aspect last picked."
 msgstr "未裁剪照片的裁剪框按上次选择的长宽比打开。"
 
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:1004
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:1006
 msgid "An uncropped frame's crop opens free, any shape."
 msgstr "未裁剪照片的裁剪框以自由形状打开。"
 
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:1005
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:1007
 msgid "An uncropped frame's crop opens at the frame's own shape."
 msgstr "未裁剪照片的裁剪框按照片自身的形状打开。"
 
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:1055
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:1057
 msgid "Restores removed built-in presets."
 msgstr "恢复已移除的内置预设。"
 
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:1062
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:1064
 msgid "EXPORT"
 msgstr "导出"
 
 #. Export presets: the button that adds one
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:1118
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:1120
 msgid "Add..."
 msgstr "添加..."
 
 #. Editing: the name every export carries
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:1127
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:1129
 msgid "Author"
 msgstr "作者"
 
 #. Editing: the copyright notice every export carries
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:1138
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:1140
 msgid "Copyright"
 msgstr "版权"
 
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:1158
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:1160
 msgid "MODELS"
 msgstr "模型"
 
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:1232
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:1234
 msgid "KEYS"
 msgstr "快捷键"
 
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:1289
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:1294
 msgid "Reset to defaults"
 msgstr "恢复默认值"
 
 #. About: the version row
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:1313
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:1318
 msgid "Version"
 msgstr "版本"
 
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:1318
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:1323
 msgid "UPDATES"
 msgstr "更新"
 
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:1324
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:1329
 msgid "Check for a new version at launch"
 msgstr "启动时检查新版本"
 
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:1329
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:1334
 msgid "Once a day; sends only the version number."
 msgstr "每天一次；只发送版本号。"
 
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:1345
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:1350
 msgid "Check now"
 msgstr "立即检查"
 
 #. About: the cache folder's row
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:1400
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:1405
 msgid "Caches"
 msgstr "缓存"
 
 #. About: the log folder's row
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:1423
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:1428
 msgid "Log"
 msgstr "日志"
 
-#: crates/greycard-slint/ui/panel/strip.slint:380
+#: crates/greycard-slint/ui/panel/strip.slint:382
 msgid "Strip scroll"
 msgstr "胶片栏滚动条"
 
@@ -3177,82 +3177,82 @@ msgid "Mask {}"
 msgstr "蒙版 {}"
 
 #. Sync sheet: a section of the edit
-#: crates/greycard-ui/src/carry.rs:393
+#: crates/greycard-ui/src/carry.rs:401
 msgid "Light"
 msgstr "光线"
 
-#: crates/greycard-ui/src/carry.rs:395
+#: crates/greycard-ui/src/carry.rs:403
 msgid "White balance"
 msgstr "白平衡"
 
-#: crates/greycard-ui/src/carry.rs:396
+#: crates/greycard-ui/src/carry.rs:404
 msgid "Noise"
 msgstr "杂色"
 
-#: crates/greycard-ui/src/carry.rs:397
+#: crates/greycard-ui/src/carry.rs:405
 msgid "Detail"
 msgstr "细节"
 
-#: crates/greycard-ui/src/carry.rs:399
+#: crates/greycard-ui/src/carry.rs:407
 msgid "Output sharpen"
 msgstr "输出锐化"
 
-#: crates/greycard-ui/src/carry.rs:401
+#: crates/greycard-ui/src/carry.rs:409
 msgid "Color mixer"
 msgstr "混色器"
 
-#: crates/greycard-ui/src/carry.rs:403
+#: crates/greycard-ui/src/carry.rs:411
 msgid "Black and white"
 msgstr "黑白"
 
-#: crates/greycard-ui/src/carry.rs:404
+#: crates/greycard-ui/src/carry.rs:412
 msgid "Color grading"
 msgstr "颜色分级"
 
-#: crates/greycard-ui/src/carry.rs:405
+#: crates/greycard-ui/src/carry.rs:413
 msgid "Color tint"
 msgstr "着色"
 
-#: crates/greycard-ui/src/carry.rs:406
+#: crates/greycard-ui/src/carry.rs:414
 msgid "Look"
 msgstr "风格"
 
-#: crates/greycard-ui/src/carry.rs:408
+#: crates/greycard-ui/src/carry.rs:416
 msgid "Vignette"
 msgstr "暗角"
 
-#: crates/greycard-ui/src/carry.rs:409
+#: crates/greycard-ui/src/carry.rs:417
 msgid "Grain"
 msgstr "颗粒"
 
-#: crates/greycard-ui/src/carry.rs:411
+#: crates/greycard-ui/src/carry.rs:419
 msgid "Camera profile"
 msgstr "相机配置文件"
 
 #. Sync sheet: the color mixer's parts
-#: crates/greycard-ui/src/carry.rs:428
+#: crates/greycard-ui/src/carry.rs:436
 msgid "RGB"
 msgstr "RGB"
 
 #. Sync sheet: the lens correction's parts
-#: crates/greycard-ui/src/carry.rs:433
+#: crates/greycard-ui/src/carry.rs:441
 msgid "R/G"
 msgstr "R/G"
 
-#: crates/greycard-ui/src/carry.rs:434
+#: crates/greycard-ui/src/carry.rs:442
 msgid "B/Y"
 msgstr "B/Y"
 
 #. Sync sheet: the black and white filter's part
-#: crates/greycard-ui/src/carry.rs:441
+#: crates/greycard-ui/src/carry.rs:449
 msgid "Weights"
 msgstr "权重"
 
-#: crates/greycard-ui/src/carry.rs:448
+#: crates/greycard-ui/src/carry.rs:456
 msgid "Manual aberration"
 msgstr "手动色差"
 
-#: crates/greycard-ui/src/carry.rs:449
+#: crates/greycard-ui/src/carry.rs:457
 msgid "Manual distortion"
 msgstr "手动扭曲度"
 
@@ -3929,7 +3929,7 @@ msgid ""
 msgstr "关闭面板、放下工具、离开裁剪、放开选中的一组，或返回单张照片"
 
 #. Keys sheet: two keys that do the same
-#: crates/greycard-ui/src/keys.rs:622
+#: crates/greycard-ui/src/keys.rs:622 crates/greycard-ui/src/keys/tests.rs:311
 msgid "{} or {}"
 msgstr "{} 或 {}"
 
@@ -3940,6 +3940,7 @@ msgstr "单击"
 
 #. What the sheets write for an action bound to no key.
 #: crates/greycard-ui/src/keys.rs:1083
+#: crates/greycard-ui/src/keys/tests.rs:1360
 msgctxt "key binding"
 msgid "None"
 msgstr "无"
@@ -6890,6 +6891,7 @@ msgid "skipped: {}"
 msgstr "已跳过：{}"
 
 #: crates/greycard-ui/src/panel/models.rs:309
+#: crates/greycard-ui/src/panel/models.rs:889
 msgid "Each under its own license, kept beside it in the store."
 msgstr "各有其许可证，保存在模型库中的模型旁。"
 

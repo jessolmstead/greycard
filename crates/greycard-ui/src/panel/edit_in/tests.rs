@@ -40,10 +40,9 @@ fn watches(state: &Rc<Shared>) -> Vec<(PathBuf, PathBuf)> {
         .collect()
 }
 
-/// The frame menu's items labeled `label`, with the menu up over
-/// the strip's first frame.
-fn menu_items(app: &App, label: &str) -> usize {
-    use i_slint_backend_testing::ElementHandle;
+/// The frame menu's entries titled the catalog's `msgid`, with the
+/// menu up over the strip's first frame.
+fn menu_items(app: &App, msgid: &str) -> usize {
     let position = slint::LogicalPosition::new(strip_cell(app, 0).0, strip_cell(app, 0).1);
     for event in [
         WindowEvent::PointerMoved { position },
@@ -59,7 +58,7 @@ fn menu_items(app: &App, label: &str) -> usize {
         app.window().dispatch_event(event);
     }
     assert!(app.get_menu_up());
-    let n = ElementHandle::find_by_accessible_label(app, label).count();
+    let n = crate::testing::count_menu_entries(app, msgid);
     crate::testing::press(app, slint::platform::Key::Escape);
     n
 }

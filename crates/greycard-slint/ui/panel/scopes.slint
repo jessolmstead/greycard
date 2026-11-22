@@ -116,7 +116,7 @@ export component PanelHead inherits VerticalLayout {
                 width: Theme.control-height + Theme.space-2;
                 clicked => { root.undo(); }
             }
-            PanelButton {
+            redo-button := PanelButton {
                 icon: @image-url("../icons/rotate-cw.svg");
                 words: @tr("Redo");
                 accessible-role: button;
@@ -138,7 +138,7 @@ export component PanelHead inherits VerticalLayout {
                 font-size: Theme.font-sm;
                 overflow: elide;
             }
-            if !root.shot-folded: Text {
+            if !root.shot-folded: shot-exposure-text := Text {
                 text: root.shot-exposure;
                 height: 14px;
                 color: Theme.text-secondary;
@@ -292,7 +292,7 @@ export component PanelHead inherits VerticalLayout {
         }
         HorizontalLayout {
             spacing: Theme.space-1;
-            Segmented {
+            scope-row := Segmented {
                 // The panel's Tab is the window's: no stop here.
                 tab-stop: false;
                 // Spoken by a screen reader: the row that picks the

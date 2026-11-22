@@ -946,6 +946,9 @@ mod tests {
     use slint::Model;
     use std::time::{Duration, Instant};
 
+    /// A group's box on the sheet, keyed by the group's name.
+    const GROUP_CHECK: &str = "MatchSheet::group-check";
+
     #[test]
     fn the_bar_fills_by_frames_across_the_groups() {
         let frame = |group: &str, index, of, done, total| Progress::Frame {
@@ -1351,7 +1354,7 @@ mod tests {
     /// checked. The settings file is a scratch one.
     #[test]
     fn a_tick_is_saved_and_the_next_sheet_on_the_scope_has_it() {
-        use crate::testing::{click, labeled, state_for, window};
+        use crate::testing::{by_key, click, state_for, window};
         let dir = std::env::temp_dir().join(format!(
             "greycard-match-keep-{}-{}",
             std::process::id(),
@@ -1368,7 +1371,7 @@ mod tests {
         state.borrow_mut().camera_match = sheet;
         app.set_match_open(true);
         show(&state.borrow(), &app);
-        let (at, size) = labeled(&app, "Fit Canon EOS R5m2 Standard");
+        let (at, size) = by_key(&app, GROUP_CHECK, "Canon EOS R5m2 Standard");
         click(&app, at.x + size.width / 2.0, at.y + size.height / 2.0);
         let kept = crate::settings::Settings::load().match_unchecked;
         assert_eq!(
@@ -1422,7 +1425,7 @@ mod tests {
     /// at none, with the reason under it.
     #[test]
     fn the_sheet_has_a_box_a_group_and_the_button_counts_them() {
-        use crate::testing::{click, labeled, state_for, window};
+        use crate::testing::{by_key, click, state_for, window};
         let app = window(3);
         let (state, _worker) = state_for(&app, crate::testing::folder(3));
         // The donor, and a body of the same style with too few frames
@@ -1439,14 +1442,15 @@ mod tests {
         assert!(app.get_match_groups().iter().all(|g| g.checked));
         assert_eq!(app.get_match_fit_label(), "Fit 2 groups");
         assert!(app.get_match_can_fit());
+        // A group's box, by the group's name.
         let press = |name: &str| {
-            let (at, size) = labeled(&app, name);
+            let (at, size) = by_key(&app, GROUP_CHECK, name);
             click(&app, at.x + size.width / 2.0, at.y + size.height / 2.0);
         };
         // Unchecking the donor: the button counts one, its borrower says
         // the donor is not being fitted, and the donor's line says its
         // frames are read for the borrow and nothing of it is written.
-        press("Fit Canon EOS R6m2 Faithful");
+        press("Canon EOS R6m2 Faithful");
         assert_eq!(app.get_match_fit_label(), "Fit 1 group");
         assert!(
             app.get_match_fit_note()
@@ -1468,7 +1472,7 @@ mod tests {
         );
         // Unchecking the borrower too: nothing to fit, the button off with
         // its reason, and the donor is simply skipped.
-        press("Fit Canon EOS R5m2 Faithful");
+        press("Canon EOS R5m2 Faithful");
         assert_eq!(app.get_match_fit_label(), "Fit");
         assert!(!app.get_match_can_fit());
         assert!(app.get_match_fit_note().contains("No group is checked"));
@@ -1478,7 +1482,7 @@ mod tests {
         app.invoke_match_fit();
         assert!(state.borrow().camera_match.cancel.is_none());
         // Checked again, one press back.
-        press("Fit Canon EOS R6m2 Faithful");
+        press("Canon EOS R6m2 Faithful");
         assert_eq!(app.get_match_fit_label(), "Fit 1 group");
         assert!(app.get_match_can_fit());
     }
@@ -1569,7 +1573,7 @@ mod tests {
             .collect();
         app.set_match_groups(ModelRc::new(VecModel::from(groups)));
         app.set_match_open(true);
-        crate::testing::wheel_brings_in(&app, "Body 9 Standard: 14", (500.0, 580.0));
+        crate::testing::wheel_brings_in(&app, "Body 9 Standard: 14", "MatchSheet::groups-scroll");
     }
 
     /// The sheet's lines on real raws: every raw in `GREYCARD_SAMPLES`

@@ -248,7 +248,7 @@ fn the_editors_switches_sit_where_their_rows_ask() {
     assert_eq!(app.get_as_shot(), was, "Space after the row's empty left");
 
     app.set_folder_tree_shown(true);
-    let sub = crate::testing::toggle(&app, "With subfolders");
+    let sub = crate::testing::toggle_by_id(&app, "FoldersSection::subfolders-toggle");
     assert_eq!(left(sub.switch), right(sub.label) + GAP, "{sub:?}");
     assert!(right(sub.switch) < right(sub.row) - 40.0, "{sub:?}");
     let was_sub = app.get_folder_tree_subfolders();
@@ -267,7 +267,7 @@ fn the_editors_switches_sit_where_their_rows_ask() {
 
     crate::testing::click_switch_by_id(&app, "WhiteBalanceSection::as-shot-toggle");
     assert_eq!(app.get_as_shot(), !was);
-    let sub = crate::testing::toggle(&app, "With subfolders");
+    let sub = crate::testing::toggle_by_id(&app, "FoldersSection::subfolders-toggle");
     let was = was_sub;
     click(&app, left(sub.label) + 4.0, middle_y(sub.row));
     assert_eq!(app.get_folder_tree_subfolders(), !was, "the words");

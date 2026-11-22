@@ -641,7 +641,6 @@ mod tests {
         crate::testing::press(app, key);
         settle(app);
     }
-    use i_slint_backend_testing::ElementHandle;
     use slint::platform::{Key, WindowEvent};
 
     /// A window of `count` frames laid out at 1500 by 950, wired as a
@@ -659,14 +658,29 @@ mod tests {
         (app, state)
     }
 
-    /// How many elements carry `label` in `role`.
-    fn with_role(app: &App, label: &str, role: i_slint_backend_testing::AccessibleRole) -> usize {
-        app.window().dispatch_event(WindowEvent::PointerMoved {
-            position: slint::LogicalPosition::new(0.0, 0.0),
-        });
-        ElementHandle::find_by_accessible_label(app, label)
-            .filter(|e| e.accessible_role() == Some(role))
+    /// How many cells, the grid's and the strip's, carry f03.CR3's
+    /// name: data, the test window's own name for the frame.
+    fn f03_cells(app: &App) -> usize {
+        ["GridSheet::cell", "Filmstrip::cell"]
+            .into_iter()
+            .flat_map(|id| crate::testing::all_by_id(app, id))
+            .filter(|e| e.accessible_label().is_some_and(|l| l == "f03.CR3"))
             .count()
+    }
+
+    /// How many of the cells' rating badges, the grid's, the
+    /// lightbox's, and the strip's, are drawn and say what they show.
+    /// The viewport's badge under the sheet is not a cell's.
+    fn drawn_badges(app: &App) -> usize {
+        [
+            "GridSheet::cell-badges",
+            "GridSheet::tile-badges",
+            "Filmstrip::cell-badges",
+        ]
+        .into_iter()
+        .flat_map(|id| crate::testing::all_by_id(app, id))
+        .filter(|e| e.accessible_label().is_some_and(|l| !l.is_empty()))
+        .count()
     }
 
     fn with_modifier(app: &App, key: Key, f: impl FnOnce()) {
@@ -753,7 +767,6 @@ mod tests {
     /// screen reader.
     #[test]
     fn no_badges_names_marks_or_header_in_the_lightbox() {
-        use i_slint_backend_testing::AccessibleRole;
         let (app, _state) = lightbox_window(6);
         let model = app.get_thumbs();
         for r in 0..6 {
@@ -768,15 +781,15 @@ mod tests {
         press(&app, "g");
         let counts = |app: &App| {
             (
-                crate::testing::count_labeled(app, "3 stars, pick, yellow"),
-                crate::testing::count_labeled(app, "Edited"),
-                crate::testing::count_labeled(app, "Exported"),
+                drawn_badges(app),
+                crate::testing::count_id(app, "ThumbMarks::edited-mark"),
+                crate::testing::count_id(app, "ThumbMarks::exported-mark"),
                 // Named on the sheet: the words under a cell, or any
                 // element of the name that is not a cell's own, read to
                 // a screen reader.
                 crate::testing::cell_names(app, "f03.CR3").len()
                     + crate::testing::count_labeled(app, "f03.CR3")
-                    - with_role(app, "f03.CR3", AccessibleRole::ListItem),
+                    - f03_cells(app),
                 crate::testing::count_id(app, "GridSheet::lightbox-button"),
             )
         };
@@ -789,7 +802,7 @@ mod tests {
         assert_eq!(button, 1, "the header offers the lightbox");
         press(&app, "l");
         assert_eq!(counts(&app), (0, 0, 0, 0, 0));
-        assert_eq!(with_role(&app, "f03.CR3", AccessibleRole::ListItem), 1);
+        assert_eq!(f03_cells(&app), 1);
         // The rating key still rates, and still draws nothing.
         press(&app, "4");
         assert_eq!(model.row_data(0).unwrap().rating, 4);
@@ -810,7 +823,7 @@ mod tests {
             t.edited = true;
             model.set_row_data(r, t);
         }
-        let badges = |app: &App| crate::testing::count_labeled(app, "3 stars, pick, yellow");
+        let badges = drawn_badges;
         press(&app, "l");
         assert!(!app.get_lightbox_badges(), "off by default");
         assert_eq!(badges(&app), 0);
@@ -818,7 +831,7 @@ mod tests {
         assert!(app.get_lightbox_badges());
         assert_eq!(badges(&app), 6, "one a tile");
         assert_eq!(
-            crate::testing::count_labeled(&app, "Edited"),
+            crate::testing::count_id(&app, "ThumbMarks::edited-mark"),
             0,
             "the badges alone"
         );
@@ -1065,12 +1078,12 @@ mod tests {
         );
         assert_eq!(row(1), (9, true), "kept, dimmed");
         settle(&app);
-        assert_eq!(crate::testing::count_labeled(&app, "Developing"), 0);
+        assert_eq!(crate::testing::count_id(&app, "GridSheet::developing"), 0);
         // A tile with nothing: dark, and says why.
         waits(3);
         assert_eq!(row(3), (0, true));
         settle(&app);
-        assert_eq!(crate::testing::count_labeled(&app, "Developing"), 1);
+        assert_eq!(crate::testing::count_id(&app, "GridSheet::developing"), 1);
         // The new picture lands: up, and no longer pending.
         landed(1);
         assert_eq!(row(1), (9, false));
@@ -1170,7 +1183,7 @@ mod tests {
         assert!(!pending(&app), "a fresh row knows nothing");
         settle(&app);
         assert!(pending(&app));
-        assert_eq!(crate::testing::count_labeled(&app, "Developing"), 1);
+        assert_eq!(crate::testing::count_id(&app, "GridSheet::developing"), 1);
     }
 
     /// Escape over a set of frames takes the set back to the frame on

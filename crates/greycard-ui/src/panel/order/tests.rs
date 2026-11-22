@@ -960,15 +960,8 @@ fn reset_section_order_in_the_settings() {
         app.window().dispatch_event(WindowEvent::PointerMoved {
             position: LogicalPosition::new(0.0, 0.0),
         });
-        ElementHandle::find_by_element_type_name(&app, "PanelButton")
-            .find(|b| {
-                b.query_descendants()
-                    .match_predicate(|e| {
-                        e.accessible_label().as_deref() == Some("Reset section order")
-                    })
-                    .find_first()
-                    .is_some()
-            })
+        ElementHandle::find_by_element_id(&app, "SettingsSheet::reset-order-button")
+            .next()
             .expect("the button")
     };
     assert_eq!(button().accessible_enabled(), Some(false));
@@ -1000,8 +993,9 @@ fn first_row(app: &App) -> (String, f32) {
     (0..60)
         .map(|i| format!("r{i:02}"))
         .find_map(|name| {
-            let y = ElementHandle::find_by_accessible_label(app, &name)
-                .find(|e| e.size().height > 0.0 && e.absolute_position().y > top)
+            // The row keyed by its folder's path, "/r00" and on.
+            let y = crate::testing::keyed(app, "FoldersSection::folder-line", format!("/{name}"))
+                .filter(|e| e.size().height > 0.0 && e.absolute_position().y > top)
                 .map(|e| e.absolute_position().y - top);
             y.map(|y| (name, y))
         })

@@ -421,7 +421,9 @@ export component RootsSection inherits Section {
             menu-shown => { return root.menu-shown(); }
             clicked => { root.picked(""); root.focus-keys(); }
         }
-        for r in root.roots: RootRow {
+        for r in root.roots: root-row := RootRow {
+            // Its key, for automation: the root's path.
+            accessible-id: r.path;
             text: r.name;
             count: r.count;
             on: r.on;

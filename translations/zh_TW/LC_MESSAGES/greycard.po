@@ -286,83 +286,83 @@ msgid "{} value"
 msgstr "{}的數值"
 
 #. Spoken by a screen reader for a thumbnail: its stars
-#: crates/greycard-slint/ui/controls.slint:2826
+#: crates/greycard-slint/ui/controls.slint:2828
 msgid "{n} star"
 msgid_plural "{n} stars"
 msgstr[0] "{n} 星"
 
 #. Spoken by a screen reader for a thumbnail: its flag
-#: crates/greycard-slint/ui/controls.slint:2828
+#: crates/greycard-slint/ui/controls.slint:2830
 msgid "pick"
 msgstr "留用"
 
 #. Spoken by a screen reader for a thumbnail: its flag
-#: crates/greycard-slint/ui/controls.slint:2828
+#: crates/greycard-slint/ui/controls.slint:2830
 msgid "reject"
 msgstr "排除"
 
 #. Spoken by a screen reader for a thumbnail: its label
-#: crates/greycard-slint/ui/controls.slint:2832
+#: crates/greycard-slint/ui/controls.slint:2834
 msgid "green"
 msgstr "綠色"
 
 #. Spoken by a screen reader for a thumbnail: its label
-#: crates/greycard-slint/ui/controls.slint:2832
+#: crates/greycard-slint/ui/controls.slint:2834
 msgid "red"
 msgstr "紅色"
 
 #. Spoken by a screen reader for a thumbnail: its label
-#: crates/greycard-slint/ui/controls.slint:2832
+#: crates/greycard-slint/ui/controls.slint:2834
 msgid "yellow"
 msgstr "黃色"
 
 #. Spoken by a screen reader for a thumbnail: its label
-#: crates/greycard-slint/ui/controls.slint:2834
+#: crates/greycard-slint/ui/controls.slint:2836
 msgid "blue"
 msgstr "藍色"
 
 #. Spoken by a screen reader for a thumbnail: its label
-#: crates/greycard-slint/ui/controls.slint:2834
+#: crates/greycard-slint/ui/controls.slint:2836
 msgid "purple"
 msgstr "紫色"
 
 #. Spoken by a screen reader: a thumbnail's badge
-#: crates/greycard-slint/ui/controls.slint:2921
+#: crates/greycard-slint/ui/controls.slint:2923
 msgid "Edited"
 msgstr "已編輯"
 
 #. Spoken by a screen reader: a thumbnail's badge
-#: crates/greycard-slint/ui/controls.slint:2935
+#: crates/greycard-slint/ui/controls.slint:2937
 msgid "Exported"
 msgstr "已匯出"
 
 #. Spoken by a screen reader: a thumbnail's badge
-#: crates/greycard-slint/ui/controls.slint:2949
+#: crates/greycard-slint/ui/controls.slint:2951
 msgid "In a collection"
 msgstr "在收藏集中"
 
 #. Spoken by a screen reader: a thumbnail's badge
-#: crates/greycard-slint/ui/controls.slint:2960
+#: crates/greycard-slint/ui/controls.slint:2962
 msgid "With the camera's JPEG"
 msgstr "附相機 JPEG"
 
 #. Spoken by a screen reader: a thumbnail's stack badge
-#: crates/greycard-slint/ui/controls.slint:2988
+#: crates/greycard-slint/ui/controls.slint:2990
 msgid "Frame {} of a stack of {}, open"
 msgstr "堆疊中的第 {} 張，共 {} 張，已展開"
 
 #. Spoken by a screen reader: a thumbnail's stack badge
-#: crates/greycard-slint/ui/controls.slint:2990
+#: crates/greycard-slint/ui/controls.slint:2992
 msgid "Stack of {}"
 msgstr "堆疊，共 {} 張"
 
 #. Spoken by a screen reader: a thumbnail's version badge
-#: crates/greycard-slint/ui/controls.slint:3037
+#: crates/greycard-slint/ui/controls.slint:3039
 msgid "Version {}"
 msgstr "版本 {}"
 
 #. Spoken by a screen reader: a scroll bar
-#: crates/greycard-slint/ui/controls.slint:3491
+#: crates/greycard-slint/ui/controls.slint:3493
 msgid "Scroll"
 msgstr "捲軸"
 
@@ -393,51 +393,51 @@ msgid "raw only"
 msgstr "僅限 RAW"
 
 #. Look section: a look's fold button; {} is the look's name
-#: crates/greycard-slint/ui/panel/assets.slint:66
+#: crates/greycard-slint/ui/panel/assets.slint:70
 msgid "Fold {}"
 msgstr "收合 {}"
 
 #. Look section: a look's fold button; {} is the look's name
-#: crates/greycard-slint/ui/panel/assets.slint:66
+#: crates/greycard-slint/ui/panel/assets.slint:70
 msgid "Unfold {}"
 msgstr "展開 {}"
 
 #. Look section: the tag on a look fitted to the open frame's camera
-#: crates/greycard-slint/ui/panel/assets.slint:109
+#: crates/greycard-slint/ui/panel/assets.slint:113
 msgid "this camera"
 msgstr "本相機"
 
-#: crates/greycard-slint/ui/panel/assets.slint:146
+#: crates/greycard-slint/ui/panel/assets.slint:150
 msgid "Profile tone curve"
 msgstr "描述檔色調曲線"
 
-#: crates/greycard-slint/ui/panel/assets.slint:153
+#: crates/greycard-slint/ui/panel/assets.slint:157
 msgid "Show all cameras"
 msgstr "顯示所有相機"
 
-#: crates/greycard-slint/ui/panel/assets.slint:210
+#: crates/greycard-slint/ui/panel/assets.slint:214
 msgid "LOOK"
 msgstr "風格"
 
 #. Spoken by a screen reader: a look's row; {} is its name
-#: crates/greycard-slint/ui/panel/assets.slint:240
+#: crates/greycard-slint/ui/panel/assets.slint:247
 msgid "Look {}"
 msgstr "風格 {}"
 
 #. Look section: the slider
-#: crates/greycard-slint/ui/panel/assets.slint:332
+#: crates/greycard-slint/ui/panel/assets.slint:339
 msgid "Strength"
 msgstr "強度"
 
-#: crates/greycard-slint/ui/panel/assets.slint:384
+#: crates/greycard-slint/ui/panel/assets.slint:391
 msgid "Rename..."
 msgstr "重新命名..."
 
-#: crates/greycard-slint/ui/panel/assets.slint:389
+#: crates/greycard-slint/ui/panel/assets.slint:396
 msgid "Remove this look..."
 msgstr "移除此風格..."
 
-#: crates/greycard-slint/ui/panel/assets.slint:401
+#: crates/greycard-slint/ui/panel/assets.slint:408
 msgid "Fit this camera's look..."
 msgstr "擬合本相機的風格..."
 
@@ -455,17 +455,17 @@ msgid "Uncheck all"
 msgstr "全部取消勾選"
 
 #. where edits are kept
-#: crates/greycard-slint/ui/panel/carry-list.slint:186
+#: crates/greycard-slint/ui/panel/carry-list.slint:187
 msgid "Masks go"
 msgstr "遮色片"
 
 #. Sync sheet: how the masks go across
-#: crates/greycard-slint/ui/panel/carry-list.slint:189
+#: crates/greycard-slint/ui/panel/carry-list.slint:190
 msgid "Add to masks"
 msgstr "加入遮色片"
 
 #. Sync sheet: how the masks go across
-#: crates/greycard-slint/ui/panel/carry-list.slint:189
+#: crates/greycard-slint/ui/panel/carry-list.slint:190
 msgid "Replace masks"
 msgstr "取代遮色片"
 
@@ -497,11 +497,11 @@ msgstr[0] "忘記 {n} 張遺失的相片"
 msgid "Delete..."
 msgstr "刪除..."
 
-#: crates/greycard-slint/ui/panel/collections.slint:195
+#: crates/greycard-slint/ui/panel/collections.slint:197
 msgid "No collections yet"
 msgstr "尚無收藏集"
 
-#: crates/greycard-slint/ui/panel/collections.slint:206
+#: crates/greycard-slint/ui/panel/collections.slint:208
 msgid "+ New collection..."
 msgstr "+ 新增收藏集..."
 
@@ -678,30 +678,30 @@ msgid "Shadows"
 msgstr "陰影"
 
 #. Spoken by a screen reader: the color grading wheel for {}
-#: crates/greycard-slint/ui/panel/color.slint:707
+#: crates/greycard-slint/ui/panel/color.slint:709
 msgid "{} wheel"
 msgstr "{}色輪"
 
 #. Color grading: show the {} wheel large, or small again
-#: crates/greycard-slint/ui/panel/color.slint:720
+#: crates/greycard-slint/ui/panel/color.slint:723
 msgid "Enlarge {}"
 msgstr "放大{}色輪"
 
 #. Color grading: show the {} wheel large, or small again
-#: crates/greycard-slint/ui/panel/color.slint:720
+#: crates/greycard-slint/ui/panel/color.slint:723
 msgid "Shrink {}"
 msgstr "縮小{}色輪"
 
-#: crates/greycard-slint/ui/panel/color.slint:784
+#: crates/greycard-slint/ui/panel/color.slint:787
 msgid "Balance"
 msgstr "平衡"
 
-#: crates/greycard-slint/ui/panel/color.slint:830
+#: crates/greycard-slint/ui/panel/color.slint:833
 msgid "TINT"
 msgstr "著色"
 
 #. Tint section: the slider
-#: crates/greycard-slint/ui/panel/color.slint:905
+#: crates/greycard-slint/ui/panel/color.slint:908
 msgid "Amount"
 msgstr "總量"
 
@@ -899,12 +899,19 @@ msgid "Developed pictures"
 msgstr "處理後的影像"
 
 #: crates/greycard-slint/ui/panel/cull.slint:101
-msgid "1-5 stars · P pick · X reject · U unflag · 6-9 label · Space 1:1 · Enter develops"
-msgstr "1-5 星 · P 留用 · X 排除 · U 取消旗標 · 6-9 色標 · Space 1:1 · Enter 編修"
+msgid ""
+"1-5 stars · P pick · X reject · U unflag · 6-9 label · Space 1:1 · Enter "
+"develops"
+msgstr ""
+"1-5 星 · P 留用 · X 排除 · U 取消旗標 · 6-9 色標 · Space 1:1 · Enter 編修"
 
 #: crates/greycard-slint/ui/panel/cull.slint:102
-msgid "1-5 stars · P pick · X reject · U unflag · 6-9 label · Space 1:1 · V compare · Enter develops"
-msgstr "1-5 星 · P 留用 · X 排除 · U 取消旗標 · 6-9 色標 · Space 1:1 · V 比較 · Enter 編修"
+msgid ""
+"1-5 stars · P pick · X reject · U unflag · 6-9 label · Space 1:1 · V compare "
+"· Enter develops"
+msgstr ""
+"1-5 星 · P 留用 · X 排除 · U 取消旗標 · 6-9 色標 · Space 1:1 · V 比較 · "
+"Enter 編修"
 
 #. Culling section: the row with the Left and Right buttons
 #: crates/greycard-slint/ui/panel/cull.slint:113
@@ -1825,27 +1832,27 @@ msgid_plural "{n} rejects"
 msgstr[0] "{n} 張排除的相片"
 
 #. Spoken by a screen reader: a folder tile
-#: crates/greycard-slint/ui/panel/grid.slint:686
+#: crates/greycard-slint/ui/panel/grid.slint:688
 msgid "Folder {}"
 msgstr "資料夾 {}"
 
 #. A tile's word when its picture could not be read
-#: crates/greycard-slint/ui/panel/grid.slint:916
+#: crates/greycard-slint/ui/panel/grid.slint:920
 msgid "Unreadable"
 msgstr "無法讀取"
 
 #. A tile's word while its picture is made
-#: crates/greycard-slint/ui/panel/grid.slint:930
+#: crates/greycard-slint/ui/panel/grid.slint:934
 msgid "Developing"
 msgstr "正在處理"
 
 #. Spoken by a screen reader: the grid's scroll bar
-#: crates/greycard-slint/ui/panel/grid.slint:1252
+#: crates/greycard-slint/ui/panel/grid.slint:1256
 msgid "Grid scroll"
 msgstr "格點捲軸"
 
 #. language.
-#: crates/greycard-slint/ui/panel/grid.slint:1326
+#: crates/greycard-slint/ui/panel/grid.slint:1330
 msgid "Close lightbox"
 msgstr "關閉燈箱"
 
@@ -1853,42 +1860,42 @@ msgstr "關閉燈箱"
 msgid "SNAPSHOTS"
 msgstr "快照"
 
-#: crates/greycard-slint/ui/panel/history.slint:204
+#: crates/greycard-slint/ui/panel/history.slint:208
 msgid "Restore {}"
 msgstr "還原 {}"
 
-#: crates/greycard-slint/ui/panel/history.slint:205
+#: crates/greycard-slint/ui/panel/history.slint:209
 msgid "Restore"
 msgstr "還原"
 
-#: crates/greycard-slint/ui/panel/history.slint:213
+#: crates/greycard-slint/ui/panel/history.slint:218
 msgid "Rename {}"
 msgstr "重新命名 {}"
 
-#: crates/greycard-slint/ui/panel/history.slint:214
+#: crates/greycard-slint/ui/panel/history.slint:219
 msgid "Rename"
 msgstr "重新命名"
 
 #. Snapshots: remove the snapshot
-#: crates/greycard-slint/ui/panel/history.slint:227
+#: crates/greycard-slint/ui/panel/history.slint:232
 msgid "Remove"
 msgstr "移除"
 
 #. Snapshots: the list when there are none
-#: crates/greycard-slint/ui/panel/history.slint:241
+#: crates/greycard-slint/ui/panel/history.slint:246
 msgid "None yet."
 msgstr "尚無。"
 
 #. Snapshots: take a snapshot of the edit as it is
-#: crates/greycard-slint/ui/panel/history.slint:250
+#: crates/greycard-slint/ui/panel/history.slint:255
 msgid "Take"
 msgstr "建立快照"
 
-#: crates/greycard-slint/ui/panel/history.slint:268
+#: crates/greycard-slint/ui/panel/history.slint:273
 msgid "HISTORY"
 msgstr "步驟記錄"
 
-#: crates/greycard-slint/ui/panel/history.slint:355
+#: crates/greycard-slint/ui/panel/history.slint:360
 msgid "No changes yet."
 msgstr "尚無變更。"
 
@@ -1911,7 +1918,9 @@ msgid "Copies are verified; the card is untouched."
 msgstr "副本皆經過驗證；記憶卡不會有任何更動。"
 
 #: crates/greycard-slint/ui/panel/import-sheet.slint:139
-msgid "Adds a folder and its subfolders to the library where it is; nothing is copied."
+msgid ""
+"Adds a folder and its subfolders to the library where it is; nothing is "
+"copied."
 msgstr "將資料夾及其子資料夾依原位置加入圖庫；不拷貝任何檔案。"
 
 #: crates/greycard-slint/ui/panel/import-sheet.slint:151
@@ -2150,203 +2159,203 @@ msgstr "拷貝遮色片"
 msgid "Paste mask"
 msgstr "貼上遮色片"
 
-#: crates/greycard-slint/ui/panel/mask.slint:279
+#: crates/greycard-slint/ui/panel/mask.slint:281
 msgid "New mask"
 msgstr "新增遮色片"
 
-#: crates/greycard-slint/ui/panel/mask.slint:365
+#: crates/greycard-slint/ui/panel/mask.slint:367
 msgid "MASK"
 msgstr "遮色片"
 
 #. Spoken by a screen reader: the mask's name field
-#: crates/greycard-slint/ui/panel/mask.slint:396
+#: crates/greycard-slint/ui/panel/mask.slint:398
 msgid "Mask name"
 msgstr "遮色片名稱"
 
-#: crates/greycard-slint/ui/panel/mask.slint:415
+#: crates/greycard-slint/ui/panel/mask.slint:417
 msgid "Invert"
 msgstr "反轉"
 
-#: crates/greycard-slint/ui/panel/mask.slint:422
+#: crates/greycard-slint/ui/panel/mask.slint:424
 msgid "Refine edge"
 msgstr "調整邊緣"
 
-#: crates/greycard-slint/ui/panel/mask.slint:453
+#: crates/greycard-slint/ui/panel/mask.slint:455
 msgid "Shapes"
 msgstr "形狀"
 
-#: crates/greycard-slint/ui/panel/mask.slint:540
+#: crates/greycard-slint/ui/panel/mask.slint:542
 msgid "Invert this shape"
 msgstr "反轉此形狀"
 
-#: crates/greycard-slint/ui/panel/mask.slint:596
+#: crates/greycard-slint/ui/panel/mask.slint:598
 msgid "Remove this shape"
 msgstr "移除此形狀"
 
 #. Luminance range: the fade at the dark end
-#: crates/greycard-slint/ui/panel/mask.slint:710
+#: crates/greycard-slint/ui/panel/mask.slint:712
 msgid "Low fade"
 msgstr "暗部過渡"
 
 #. Luminance range: the fade at the light end
-#: crates/greycard-slint/ui/panel/mask.slint:738
+#: crates/greycard-slint/ui/panel/mask.slint:740
 msgid "High fade"
 msgstr "亮部過渡"
 
 #. Color range: the button that reads a color off the picture
-#: crates/greycard-slint/ui/panel/mask.slint:766
+#: crates/greycard-slint/ui/panel/mask.slint:768
 msgid "Sample"
 msgstr "取樣"
 
 #. Color range: the fade
-#: crates/greycard-slint/ui/panel/mask.slint:811
+#: crates/greycard-slint/ui/panel/mask.slint:813
 msgid "Hue fade"
 msgstr "色相過渡"
 
 #. Color range: the fade
-#: crates/greycard-slint/ui/panel/mask.slint:841
+#: crates/greycard-slint/ui/panel/mask.slint:843
 msgid "Chroma fade"
 msgstr "色度過渡"
 
 #. Add a shape: a brush; once one exists its button says Paint
-#: crates/greycard-slint/ui/panel/mask.slint:905
+#: crates/greycard-slint/ui/panel/mask.slint:907
 msgid "Brush"
 msgstr "筆刷"
 
 #. Brush: what a stroke does
-#: crates/greycard-slint/ui/panel/mask.slint:908
+#: crates/greycard-slint/ui/panel/mask.slint:910
 msgid "Add"
 msgstr "加入"
 
 #. Brush: what a stroke does
-#: crates/greycard-slint/ui/panel/mask.slint:908
+#: crates/greycard-slint/ui/panel/mask.slint:910
 msgid "Erase"
 msgstr "擦除"
 
 #. Brush: what a stroke does
-#: crates/greycard-slint/ui/panel/mask.slint:908
+#: crates/greycard-slint/ui/panel/mask.slint:910
 msgid "Subtract"
 msgstr "減去"
 
-#: crates/greycard-slint/ui/panel/mask.slint:917
+#: crates/greycard-slint/ui/panel/mask.slint:919
 msgid "Add a shape"
 msgstr "加入形狀"
 
 #. Spoken by a screen reader: the shape mode row
-#: crates/greycard-slint/ui/panel/mask.slint:942
+#: crates/greycard-slint/ui/panel/mask.slint:944
 msgid "Next shape mode"
 msgstr "下一種形狀模式"
 
 #. Shape mode: the shape cuts the mask down to where both are
-#: crates/greycard-slint/ui/panel/mask.slint:945
+#: crates/greycard-slint/ui/panel/mask.slint:947
 msgid "Intersect"
 msgstr "交集"
 
 #. Add a shape: the kinds
-#: crates/greycard-slint/ui/panel/mask.slint:952
+#: crates/greycard-slint/ui/panel/mask.slint:954
 msgid "Linear"
 msgstr "線性漸層"
 
 #. Add a shape: the kinds
-#: crates/greycard-slint/ui/panel/mask.slint:959
+#: crates/greycard-slint/ui/panel/mask.slint:961
 msgid "Radial"
 msgstr "放射狀漸層"
 
 #. Add a shape: a brush; once one exists its button says Paint
-#: crates/greycard-slint/ui/panel/mask.slint:966
+#: crates/greycard-slint/ui/panel/mask.slint:968
 msgid "Paint"
 msgstr "繪製"
 
-#: crates/greycard-slint/ui/panel/mask.slint:975
+#: crates/greycard-slint/ui/panel/mask.slint:977
 msgid "Subject"
 msgstr "主體"
 
-#: crates/greycard-slint/ui/panel/mask.slint:982
+#: crates/greycard-slint/ui/panel/mask.slint:984
 msgid "Background"
 msgstr "背景"
 
-#: crates/greycard-slint/ui/panel/mask.slint:991
+#: crates/greycard-slint/ui/panel/mask.slint:993
 msgid "Sky"
 msgstr "天空"
 
-#: crates/greycard-slint/ui/panel/mask.slint:1008
+#: crates/greycard-slint/ui/panel/mask.slint:1010
 msgid "Landscape"
 msgstr "風景"
 
-#: crates/greycard-slint/ui/panel/mask.slint:1027
+#: crates/greycard-slint/ui/panel/mask.slint:1029
 msgid "Object"
 msgstr "物件"
 
-#: crates/greycard-slint/ui/panel/mask.slint:1046
+#: crates/greycard-slint/ui/panel/mask.slint:1048
 msgid "People"
 msgstr "人物"
 
-#: crates/greycard-slint/ui/panel/mask.slint:1058
+#: crates/greycard-slint/ui/panel/mask.slint:1060
 msgid "Whole person"
 msgstr "整個人"
 
-#: crates/greycard-slint/ui/panel/mask.slint:1060
+#: crates/greycard-slint/ui/panel/mask.slint:1062
 msgid "Face"
 msgstr "臉部"
 
-#: crates/greycard-slint/ui/panel/mask.slint:1062
+#: crates/greycard-slint/ui/panel/mask.slint:1064
 msgid "Facial skin"
 msgstr "臉部皮膚"
 
-#: crates/greycard-slint/ui/panel/mask.slint:1063
+#: crates/greycard-slint/ui/panel/mask.slint:1065
 msgid "Eyebrows"
 msgstr "眉毛"
 
-#: crates/greycard-slint/ui/panel/mask.slint:1064
+#: crates/greycard-slint/ui/panel/mask.slint:1066
 msgid "Eyes"
 msgstr "眼睛"
 
-#: crates/greycard-slint/ui/panel/mask.slint:1065
+#: crates/greycard-slint/ui/panel/mask.slint:1067
 msgid "Iris"
 msgstr "虹膜"
 
-#: crates/greycard-slint/ui/panel/mask.slint:1066
+#: crates/greycard-slint/ui/panel/mask.slint:1068
 msgid "Lips"
 msgstr "嘴唇"
 
-#: crates/greycard-slint/ui/panel/mask.slint:1067
+#: crates/greycard-slint/ui/panel/mask.slint:1069
 msgid "Teeth"
 msgstr "牙齒"
 
-#: crates/greycard-slint/ui/panel/mask.slint:1069
+#: crates/greycard-slint/ui/panel/mask.slint:1071
 msgid "Body"
 msgstr "身體"
 
-#: crates/greycard-slint/ui/panel/mask.slint:1070
+#: crates/greycard-slint/ui/panel/mask.slint:1072
 msgid "Skin"
 msgstr "皮膚"
 
-#: crates/greycard-slint/ui/panel/mask.slint:1071
+#: crates/greycard-slint/ui/panel/mask.slint:1073
 msgid "Hair"
 msgstr "頭髮"
 
-#: crates/greycard-slint/ui/panel/mask.slint:1072
+#: crates/greycard-slint/ui/panel/mask.slint:1074
 msgid "Hands"
 msgstr "手"
 
-#: crates/greycard-slint/ui/panel/mask.slint:1074
+#: crates/greycard-slint/ui/panel/mask.slint:1076
 msgid "Clothing"
 msgstr "衣服"
 
-#: crates/greycard-slint/ui/panel/mask.slint:1075
+#: crates/greycard-slint/ui/panel/mask.slint:1077
 msgctxt "clothing"
 msgid "Top"
 msgstr "上衣"
 
-#: crates/greycard-slint/ui/panel/mask.slint:1076
+#: crates/greycard-slint/ui/panel/mask.slint:1078
 msgid "Bottoms"
 msgstr "下身"
 
-#: crates/greycard-slint/ui/panel/mask.slint:1077
+#: crates/greycard-slint/ui/panel/mask.slint:1079
 msgid "Shoes"
 msgstr "鞋子"
 
-#: crates/greycard-slint/ui/panel/mask.slint:1078
+#: crates/greycard-slint/ui/panel/mask.slint:1080
 msgid "All clothing"
 msgstr "所有衣服"
 
@@ -2355,14 +2364,18 @@ msgid "Fit this camera's look"
 msgstr "擬合本相機的風格"
 
 #: crates/greycard-slint/ui/panel/match-sheet.slint:93
-msgid "Fits a look per camera and picture style to its JPEGs. Groups under 20 frames borrow or are skipped."
-msgstr "依相機和相片風格，根據其 JPEG 擬合風格。不足 20 張的群組會借用其他群組的風格，或被略過。"
+msgid ""
+"Fits a look per camera and picture style to its JPEGs. Groups under 20 "
+"frames borrow or are skipped."
+msgstr ""
+"依相機和相片風格，根據其 JPEG 擬合風格。不足 20 張的群組會借用其他群組的風"
+"格，或被略過。"
 
-#: crates/greycard-slint/ui/panel/match-sheet.slint:151
+#: crates/greycard-slint/ui/panel/match-sheet.slint:153
 msgid "Fit {}"
 msgstr "擬合 {}"
 
-#: crates/greycard-slint/ui/panel/match-sheet.slint:176
+#: crates/greycard-slint/ui/panel/match-sheet.slint:178
 msgid "Replace existing looks"
 msgstr "取代現有風格"
 
@@ -2398,9 +2411,13 @@ msgid "Add keywords"
 msgstr "加入關鍵字"
 
 #: crates/greycard-slint/ui/panel/meta.slint:266
-msgid "What is typed goes on all {n} frame chosen; a dimmed word is on some of them."
-msgid_plural "What is typed goes on all {n} frames chosen; a dimmed word is on some of them."
-msgstr[0] "輸入的內容會套用到所選的全部 {n} 張相片；呈灰色的字詞只在其中部分相片上。"
+msgid ""
+"What is typed goes on all {n} frame chosen; a dimmed word is on some of them."
+msgid_plural ""
+"What is typed goes on all {n} frames chosen; a dimmed word is on some of "
+"them."
+msgstr[0] ""
+"輸入的內容會套用到所選的全部 {n} 張相片；呈灰色的字詞只在其中部分相片上。"
 
 #: crates/greycard-slint/ui/panel/navigator.slint:22
 msgid "NAVIGATOR"
@@ -2466,16 +2483,16 @@ msgstr "群組名稱"
 msgid "PRESETS"
 msgstr "預設集"
 
-#: crates/greycard-slint/ui/panel/presets.slint:301
+#: crates/greycard-slint/ui/panel/presets.slint:305
 msgid "Save the edit or import a Lightroom preset."
 msgstr "儲存目前編輯，或匯入 Lightroom 預設集。"
 
-#: crates/greycard-slint/ui/panel/presets.slint:314
+#: crates/greycard-slint/ui/panel/presets.slint:318
 msgid "Remove {} from the list?"
 msgstr "從清單中移除 {}？"
 
 #. Presets section: the button that opens the sync sheet
-#: crates/greycard-slint/ui/panel/presets.slint:359
+#: crates/greycard-slint/ui/panel/presets.slint:363
 msgid "Sync..."
 msgstr "同步..."
 
@@ -2559,7 +2576,7 @@ msgid "Generate"
 msgstr "產生"
 
 #. Fill: another variation of the fill
-#: crates/greycard-slint/ui/panel/retouch.slint:197
+#: crates/greycard-slint/ui/panel/retouch.slint:200
 msgid "Another"
 msgstr "換一個"
 
@@ -2606,11 +2623,11 @@ msgstr "從圖庫中移出"
 msgid "All roots"
 msgstr "所有根資料夾"
 
-#: crates/greycard-slint/ui/panel/roots.slint:451
+#: crates/greycard-slint/ui/panel/roots.slint:453
 msgid "+ Add this folder"
 msgstr "+ 加入此資料夾"
 
-#: crates/greycard-slint/ui/panel/roots.slint:456
+#: crates/greycard-slint/ui/panel/roots.slint:458
 msgid "+ Add a root..."
 msgstr "+ 加入根資料夾..."
 
@@ -2697,324 +2714,324 @@ msgstr "模型"
 msgid "Settings"
 msgstr "設定"
 
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:501
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:503
 msgid "INTERFACE"
 msgstr "介面"
 
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:519
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:521
 msgid "Type and controls, on top of the system's own scaling."
 msgstr "文字和控制項的大小，疊加於系統本身的縮放比例之上。"
 
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:525
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:527
 msgid "SLINT_SCALE_FACTOR is set, and wins over this."
 msgstr "已設定 SLINT_SCALE_FACTOR，它優先於此項。"
 
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:531
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:533
 msgid "Applies at the next start."
 msgstr "下次啟動時生效。"
 
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:538
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:540
 msgid "Theme"
 msgstr "主題"
 
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:542
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:544
 msgid "Charcoal"
 msgstr "炭黑"
 
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:542
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:544
 msgid "Grey"
 msgstr "灰色"
 
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:542
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:544
 msgctxt "theme"
 msgid "Light"
 msgstr "淺色"
 
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:549
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:551
 msgid "Scroll bars"
 msgstr "捲軸"
 
 #. Scroll bars: fade when idle, or stay
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:554
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:556
 msgid "Fade"
 msgstr "淡出"
 
 #. Scroll bars: fade when idle, or stay
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:554
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:556
 msgid "Stay"
 msgstr "常駐"
 
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:561
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:563
 msgid "Scroll bar size"
 msgstr "捲軸大小"
 
 #. Scroll bar size
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:566
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:568
 msgid "Medium"
 msgstr "中"
 
 #. Scroll bar size
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:566
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:568
 msgid "Thin"
 msgstr "細"
 
 #. Scroll bar size
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:566
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:568
 msgid "Wide"
 msgstr "寬"
 
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:573
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:575
 msgid "Language"
 msgstr "語言"
 
 #. Interface: the develop panel's sections
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:591
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:593
 msgid "One section open at a time"
 msgstr "一次只展開一個區段"
 
 #. their first order, after dragging them
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:599
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:601
 msgid "Reset section order"
 msgstr "重設各區段的順序"
 
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:617
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:619
 msgid "LIBRARY"
 msgstr "圖庫"
 
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:624
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:626
 msgid "Start in"
 msgstr "啟動時開啟"
 
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:628
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:630
 msgid "Chosen folder"
 msgstr "指定的資料夾"
 
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:628
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:630
 msgid "Last folder"
 msgstr "上次的資料夾"
 
 #. that picks the view greycard opens in, Loupe or Library
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:646
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:648
 msgid "Start view"
 msgstr "啟動檢視"
 
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:654
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:656
 msgid "Show the filter bar"
 msgstr "顯示篩選列"
 
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:660
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:662
 msgid "Cell size"
 msgstr "格子大小"
 
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:671
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:673
 msgid "Resize with the wheel"
 msgstr "用滑鼠滾輪調整大小"
 
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:677
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:679
 msgid "SIDECARS"
 msgstr "附屬檔案"
 
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:684
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:686
 msgid "Edits go"
 msgstr "編輯存放於"
 
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:688
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:690
 msgid "Beside the raw"
 msgstr "RAW 檔案旁"
 
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:688
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:690
 msgid "Hidden folder"
 msgstr "隱藏資料夾"
 
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:698
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:700
 msgid "In a hidden .greycard folder."
 msgstr "在隱藏的 .greycard 資料夾中。"
 
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:699
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:701
 msgid "IMG_0001.CR3.gcd, beside the raw."
 msgstr "IMG_0001.CR3.gcd，在 RAW 檔案旁。"
 
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:705
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:707
 msgid "Sidecars move when next saved."
 msgstr "附屬檔案會在下次儲存時移動。"
 
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:714
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:716
 msgid "Sidecars are not written this run (--no-sidecars), so none are moved."
 msgstr "本次執行不寫入附屬檔案 (--no-sidecars)，因此不移動任何附屬檔案。"
 
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:716
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:718
 msgid "Counting the sidecars of {}..."
 msgstr "正在計算{}的附屬檔案..."
 
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:718
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:720
 msgid "Every sidecar of {} is in the chosen place."
 msgstr "{}的所有附屬檔案都在所選位置。"
 
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:719
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:721
 msgid "{} of {} is in the other place."
 msgid_plural "{} of {} are in the other place."
 msgstr[0] "{1}中有 {0}在另一位置。"
 
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:725
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:727
 msgid "Move the open frame's sidecar"
 msgstr "移動所開啟相片的附屬檔案"
 
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:725
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:727
 msgid "Move the open frames' sidecars"
 msgstr "移動所開啟相片的附屬檔案"
 
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:737
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:739
 msgid "Move {}"
 msgstr "移動 {}"
 
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:753
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:755
 msgid "Write XMP sidecars"
 msgstr "寫入 XMP 附屬檔案"
 
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:758
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:760
 msgid "Rating, label and keywords, for Lightroom and darktable."
 msgstr "星等、色標和關鍵字，供 Lightroom 和 darktable 讀取。"
 
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:771
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:773
 msgid "Treat a JPEG beside its raw as a separate frame"
 msgstr "將 RAW 檔案旁的 JPEG 視為單獨的相片"
 
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:777
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:779
 msgid "IMG_0001.JPG is a frame of its own, with its own rating."
 msgstr "IMG_0001.JPG 是一張獨立的相片，有自己的星等。"
 
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:778
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:780
 msgid "IMG_0001.JPG goes with IMG_0001.CR3: one frame, marked +JPEG."
 msgstr "IMG_0001.JPG 與 IMG_0001.CR3 合為一張相片，標記為 +JPEG。"
 
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:785
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:787
 msgid "THUMBNAILS"
 msgstr "縮圖"
 
 #. Thumbnails: before the size field
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:809
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:811
 msgid "Keep up to"
 msgstr "最多保留"
 
 #. Thumbnails: after the size field
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:819
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:821
 msgid "MB, 0 for none"
 msgstr "MB，0 表示不保留"
 
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:823
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:825
 msgid "Previews up to"
 msgstr "預覽最多"
 
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:835
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:837
 msgid "Previews let you cull offline drives; about 0.5 MB a frame."
 msgstr "有了預覽，即使磁碟機離線也能挑片；每張約 0.5 MB。"
 
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:842
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:844
 msgid "NETWORK FOLDERS"
 msgstr "網路資料夾"
 
 #. Network folders: before the minutes field
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:850
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:852
 msgid "Rescan every"
 msgstr "重新掃描間隔"
 
 #. Network folders: after the minutes field
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:860
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:862
 msgid "minutes, 0 for never"
 msgstr "分鐘，0 表示永不"
 
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:863
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:865
 msgid "Shares can't be watched, so they're rescanned."
 msgstr "共用資料夾無法監視，因此會定期重新掃描。"
 
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:977
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:979
 msgid "Lens corrections on new edits"
 msgstr "新編輯預設開啟鏡頭校正"
 
 #. Editing: the aspect a new crop opens at
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:995
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:997
 msgid "Last used"
 msgstr "上次使用"
 
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:1002
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:1004
 msgid "An uncropped frame's crop opens at the aspect last picked."
 msgstr "未裁切相片的裁切框依上次選擇的長寬比開啟。"
 
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:1004
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:1006
 msgid "An uncropped frame's crop opens free, any shape."
 msgstr "未裁切相片的裁切框以自由形狀開啟。"
 
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:1005
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:1007
 msgid "An uncropped frame's crop opens at the frame's own shape."
 msgstr "未裁切相片的裁切框依相片本身的形狀開啟。"
 
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:1055
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:1057
 msgid "Restores removed built-in presets."
 msgstr "還原已移除的內建預設集。"
 
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:1062
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:1064
 msgid "EXPORT"
 msgstr "匯出"
 
 #. Export presets: the button that adds one
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:1118
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:1120
 msgid "Add..."
 msgstr "加入..."
 
 #. Editing: the name every export carries
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:1127
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:1129
 msgid "Author"
 msgstr "作者"
 
 #. Editing: the copyright notice every export carries
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:1138
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:1140
 msgid "Copyright"
 msgstr "版權"
 
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:1158
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:1160
 msgid "MODELS"
 msgstr "模型"
 
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:1232
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:1234
 msgid "KEYS"
 msgstr "快速鍵"
 
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:1289
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:1294
 msgid "Reset to defaults"
 msgstr "還原預設值"
 
 #. About: the version row
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:1313
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:1318
 msgid "Version"
 msgstr "版本"
 
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:1318
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:1323
 msgid "UPDATES"
 msgstr "更新"
 
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:1324
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:1329
 msgid "Check for a new version at launch"
 msgstr "啟動時檢查新版本"
 
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:1329
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:1334
 msgid "Once a day; sends only the version number."
 msgstr "每天一次；只傳送版本號。"
 
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:1345
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:1350
 msgid "Check now"
 msgstr "立即檢查"
 
 #. About: the cache folder's row
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:1400
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:1405
 msgid "Caches"
 msgstr "快取"
 
 #. About: the log folder's row
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:1423
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:1428
 msgid "Log"
 msgstr "記錄檔"
 
-#: crates/greycard-slint/ui/panel/strip.slint:380
+#: crates/greycard-slint/ui/panel/strip.slint:382
 msgid "Strip scroll"
 msgstr "底片列捲軸"
 
@@ -3033,8 +3050,12 @@ msgid "Sync settings"
 msgstr "同步設定"
 
 #: crates/greycard-slint/ui/panel/sync-sheet.slint:113
-msgid "Crop and retouch never copy; camera profiles only to the same camera. A part copied alone leaves the rest of its section as each frame has it."
-msgstr "裁切和修飾從不拷貝；相機描述檔只拷貝到同款相機。單獨拷貝某一項時，其所在區段的其餘內容維持各相片原樣。"
+msgid ""
+"Crop and retouch never copy; camera profiles only to the same camera. A part "
+"copied alone leaves the rest of its section as each frame has it."
+msgstr ""
+"裁切和修飾從不拷貝；相機描述檔只拷貝到同款相機。單獨拷貝某一項時，其所在區段"
+"的其餘內容維持各相片原樣。"
 
 #: crates/greycard-slint/ui/panel/sync-sheet.slint:172
 msgid "Apply"
@@ -3091,8 +3112,11 @@ msgid "Vulkan or DX12"
 msgstr "Vulkan 或 DX12"
 
 #: crates/greycard-ui/src/adapter.rs:128
-msgid "no GPU greycard can draw on through {api}: drawing in software and developing on the CPU, which is slow"
-msgstr "沒有 greycard 能透過 {api} 繪製的 GPU：改用軟體繪製並在 CPU 上處理，速度較慢"
+msgid ""
+"no GPU greycard can draw on through {api}: drawing in software and "
+"developing on the CPU, which is slow"
+msgstr ""
+"沒有 greycard 能透過 {api} 繪製的 GPU：改用軟體繪製並在 CPU 上處理，速度較慢"
 
 #: crates/greycard-ui/src/adapter.rs:139
 msgid "drawing in software on {name} and developing on the CPU, which is slow"
@@ -3153,92 +3177,100 @@ msgid "Mask {}"
 msgstr "遮色片 {}"
 
 #. Sync sheet: a section of the edit
-#: crates/greycard-ui/src/carry.rs:393
+#: crates/greycard-ui/src/carry.rs:401
 msgid "Light"
 msgstr "光線"
 
-#: crates/greycard-ui/src/carry.rs:395
+#: crates/greycard-ui/src/carry.rs:403
 msgid "White balance"
 msgstr "白平衡"
 
-#: crates/greycard-ui/src/carry.rs:396
+#: crates/greycard-ui/src/carry.rs:404
 msgid "Noise"
 msgstr "雜訊"
 
-#: crates/greycard-ui/src/carry.rs:397
+#: crates/greycard-ui/src/carry.rs:405
 msgid "Detail"
 msgstr "細節"
 
-#: crates/greycard-ui/src/carry.rs:399
+#: crates/greycard-ui/src/carry.rs:407
 msgid "Output sharpen"
 msgstr "輸出銳利化"
 
-#: crates/greycard-ui/src/carry.rs:401
+#: crates/greycard-ui/src/carry.rs:409
 msgid "Color mixer"
 msgstr "混色器"
 
-#: crates/greycard-ui/src/carry.rs:403
+#: crates/greycard-ui/src/carry.rs:411
 msgid "Black and white"
 msgstr "黑白"
 
-#: crates/greycard-ui/src/carry.rs:404
+#: crates/greycard-ui/src/carry.rs:412
 msgid "Color grading"
 msgstr "顏色分級"
 
-#: crates/greycard-ui/src/carry.rs:405
+#: crates/greycard-ui/src/carry.rs:413
 msgid "Color tint"
 msgstr "著色"
 
-#: crates/greycard-ui/src/carry.rs:406
+#: crates/greycard-ui/src/carry.rs:414
 msgid "Look"
 msgstr "風格"
 
-#: crates/greycard-ui/src/carry.rs:408
+#: crates/greycard-ui/src/carry.rs:416
 msgid "Vignette"
 msgstr "暗角"
 
-#: crates/greycard-ui/src/carry.rs:409
+#: crates/greycard-ui/src/carry.rs:417
 msgid "Grain"
 msgstr "顆粒"
 
-#: crates/greycard-ui/src/carry.rs:411
+#: crates/greycard-ui/src/carry.rs:419
 msgid "Camera profile"
 msgstr "相機描述檔"
 
 #. Sync sheet: the color mixer's parts
-#: crates/greycard-ui/src/carry.rs:428
+#: crates/greycard-ui/src/carry.rs:436
 msgid "RGB"
 msgstr "RGB"
 
 #. Sync sheet: the lens correction's parts
-#: crates/greycard-ui/src/carry.rs:433
+#: crates/greycard-ui/src/carry.rs:441
 msgid "R/G"
 msgstr "R/G"
 
-#: crates/greycard-ui/src/carry.rs:434
+#: crates/greycard-ui/src/carry.rs:442
 msgid "B/Y"
 msgstr "B/Y"
 
 #. Sync sheet: the black and white filter's part
-#: crates/greycard-ui/src/carry.rs:441
+#: crates/greycard-ui/src/carry.rs:449
 msgid "Weights"
 msgstr "權重"
 
-#: crates/greycard-ui/src/carry.rs:448
+#: crates/greycard-ui/src/carry.rs:456
 msgid "Manual aberration"
 msgstr "手動色差"
 
-#: crates/greycard-ui/src/carry.rs:449
+#: crates/greycard-ui/src/carry.rs:457
 msgid "Manual distortion"
 msgstr "手動扭曲"
 
 #: crates/greycard-ui/src/chooser.rs:224
-msgid "no file chooser: there is no D-Bus session bus; install zenity, or see the user guide"
-msgstr "無法開啟檔案選擇器：沒有 D-Bus 工作階段匯流排；請安裝 zenity，或參閱使用者指南"
+msgid ""
+"no file chooser: there is no D-Bus session bus; install zenity, or see the "
+"user guide"
+msgstr ""
+"無法開啟檔案選擇器：沒有 D-Bus 工作階段匯流排；請安裝 zenity，或參閱使用者指"
+"南"
 
 #: crates/greycard-ui/src/chooser.rs:228
-msgid "no file chooser: no desktop portal answered; install xdg-desktop-portal-gtk or zenity"
-msgstr "無法開啟檔案選擇器：沒有桌面入口程式回應；請安裝 xdg-desktop-portal-gtk 或 zenity"
+msgid ""
+"no file chooser: no desktop portal answered; install xdg-desktop-portal-gtk "
+"or zenity"
+msgstr ""
+"無法開啟檔案選擇器：沒有桌面入口程式回應；請安裝 xdg-desktop-portal-gtk 或 "
+"zenity"
 
 #: crates/greycard-ui/src/chooser.rs:233
 msgid "the file chooser failed: {e}"
@@ -3323,7 +3355,8 @@ msgstr "垃圾桶拒絕了 {}（{}）"
 
 #: crates/greycard-ui/src/delete.rs:557
 msgid "; {n} frame still where it was: ask again to delete permanently"
-msgid_plural "; {n} frames still where they were: ask again to delete permanently"
+msgid_plural ""
+"; {n} frames still where they were: ask again to delete permanently"
 msgstr[0] "；{n} 張相片仍在原處：再次操作可永久刪除"
 
 #: crates/greycard-ui/src/delete.rs:566
@@ -3337,7 +3370,8 @@ msgstr "；每一項都記在記錄檔中"
 
 #: crates/greycard-ui/src/delete.rs:579
 msgid "; {n} camera JPEG left where it was when its raw went ({name}: {why})"
-msgid_plural "; {n} camera JPEGs left where they were when their raws went ({name}: {why})"
+msgid_plural ""
+"; {n} camera JPEGs left where they were when their raws went ({name}: {why})"
 msgstr[0] "；{n} 張相機 JPEG 在其 RAW 檔案刪除時留在原處（{name}：{why}）"
 
 #: crates/greycard-ui/src/export_queue.rs:230
@@ -3507,8 +3541,10 @@ msgid ", {} JPEG or XMP not copied (the name was another file's)"
 msgstr "，{} 個 JPEG 或 XMP 未拷貝（該名稱已被其他檔案佔用）"
 
 #: crates/greycard-ui/src/import.rs:543
-msgid ", the preset's camera profile left off {n} frame (made for another camera)"
-msgid_plural ", the preset's camera profile left off {n} frames (made for another camera)"
+msgid ""
+", the preset's camera profile left off {n} frame (made for another camera)"
+msgid_plural ""
+", the preset's camera profile left off {n} frames (made for another camera)"
 msgstr[0] "，預設集的相機描述檔未用於 {n} 張相片（為其他相機製作）"
 
 #: crates/greycard-ui/src/import.rs:550
@@ -3679,11 +3715,16 @@ msgid "Open the frame chosen in the grid or the lightbox; from Cull, Develop"
 msgstr "開啟在格點或燈箱中選取的相片；在挑片中則進入編修"
 
 #: crates/greycard-ui/src/keys.rs:253
-msgid "Bigger or smaller tiles in the grid; fewer or more across the lightbox; in the Loupe, zoom in or out"
-msgstr "在格點中放大或縮小圖塊；在燈箱中每列減少或增加相片；在放大檢視中放大或縮小"
+msgid ""
+"Bigger or smaller tiles in the grid; fewer or more across the lightbox; in "
+"the Loupe, zoom in or out"
+msgstr ""
+"在格點中放大或縮小圖塊；在燈箱中每列減少或增加相片；在放大檢視中放大或縮小"
 
 #: crates/greycard-ui/src/keys.rs:259
-msgid "Hide the panels and the filmstrip, and bring them back (in the grid, the left pane)"
+msgid ""
+"Hide the panels and the filmstrip, and bring them back (in the grid, the "
+"left pane)"
 msgstr "隱藏面板和底片列，再按一次還原（在格點中為左側窗格）"
 
 #: crates/greycard-ui/src/keys.rs:265
@@ -3712,7 +3753,8 @@ msgid "In the Loupe, shadow and highlight clipping warnings"
 msgstr "在放大檢視中，陰影和亮部剪裁警告"
 
 #: crates/greycard-ui/src/keys.rs:285
-msgid "In the Loupe, focus peaking: the sharpest parts painted over the picture"
+msgid ""
+"In the Loupe, focus peaking: the sharpest parts painted over the picture"
 msgstr "在放大檢視中，峰值對焦：在影像上標出最清晰的部分"
 
 #: crates/greycard-ui/src/keys.rs:291
@@ -3842,8 +3884,12 @@ msgid "Sliders"
 msgstr "滑桿"
 
 #: crates/greycard-ui/src/keys.rs:449
-msgid "Nudge the focused slider, or its typed value with ↑ ↓; Shift on an arrow for more, Ctrl on the slider for less, and Shift on a drag for finer"
-msgstr "微調獲得焦點的滑桿，或用 ↑ ↓ 微調其輸入值；箭頭鍵加 Shift 幅度更大，在滑桿上加 Ctrl 幅度更小，拖曳時加 Shift 更精細"
+msgid ""
+"Nudge the focused slider, or its typed value with ↑ ↓; Shift on an arrow for "
+"more, Ctrl on the slider for less, and Shift on a drag for finer"
+msgstr ""
+"微調獲得焦點的滑桿，或用 ↑ ↓ 微調其輸入值；箭頭鍵加 Shift 幅度更大，在滑桿上"
+"加 Ctrl 幅度更小，拖曳時加 Shift 更精細"
 
 #: crates/greycard-ui/src/keys.rs:452
 msgid "The previous or the next slider"
@@ -3880,11 +3926,13 @@ msgid "The keys sheet"
 msgstr "快速鍵表"
 
 #: crates/greycard-ui/src/keys.rs:486
-msgid "Close a sheet, put a tool down, leave the crop, let go of a set, or go back to one frame"
+msgid ""
+"Close a sheet, put a tool down, leave the crop, let go of a set, or go back "
+"to one frame"
 msgstr "關閉面板、放下工具、離開裁切、放開選取的一組，或返回單張相片"
 
 #. Keys sheet: two keys that do the same
-#: crates/greycard-ui/src/keys.rs:622
+#: crates/greycard-ui/src/keys.rs:622 crates/greycard-ui/src/keys/tests.rs:311
 msgid "{} or {}"
 msgstr "{} 或 {}"
 
@@ -3895,6 +3943,7 @@ msgstr "按一下"
 
 #. What the sheets write for an action bound to no key.
 #: crates/greycard-ui/src/keys.rs:1083
+#: crates/greycard-ui/src/keys/tests.rs:1360
 msgctxt "key binding"
 msgid "None"
 msgstr "無"
@@ -3974,7 +4023,8 @@ msgid "moving the rejects on {label}: {done} of {total}"
 msgstr "正在移動 {label} 上排除的相片：{done}/{total}"
 
 #: crates/greycard-ui/src/panel/archive.rs:341
-msgid "moving the rejects on {label}: {done} of {total}; stopping after this frame"
+msgid ""
+"moving the rejects on {label}: {done} of {total}; stopping after this frame"
 msgstr "正在移動 {label} 上排除的相片：{done}/{total}；完成這張後停止"
 
 #: crates/greycard-ui/src/panel/archive.rs:347
@@ -3982,7 +4032,9 @@ msgid "deleting the rejects from {label}: {done} of {total}"
 msgstr "正在從 {label} 刪除排除的相片：{done}/{total}"
 
 #: crates/greycard-ui/src/panel/archive.rs:353
-msgid "deleting the rejects from {label}: {done} of {total}; stopping after this frame"
+msgid ""
+"deleting the rejects from {label}: {done} of {total}; stopping after this "
+"frame"
 msgstr "正在從 {label} 刪除排除的相片：{done}/{total}；完成這張後停止"
 
 #: crates/greycard-ui/src/panel/archive.rs:391
@@ -4059,7 +4111,9 @@ msgid "still waiting on {label}; try again shortly"
 msgstr "仍在等待 {label}；請稍後再試"
 
 #: crates/greycard-ui/src/panel/archive.rs:627
-msgid "these frames are under more than one root: back up a root's or a folder's at a time"
+msgid ""
+"these frames are under more than one root: back up a root's or a folder's at "
+"a time"
 msgstr "這些相片位於多個根資料夾下：請一次備份一個根資料夾或一個資料夾的相片"
 
 #: crates/greycard-ui/src/panel/archive.rs:633
@@ -4086,12 +4140,15 @@ msgid "Looking..."
 msgstr "正在檢視..."
 
 #: crates/greycard-ui/src/panel/archive.rs:754
-msgid "forgot that {source} was backed up to {dest}: that folder is no longer on {archive}"
+msgid ""
+"forgot that {source} was backed up to {dest}: that folder is no longer on "
+"{archive}"
 msgstr "已忘記 {source} 曾備份到 {dest}：該資料夾已不在 {archive} 上"
 
 #: crates/greycard-ui/src/panel/archive.rs:760
 msgid "forgot {n} backup whose folder is no longer on {archive}: {names}"
-msgid_plural "forgot {n} backups whose folders are no longer on {archive}: {names}"
+msgid_plural ""
+"forgot {n} backups whose folders are no longer on {archive}: {names}"
 msgstr[0] "已忘記 {n} 個備份，其資料夾已不在 {archive} 上：{names}"
 
 #: crates/greycard-ui/src/panel/archive.rs:815
@@ -4131,13 +4188,19 @@ msgid "Sidecars are off for this run."
 msgstr "本次執行已關閉附屬檔案。"
 
 #: crates/greycard-ui/src/panel/archive.rs:967
-msgid "{n} frame already there has newer sidecars here; only the sidecars copy."
-msgid_plural "{n} frames already there have newer sidecars here; only the sidecars copy."
+msgid ""
+"{n} frame already there has newer sidecars here; only the sidecars copy."
+msgid_plural ""
+"{n} frames already there have newer sidecars here; only the sidecars copy."
 msgstr[0] "{n} 張已在那裡的相片在此處有更新的附屬檔案；只拷貝附屬檔案。"
 
 #: crates/greycard-ui/src/panel/archive.rs:972
-msgid "{n} frame already there has newer sidecars on the archive; only the sidecars copy."
-msgid_plural "{n} frames already there have newer sidecars on the archive; only the sidecars copy."
+msgid ""
+"{n} frame already there has newer sidecars on the archive; only the sidecars "
+"copy."
+msgid_plural ""
+"{n} frames already there have newer sidecars on the archive; only the "
+"sidecars copy."
 msgstr[0] "{n} 張已在那裡的相片在封存上有更新的附屬檔案；只拷貝附屬檔案。"
 
 #: crates/greycard-ui/src/panel/archive.rs:981
@@ -4146,9 +4209,12 @@ msgid_plural "{n} frames already on {label}, skipped."
 msgstr[0] "{n} 張相片已在 {label} 上，已跳過。"
 
 #: crates/greycard-ui/src/panel/archive.rs:987
-msgid "{n} frame already on {label}, {elsewhere} under a different folder, skipped."
-msgid_plural "{n} frames already on {label}, {elsewhere} under a different folder, skipped."
-msgstr[0] "{n} 張相片已在 {label} 上（其中 {elsewhere} 張在其他資料夾下），已跳過。"
+msgid ""
+"{n} frame already on {label}, {elsewhere} under a different folder, skipped."
+msgid_plural ""
+"{n} frames already on {label}, {elsewhere} under a different folder, skipped."
+msgstr[0] ""
+"{n} 張相片已在 {label} 上（其中 {elsewhere} 張在其他資料夾下），已跳過。"
 
 #: crates/greycard-ui/src/panel/archive.rs:994
 msgid "{n} frame already here, skipped."
@@ -4157,7 +4223,8 @@ msgstr[0] "{n} 張相片已在此處，已跳過。"
 
 #: crates/greycard-ui/src/panel/archive.rs:997
 msgid "{n} frame already here, {elsewhere} under a different folder, skipped."
-msgid_plural "{n} frames already here, {elsewhere} under a different folder, skipped."
+msgid_plural ""
+"{n} frames already here, {elsewhere} under a different folder, skipped."
 msgstr[0] "{n} 張相片已在此處（其中 {elsewhere} 張在其他資料夾下），已跳過。"
 
 #: crates/greycard-ui/src/panel/archive.rs:1005
@@ -4212,7 +4279,9 @@ msgid "The folder has to be under {label} ({folder})."
 msgstr "該資料夾必須位於 {label}（{folder}）下。"
 
 #: crates/greycard-ui/src/panel/archive.rs:1144
-msgid "not copied: another job on an archive started meanwhile; ask again once it is done"
+msgid ""
+"not copied: another job on an archive started meanwhile; ask again once it "
+"is done"
 msgstr "未拷貝：期間另一項封存工作已開始；完成後請再試"
 
 #: crates/greycard-ui/src/panel/archive.rs:1152
@@ -4238,7 +4307,8 @@ msgid "{label} timed out after {seconds} s; stopping after this frame"
 msgstr "{label} 在 {seconds} s 後逾時；完成這張後停止"
 
 #: crates/greycard-ui/src/panel/archive.rs:1344
-msgid "the copy stopped without a report; the next Back up checks it (see the log)"
+msgid ""
+"the copy stopped without a report; the next Back up checks it (see the log)"
 msgstr "拷貝停止了，沒有留下報告；下次備份時會檢查（見記錄檔）"
 
 #: crates/greycard-ui/src/panel/archive.rs:1363
@@ -4295,7 +4365,8 @@ msgstr[0] "{n} 張失敗：{name}（{why}）"
 
 #: crates/greycard-ui/src/panel/archive.rs:1455
 msgid "removed a temporary file left by an earlier copy that did not finish"
-msgid_plural "removed {n} temporary files left by an earlier copy that did not finish"
+msgid_plural ""
+"removed {n} temporary files left by an earlier copy that did not finish"
 msgstr[0] "已移除之前未完成的拷貝留下的 {n} 個暫存檔案"
 
 #: crates/greycard-ui/src/panel/archive.rs:1462
@@ -4418,8 +4489,11 @@ msgid "there is no archive: mark a root as one from its menu"
 msgstr "沒有封存：請從根資料夾的選單中將其標記為封存"
 
 #: crates/greycard-ui/src/panel/archive/rejects.rs:147
-msgid "Remove rejects works on one folder: pick one in the tree with With subfolders off"
-msgstr "「移除排除的相片」只針對一個資料夾：請關閉「包含子資料夾」，再在樹中選擇一個"
+msgid ""
+"Remove rejects works on one folder: pick one in the tree with With "
+"subfolders off"
+msgstr ""
+"「移除排除的相片」只針對一個資料夾：請關閉「包含子資料夾」，再在樹中選擇一個"
 
 #: crates/greycard-ui/src/panel/archive/rejects.rs:166
 #: crates/greycard-ui/src/panel/delete.rs:332
@@ -4427,8 +4501,12 @@ msgid "nothing is open"
 msgstr "沒有開啟任何內容"
 
 #: crates/greycard-ui/src/panel/archive/rejects.rs:175
-msgid "the open folder is on {label}: its rejects folder is {label}'s own, and Delete rejects folder is the way to take it off"
-msgstr "開啟的資料夾位於 {label} 上：其排除資料夾屬於 {label} 本身，要移除它請用「刪除排除資料夾」"
+msgid ""
+"the open folder is on {label}: its rejects folder is {label}'s own, and "
+"Delete rejects folder is the way to take it off"
+msgstr ""
+"開啟的資料夾位於 {label} 上：其排除資料夾屬於 {label} 本身，要移除它請用「刪"
+"除排除資料夾」"
 
 #: crates/greycard-ui/src/panel/archive/rejects.rs:197
 msgid "looking for the rejects on {label}..."
@@ -4478,7 +4556,8 @@ msgid "Delete uses the trash."
 msgstr "刪除會使用垃圾桶。"
 
 #: crates/greycard-ui/src/panel/archive/rejects.rs:362
-msgid "The trash failed on {label} earlier; a permanent delete can't be undone."
+msgid ""
+"The trash failed on {label} earlier; a permanent delete can't be undone."
 msgstr "{label} 上的垃圾桶之前出錯；永久刪除無法復原。"
 
 #: crates/greycard-ui/src/panel/archive/rejects.rs:366
@@ -4511,7 +4590,9 @@ msgid "Delete from {label} permanently"
 msgstr "從 {label} 永久刪除"
 
 #: crates/greycard-ui/src/panel/archive/rejects.rs:413
-msgid "nothing done: another job on an archive is under way; ask again once it is done"
+msgid ""
+"nothing done: another job on an archive is under way; ask again once it is "
+"done"
 msgstr "未執行：另一項封存工作正在進行；完成後請再試"
 
 #: crates/greycard-ui/src/panel/archive/rejects.rs:437
@@ -4519,7 +4600,8 @@ msgid "not deleted: {} isn't reachable"
 msgstr "未刪除：{} 無法存取"
 
 #: crates/greycard-ui/src/panel/archive/rejects.rs:448
-msgid "nothing done: a capture, an export or a timing run never moves or deletes"
+msgid ""
+"nothing done: a capture, an export or a timing run never moves or deletes"
 msgstr "未執行：擷取畫面、匯出或計時執行從不移動或刪除"
 
 #: crates/greycard-ui/src/panel/archive/rejects.rs:501
@@ -4551,9 +4633,14 @@ msgid "there is no library to keep the queue beside"
 msgstr "沒有可存放佇列的圖庫"
 
 #: crates/greycard-ui/src/panel/archive/rejects.rs:676
-msgid "{label} isn't reachable; the move of {n} reject is queued until it's back{dropped}"
-msgid_plural "{label} isn't reachable; the move of {n} rejects is queued until it's back{dropped}"
-msgstr[0] "{label} 無法存取；{n} 張排除相片的移動已排入佇列，待其重新連上後執行{dropped}"
+msgid ""
+"{label} isn't reachable; the move of {n} reject is queued until it's "
+"back{dropped}"
+msgid_plural ""
+"{label} isn't reachable; the move of {n} rejects is queued until it's "
+"back{dropped}"
+msgstr[0] ""
+"{label} 無法存取；{n} 張排除相片的移動已排入佇列，待其重新連上後執行{dropped}"
 
 #: crates/greycard-ui/src/panel/archive/rejects.rs:683
 msgid "{label} isn't reachable, and the move couldn't be queued: {e}"
@@ -4569,7 +4656,8 @@ msgstr "{label} 仍然無法存取；其已排入佇列的移動繼續等待"
 
 #: crates/greycard-ui/src/panel/archive/rejects.rs:714
 msgid "; the {n} frame not reached are queued until {label} is back{dropped}"
-msgid_plural "; the {n} frames not reached are queued until {label} is back{dropped}"
+msgid_plural ""
+"; the {n} frames not reached are queued until {label} is back{dropped}"
 msgstr[0] "；未到達的 {n} 張相片已排入佇列，待 {label} 重新連上後執行{dropped}"
 
 #: crates/greycard-ui/src/panel/archive/rejects.rs:721
@@ -4594,8 +4682,12 @@ msgid "; dropped from the archive queue as malformed: {one}"
 msgstr "；因格式錯誤已從封存佇列中丟棄：{one}"
 
 #: crates/greycard-ui/src/panel/archive/rejects.rs:814
-msgid "; dropped from the archive queue as malformed: {n} entry ({first}; the log has the rest)"
-msgid_plural "; dropped from the archive queue as malformed: {n} entries ({first}; the log has the rest)"
+msgid ""
+"; dropped from the archive queue as malformed: {n} entry ({first}; the log "
+"has the rest)"
+msgid_plural ""
+"; dropped from the archive queue as malformed: {n} entries ({first}; the log "
+"has the rest)"
 msgstr[0] "；因格式錯誤已從封存佇列中丟棄 {n} 個項目（{first}；其餘見記錄檔）"
 
 #: crates/greycard-ui/src/panel/archive/rejects.rs:826
@@ -4667,8 +4759,14 @@ msgid "Download the lens profiles?"
 msgstr "下載鏡頭描述檔？"
 
 #: crates/greycard-ui/src/panel/assets.rs:54
-msgid "The lensfun database, about {size} KB from {host}.\nLicense: {license} ({url}).\nKept in {kept_in}."
-msgstr "lensfun 資料庫，約 {size} KB，來自 {host}。\n授權：{license}（{url}）。\n儲存在 {kept_in}。"
+msgid ""
+"The lensfun database, about {size} KB from {host}.\n"
+"License: {license} ({url}).\n"
+"Kept in {kept_in}."
+msgstr ""
+"lensfun 資料庫，約 {size} KB，來自 {host}。\n"
+"授權：{license}（{url}）。\n"
+"儲存在 {kept_in}。"
 
 #: crates/greycard-ui/src/panel/assets.rs:62
 #: crates/greycard-ui/src/panel/assets.rs:283
@@ -4698,7 +4796,8 @@ msgid "Its own license."
 msgstr "有其自己的授權。"
 
 #: crates/greycard-ui/src/panel/assets.rs:160
-msgid "Your Subject model runs on the CPU here; a GPU version is {size} MB. {note}"
+msgid ""
+"Your Subject model runs on the CPU here; a GPU version is {size} MB. {note}"
 msgstr "此處的主體模型在 CPU 上執行；GPU 版本為 {size} MB。{note}"
 
 #: crates/greycard-ui/src/panel/assets.rs:169
@@ -4706,8 +4805,14 @@ msgid "Download {name}?"
 msgstr "下載 {name}？"
 
 #: crates/greycard-ui/src/panel/assets.rs:172
-msgid "{size} MB from {host}.\nLicense: {license} ({url}).\nKept in {kept_in}."
-msgstr "{size} MB，來自 {host}。\n授權：{license}（{url}）。\n儲存在 {kept_in}。"
+msgid ""
+"{size} MB from {host}.\n"
+"License: {license} ({url}).\n"
+"Kept in {kept_in}."
+msgstr ""
+"{size} MB，來自 {host}。\n"
+"授權：{license}（{url}）。\n"
+"儲存在 {kept_in}。"
 
 #: crates/greycard-ui/src/panel/assets.rs:181
 #: crates/greycard-ui/src/panel/models.rs:588
@@ -4719,20 +4824,40 @@ msgid "Download ONNX Runtime for the CPU?"
 msgstr "下載用於 CPU 的 ONNX Runtime？"
 
 #: crates/greycard-ui/src/panel/assets.rs:270
-msgid "{reason}, so the AI features are off.\n\n{name} runs them on the CPU only, slower: {download} MB from {host}, {kept} MB kept.\nLicense: {license} ({url}).\nKept in {kept_in}."
-msgstr "{reason}，因此 AI 功能已關閉。\n\n{name} 只能在 CPU 上執行這些功能，速度較慢：從 {host} 下載 {download} MB，佔用 {kept} MB。\n授權：{license}（{url}）。\n儲存在 {kept_in}。"
+msgid ""
+"{reason}, so the AI features are off.\n"
+"\n"
+"{name} runs them on the CPU only, slower: {download} MB from {host}, {kept} "
+"MB kept.\n"
+"License: {license} ({url}).\n"
+"Kept in {kept_in}."
+msgstr ""
+"{reason}，因此 AI 功能已關閉。\n"
+"\n"
+"{name} 只能在 CPU 上執行這些功能，速度較慢：從 {host} 下載 {download} MB，佔"
+"用 {kept} MB。\n"
+"授權：{license}（{url}）。\n"
+"儲存在 {kept_in}。"
 
 #: crates/greycard-ui/src/panel/assets.rs:295
-msgid "Microsoft's own build, as published. Not now keeps the AI features off this session."
-msgstr "Microsoft 官方建置版本，依原樣發佈。選「以後再說」則本次工作階段中 AI 功能保持關閉。"
+msgid ""
+"Microsoft's own build, as published. Not now keeps the AI features off this "
+"session."
+msgstr ""
+"Microsoft 官方建置版本，依原樣發佈。選「以後再說」則本次工作階段中 AI 功能保"
+"持關閉。"
 
 #: crates/greycard-ui/src/panel/assets.rs:335
 msgid "Whole person keeps its coarser edge without the Subject model"
 msgstr "沒有主體模型時，「整個人」保留較粗糙的邊緣"
 
 #: crates/greycard-ui/src/panel/assets.rs:354
-msgid "For a Whole person's finer edge, hair against the sky; the mask is made meanwhile with a coarser one. {note}"
-msgstr "用於「整個人」更精細的邊緣，例如天空前的頭髮；在此期間先用較粗糙的邊緣產生遮色片。{note}"
+msgid ""
+"For a Whole person's finer edge, hair against the sky; the mask is made "
+"meanwhile with a coarser one. {note}"
+msgstr ""
+"用於「整個人」更精細的邊緣，例如天空前的頭髮；在此期間先用較粗糙的邊緣產生遮"
+"色片。{note}"
 
 #: crates/greycard-ui/src/panel/assets.rs:407
 msgid "No configuration directory to keep presets in."
@@ -4811,7 +4936,9 @@ msgid_plural "Imported {done} of {n} presets"
 msgstr[0] "已匯入 {n} 個預設集中的 {done} 個"
 
 #: crates/greycard-ui/src/panel/assets.rs:583
-msgid "What had no place here is named as Lightroom names it; set it by hand where a picture wants it."
+msgid ""
+"What had no place here is named as Lightroom names it; set it by hand where "
+"a picture wants it."
 msgstr "在此無處對應的設定依 Lightroom 的名稱列出；如影像需要，請手動設定。"
 
 #. Lens picker: the first row, the lens the file names
@@ -5197,13 +5324,19 @@ msgid "every root"
 msgstr "所有根資料夾"
 
 #: crates/greycard-ui/src/panel/collections.rs:294
-msgid "{name} is empty: add frames with B, or Add to collection in the frame menu"
+msgid ""
+"{name} is empty: add frames with B, or Add to collection in the frame menu"
 msgstr "{name} 為空：按 B 加入相片，或在相片選單中選擇「加入收藏集」"
 
 #: crates/greycard-ui/src/panel/collections.rs:299
-msgid "{name}: {n} frame shown, {missing} missing (moved or deleted, and kept until found)"
-msgid_plural "{name}: {n} frames shown, {missing} missing (moved or deleted, and kept until found)"
-msgstr[0] "{name}：顯示 {n} 張相片，遺失 {missing} 張（已移動或刪除，找到前保留）"
+msgid ""
+"{name}: {n} frame shown, {missing} missing (moved or deleted, and kept until "
+"found)"
+msgid_plural ""
+"{name}: {n} frames shown, {missing} missing (moved or deleted, and kept "
+"until found)"
+msgstr[0] ""
+"{name}：顯示 {n} 張相片，遺失 {missing} 張（已移動或刪除，找到前保留）"
 
 #: crates/greycard-ui/src/panel/collections.rs:307
 msgid "{name}: {n} frame"
@@ -5233,7 +5366,8 @@ msgid_plural "{n} frames taken out of {name}"
 msgstr[0] "已從 {name} 中移出 {n} 張相片"
 
 #: crates/greycard-ui/src/panel/collections.rs:550
-msgid "the library is being indexed; nothing forgotten from {name} until it is done"
+msgid ""
+"the library is being indexed; nothing forgotten from {name} until it is done"
 msgstr "正在為圖庫編入索引；完成前不會從 {name} 中忘記任何相片"
 
 #: crates/greycard-ui/src/panel/collections.rs:601
@@ -5242,7 +5376,8 @@ msgstr "無法讀取圖庫索引；未從 {name} 中忘記任何相片"
 
 #: crates/greycard-ui/src/panel/collections.rs:612
 msgid "{words}; nothing forgotten: the sidecar of {n} frame could not be read"
-msgid_plural "{words}; nothing forgotten: the sidecar of {n} frames could not be read"
+msgid_plural ""
+"{words}; nothing forgotten: the sidecar of {n} frames could not be read"
 msgstr[0] "{words}；未忘記任何相片：{n} 張相片的附屬檔案無法讀取"
 
 #: crates/greycard-ui/src/panel/collections.rs:617
@@ -5250,8 +5385,12 @@ msgid "{words}; nothing to forget"
 msgstr "{words}；沒有要忘記的相片"
 
 #: crates/greycard-ui/src/panel/collections.rs:619
-msgid "{words}; nothing forgotten: {n} frame on a drive that is offline or not answering"
-msgid_plural "{words}; nothing forgotten: {n} frames on a drive that is offline or not answering"
+msgid ""
+"{words}; nothing forgotten: {n} frame on a drive that is offline or not "
+"answering"
+msgid_plural ""
+"{words}; nothing forgotten: {n} frames on a drive that is offline or not "
+"answering"
 msgstr[0] "{words}；未忘記任何相片：{n} 張相片位於離線或無回應的磁碟機上"
 
 #: crates/greycard-ui/src/panel/collections.rs:625
@@ -5398,7 +5537,8 @@ msgstr "沒有標記為排除的相片"
 
 #: crates/greycard-ui/src/panel/cull.rs:2639
 msgid "{n} frame flagged reject, with its sidecar, will be moved to {folder}."
-msgid_plural "{n} frames flagged reject, with their sidecars, will be moved to {folder}."
+msgid_plural ""
+"{n} frames flagged reject, with their sidecars, will be moved to {folder}."
 msgstr[0] "{n} 張標記為排除的相片將連同其附屬檔案移到 {folder}。"
 
 #: crates/greycard-ui/src/panel/cull.rs:2675
@@ -5464,9 +5604,14 @@ msgid "No trash here: this is permanent."
 msgstr "此處沒有垃圾桶：刪除是永久的。"
 
 #: crates/greycard-ui/src/panel/delete.rs:241
-msgid "{n} version left out: a file's delete takes its versions with it; a version is deleted from its own cell"
-msgid_plural "{n} versions left out: a file's delete takes its versions with it; a version is deleted from its own cell"
-msgstr[0] "{n} 個版本未計入：刪除檔案會連同其版本一起刪除；版本要在其自身的格子中刪除"
+msgid ""
+"{n} version left out: a file's delete takes its versions with it; a version "
+"is deleted from its own cell"
+msgid_plural ""
+"{n} versions left out: a file's delete takes its versions with it; a version "
+"is deleted from its own cell"
+msgstr[0] ""
+"{n} 個版本未計入：刪除檔案會連同其版本一起刪除；版本要在其自身的格子中刪除"
 
 #: crates/greycard-ui/src/panel/delete.rs:262
 #: crates/greycard-ui/src/panel/delete.rs:437
@@ -5499,7 +5644,9 @@ msgid "the rejects folder cannot be read: {e}"
 msgstr "無法讀取排除資料夾：{e}"
 
 #: crates/greycard-ui/src/panel/delete.rs:442
-msgid "the rejects here are all on an archive: delete them from the archive's own view"
+msgid ""
+"the rejects here are all on an archive: delete them from the archive's own "
+"view"
 msgstr "此處排除的相片都在封存上：請從封存自身的檢視中刪除"
 
 #: crates/greycard-ui/src/panel/delete.rs:446
@@ -5550,8 +5697,11 @@ msgid_plural " {n} rejects folders left alone: they are links."
 msgstr[0] "{n} 個排除資料夾未改動：它們是連結。"
 
 #: crates/greycard-ui/src/panel/delete.rs:520
-msgid " {n} frame on an archive left alone: delete it from the archive's own view."
-msgid_plural " {n} frames on an archive left alone: delete them from the archive's own view."
+msgid ""
+" {n} frame on an archive left alone: delete it from the archive's own view."
+msgid_plural ""
+" {n} frames on an archive left alone: delete them from the archive's own "
+"view."
 msgstr[0] "封存上的 {n} 張相片未改動：請從封存自身的檢視中刪除。"
 
 #: crates/greycard-ui/src/panel/delete.rs:560
@@ -5568,8 +5718,12 @@ msgid "the delete could not be started; nothing was deleted"
 msgstr "無法開始刪除；未刪除任何內容"
 
 #: crates/greycard-ui/src/panel/delete.rs:691
-msgid "the delete failed, and nothing more was deleted ({n} frame went before it did; the log has why)"
-msgid_plural "the delete failed, and nothing more was deleted ({n} frames went before it did; the log has why)"
+msgid ""
+"the delete failed, and nothing more was deleted ({n} frame went before it "
+"did; the log has why)"
+msgid_plural ""
+"the delete failed, and nothing more was deleted ({n} frames went before it "
+"did; the log has why)"
 msgstr[0] "刪除失敗，未再刪除其他內容（此前已刪除 {n} 張相片；原因見記錄檔）"
 
 #: crates/greycard-ui/src/panel/deliver.rs:111
@@ -5695,7 +5849,8 @@ msgstr "已匯出 {name}，耗時 {seconds} s{said}"
 
 #: crates/greycard-ui/src/panel/deliver.rs:1840
 msgid "one thing the edit names that this machine has not got (see the log)"
-msgid_plural "{n} things the edit names that this machine has not got (see the log)"
+msgid_plural ""
+"{n} things the edit names that this machine has not got (see the log)"
 msgstr[0] "編輯所指定的 {n} 項內容此電腦上沒有（見記錄檔）"
 
 #: crates/greycard-ui/src/panel/deliver.rs:1981
@@ -5957,7 +6112,9 @@ msgid " with the export preset {name}"
 msgstr "，使用匯出預設集 {name}"
 
 #: crates/greycard-ui/src/panel/history.rs:803
-msgid "{file}, exported {when}{preset}; click to go back to the state it was exported from"
+msgid ""
+"{file}, exported {when}{preset}; click to go back to the state it was "
+"exported from"
 msgstr "{file}，匯出於 {when}{preset}；按一下可回到匯出時的狀態"
 
 #: crates/greycard-ui/src/panel/history.rs:813
@@ -6137,7 +6294,8 @@ msgstr "正在尋找建築"
 
 #: crates/greycard-ui/src/panel/lightroom.rs:37
 #: crates/greycard-ui/src/panel/rawtherapee.rs:110
-msgid "This run writes no sidecars (--no-sidecars), so nothing can be imported."
+msgid ""
+"This run writes no sidecars (--no-sidecars), so nothing can be imported."
 msgstr "本次執行不寫入附屬檔案 (--no-sidecars)，因此無法匯入任何內容。"
 
 #: crates/greycard-ui/src/panel/lightroom.rs:111
@@ -6145,7 +6303,8 @@ msgid "Import {name} from Lightroom"
 msgstr "從 Lightroom 匯入 {name}"
 
 #: crates/greycard-ui/src/panel/lightroom.rs:121
-msgid "There is no library to import into: this installation has no data folder."
+msgid ""
+"There is no library to import into: this installation has no data folder."
 msgstr "沒有可匯入的圖庫：此安裝沒有資料目錄。"
 
 #: crates/greycard-ui/src/panel/lightroom.rs:144
@@ -6170,7 +6329,9 @@ msgid "importing the catalog: reading it..."
 msgstr "正在匯入目錄：正在讀取..."
 
 #: crates/greycard-ui/src/panel/lightroom.rs:513
-msgid "imported the catalog: {frames} written, {left} left alone, {collections}, {stacks}"
+msgid ""
+"imported the catalog: {frames} written, {left} left alone, {collections}, "
+"{stacks}"
 msgstr "已匯入目錄：已寫入 {frames}，{left} 張未改動，{collections}，{stacks}"
 
 #: crates/greycard-ui/src/panel/lightroom.rs:517
@@ -6217,9 +6378,15 @@ msgid "No picture {place} uses it."
 msgstr "{place}沒有相片使用它。"
 
 #: crates/greycard-ui/src/panel/look_remove.rs:158
-msgid "{n} picture {place} uses it; it will show the look as missing and render without it."
-msgid_plural "{n} pictures {place} use it; they will show the look as missing and render without it."
-msgstr[0] "{place}有 {n} 張相片使用它；它們會將該風格顯示為遺失，並在不套用它的情況下處理。"
+msgid ""
+"{n} picture {place} uses it; it will show the look as missing and render "
+"without it."
+msgid_plural ""
+"{n} pictures {place} use it; they will show the look as missing and render "
+"without it."
+msgstr[0] ""
+"{place}有 {n} 張相片使用它；它們會將該風格顯示為遺失，並在不套用它的情況下處"
+"理。"
 
 #: crates/greycard-ui/src/panel/look_remove.rs:171
 #: crates/greycard-ui/src/panel/look_rename.rs:328
@@ -6236,15 +6403,23 @@ msgid "The files go to the system trash, where they can be restored from."
 msgstr "這些檔案會進入系統垃圾桶，可從中還原。"
 
 #: crates/greycard-ui/src/panel/look_remove.rs:187
-msgid "The trash refused files from the look folder earlier. Try the trash again, or delete them permanently. A permanent delete cannot be undone."
-msgstr "垃圾桶之前拒絕了風格資料夾中的檔案。請再試一次垃圾桶，或永久刪除它們。永久刪除無法復原。"
+msgid ""
+"The trash refused files from the look folder earlier. Try the trash again, "
+"or delete them permanently. A permanent delete cannot be undone."
+msgstr ""
+"垃圾桶之前拒絕了風格資料夾中的檔案。請再試一次垃圾桶，或永久刪除它們。永久刪"
+"除無法復原。"
 
 #: crates/greycard-ui/src/panel/look_remove.rs:191
-msgid "There is no system trash here, so the file will be deleted permanently. This cannot be undone."
+msgid ""
+"There is no system trash here, so the file will be deleted permanently. This "
+"cannot be undone."
 msgstr "此處沒有系統垃圾桶，因此檔案將被永久刪除。此操作無法復原。"
 
 #: crates/greycard-ui/src/panel/look_remove.rs:195
-msgid "There is no system trash here, so the files will be deleted permanently. This cannot be undone."
+msgid ""
+"There is no system trash here, so the files will be deleted permanently. "
+"This cannot be undone."
 msgstr "此處沒有系統垃圾桶，因此這些檔案將被永久刪除。此操作無法復原。"
 
 #: crates/greycard-ui/src/panel/look_remove.rs:205
@@ -6293,7 +6468,8 @@ msgid "Remove {} of {shown}'s {} tables?"
 msgstr "移除 {shown} 的 {1} 個表中的 {0} 個？"
 
 #: crates/greycard-ui/src/panel/look_remove.rs:291
-msgid "The look stays for pictures through {}, so none of them shows it as missing."
+msgid ""
+"The look stays for pictures through {}, so none of them shows it as missing."
 msgstr "透過 {}，影像仍可使用該風格，因此都不會將其顯示為遺失。"
 
 #: crates/greycard-ui/src/panel/look_remove.rs:297
@@ -6348,8 +6524,12 @@ msgid_plural "{n} files"
 msgstr[0] "{n} 個檔案"
 
 #: crates/greycard-ui/src/panel/look_rename.rs:207
-msgid "Only the case differs from its name now, and Windows and macOS take the two for one name. Rename it to another name first, then to this one."
-msgstr "現在的名稱與原名僅大小寫不同，而 Windows 和 macOS 將二者視為同一名稱。請先重新命名為其他名稱，再改為此名稱。"
+msgid ""
+"Only the case differs from its name now, and Windows and macOS take the two "
+"for one name. Rename it to another name first, then to this one."
+msgstr ""
+"現在的名稱與原名僅大小寫不同，而 Windows 和 macOS 將二者視為同一名稱。請先重"
+"新命名為其他名稱，再改為此名稱。"
 
 #: crates/greycard-ui/src/panel/look_rename.rs:212
 msgid "There is a look called \"{new}\" already."
@@ -6376,7 +6556,8 @@ msgid "an export is running; rename the look when it is done"
 msgstr "正在匯出；請在完成後再重新命名風格"
 
 #: crates/greycard-ui/src/panel/look_rename.rs:249
-msgid "a copy to or from an archive is running; rename the look when it is done"
+msgid ""
+"a copy to or from an archive is running; rename the look when it is done"
 msgstr "正在與封存之間拷貝；請在完成後再重新命名風格"
 
 #: crates/greycard-ui/src/panel/look_rename.rs:252
@@ -6399,9 +6580,14 @@ msgid "No picture {place} names it."
 msgstr "{place}沒有相片引用它。"
 
 #: crates/greycard-ui/src/panel/look_rename.rs:312
-msgid "{n} picture {place} names it; its edit, history and snapshots will name the new one."
-msgid_plural "{n} pictures {place} name it; their edits, history and snapshots will name the new one."
-msgstr[0] "{place}有 {n} 張相片引用它；其編輯、步驟記錄和快照將改為引用新名稱。"
+msgid ""
+"{n} picture {place} names it; its edit, history and snapshots will name the "
+"new one."
+msgid_plural ""
+"{n} pictures {place} name it; their edits, history and snapshots will name "
+"the new one."
+msgstr[0] ""
+"{place}有 {n} 張相片引用它；其編輯、步驟記錄和快照將改為引用新名稱。"
 
 #: crates/greycard-ui/src/panel/look_rename.rs:333
 msgid "{n} preset names it and will name the new one."
@@ -6417,16 +6603,23 @@ msgid "{} {place} and {}"
 msgstr "{place}的 {}和 {}"
 
 #: crates/greycard-ui/src/panel/look_rename.rs:356
-msgid "{who} already names \"{new}\", a look that is not in the folder, and will use this look."
-msgid_plural "{who} already name \"{new}\", a look that is not in the folder, and will use this look."
+msgid ""
+"{who} already names \"{new}\", a look that is not in the folder, and will "
+"use this look."
+msgid_plural ""
+"{who} already name \"{new}\", a look that is not in the folder, and will use "
+"this look."
 msgstr[0] "{who}已引用「{new}」（一個不在資料夾中的風格），之後將使用此風格。"
 
 #: crates/greycard-ui/src/panel/look_rename.rs:371
-msgid "Edits in other folders that name {old} will show it as missing; renaming it back to {old} brings them back."
+msgid ""
+"Edits in other folders that name {old} will show it as missing; renaming it "
+"back to {old} brings them back."
 msgstr "其他資料夾中引用 {old} 的編輯會將其顯示為遺失；改回 {old} 即可還原。"
 
 #: crates/greycard-ui/src/panel/look_rename.rs:383
-msgid " The list shows it by the title inside its file, \"{label}\", which stays."
+msgid ""
+" The list shows it by the title inside its file, \"{label}\", which stays."
 msgstr "清單依其檔案內的標題「{label}」顯示它，該標題保持不變。"
 
 #: crates/greycard-ui/src/panel/look_rename.rs:400
@@ -6472,8 +6665,11 @@ msgid "{what} could not be read or written and still name {old}"
 msgstr "{what}無法讀取或寫入，仍引用 {old}"
 
 #: crates/greycard-ui/src/panel/look_rename.rs:826
-msgid "{} could not be reached (offline, on an archive and not read yet, or sidecars off) and may still name {old}"
-msgstr "{}無法存取（離線、位於尚未讀取的封存上，或附屬檔案已關閉），可能仍引用 {old}"
+msgid ""
+"{} could not be reached (offline, on an archive and not read yet, or "
+"sidecars off) and may still name {old}"
+msgstr ""
+"{}無法存取（離線、位於尚未讀取的封存上，或附屬檔案已關閉），可能仍引用 {old}"
 
 #: crates/greycard-ui/src/panel/look_rename.rs:828
 msgid "{n} picture's sidecar"
@@ -6546,15 +6742,20 @@ msgid "finding the background"
 msgstr "正在尋找背景"
 
 #: crates/greycard-ui/src/panel/mask.rs:310
-msgid "click a color in the picture to center the window on it; Esc to keep the skin"
+msgid ""
+"click a color in the picture to center the window on it; Esc to keep the skin"
 msgstr "按一下影像中的顏色，使視窗以其為中心；按 Esc 保留皮膚"
 
 #: crates/greycard-ui/src/panel/mask.rs:586
-msgid "finding the whole person; loading Subject for its edge takes a few seconds the first time"
+msgid ""
+"finding the whole person; loading Subject for its edge takes a few seconds "
+"the first time"
 msgstr "正在尋找整個人；首次載入主體模型以取得邊緣需要幾秒鐘"
 
 #: crates/greycard-ui/src/panel/mask.rs:764
-msgid "the GPU Subject model could not be fetched ({message}); the original is offered instead"
+msgid ""
+"the GPU Subject model could not be fetched ({message}); the original is "
+"offered instead"
 msgstr "無法取得 GPU 主體模型（{message}）；改為提供原始模型"
 
 #: crates/greycard-ui/src/panel/mask.rs:770
@@ -6574,7 +6775,9 @@ msgid "click to add sky, right-click to remove; Esc to finish"
 msgstr "按一下加入天空，按右鍵移除；按 Esc 結束"
 
 #: crates/greycard-ui/src/panel/mask.rs:845
-msgid "drag to place; drag an end line to turn and stretch, Alt to move just that end"
+msgid ""
+"drag to place; drag an end line to turn and stretch, Alt to move just that "
+"end"
 msgstr "拖曳以放置；拖曳端線可旋轉和拉伸，按住 Alt 只移動該端"
 
 #: crates/greycard-ui/src/panel/mask.rs:847
@@ -6586,7 +6789,8 @@ msgid "no sky found in this picture"
 msgstr "此影像中找不到天空"
 
 #: crates/greycard-ui/src/panel/mask.rs:861
-msgid "right-click to remove sky (adding needs the Object model); Esc to finish"
+msgid ""
+"right-click to remove sky (adding needs the Object model); Esc to finish"
 msgstr "按右鍵移除天空（加入需要物件模型）；按 Esc 結束"
 
 #: crates/greycard-ui/src/panel/mask.rs:1006
@@ -6692,6 +6896,7 @@ msgid "skipped: {}"
 msgstr "已跳過：{}"
 
 #: crates/greycard-ui/src/panel/models.rs:309
+#: crates/greycard-ui/src/panel/models.rs:889
 msgid "Each under its own license, kept beside it in the store."
 msgstr "各有其授權，儲存在模型庫中的模型旁。"
 
@@ -6712,8 +6917,12 @@ msgid "Download every model now?"
 msgstr "立即下載所有模型？"
 
 #: crates/greycard-ui/src/panel/models.rs:590
-msgid "{n} model, {size} from {host}. Or each comes as needed, the first time it's used."
-msgid_plural "{n} models, {size} from {host}. Or each comes as needed, the first time it's used."
+msgid ""
+"{n} model, {size} from {host}. Or each comes as needed, the first time it's "
+"used."
+msgid_plural ""
+"{n} models, {size} from {host}. Or each comes as needed, the first time it's "
+"used."
 msgstr[0] "{n} 個模型，{size}，來自 {host}。也可以在首次使用時各自下載。"
 
 #: crates/greycard-ui/src/panel/models.rs:597
@@ -6721,12 +6930,22 @@ msgid " {} comes first."
 msgstr "{} 會先下載。"
 
 #: crates/greycard-ui/src/panel/models.rs:612
-msgid "\n\n{n} skipped here: {why}."
-msgstr "\n\n此處跳過 {n} 個：{why}。"
+msgid ""
+"\n"
+"\n"
+"{n} skipped here: {why}."
+msgstr ""
+"\n"
+"\n"
+"此處跳過 {n} 個：{why}。"
 
 #: crates/greycard-ui/src/panel/models.rs:632
-msgid "Licenses: {}; each full text sits beside its model in the store. Asked once; Download all is also in Settings, Models."
-msgstr "授權：{}；每個模型的完整授權文字位於模型庫中的模型旁。只詢問一次；「全部下載」也可在「設定 > 模型」中找到。"
+msgid ""
+"Licenses: {}; each full text sits beside its model in the store. Asked once; "
+"Download all is also in Settings, Models."
+msgstr ""
+"授權：{}；每個模型的完整授權文字位於模型庫中的模型旁。只詢問一次；「全部下"
+"載」也可在「設定 > 模型」中找到。"
 
 #: crates/greycard-ui/src/panel/models.rs:640
 msgid "each model comes the first time it's used"
@@ -6951,7 +7170,9 @@ msgid "the RawTherapee profiles were not imported: {e}"
 msgstr "RawTherapee 描述檔未匯入：{e}"
 
 #: crates/greycard-ui/src/panel/rawtherapee.rs:551
-msgid "the profiles are not offered again for this folder; greycard rawtherapee imports them from the command line"
+msgid ""
+"the profiles are not offered again for this folder; greycard rawtherapee "
+"imports them from the command line"
 msgstr "不會再為此資料夾提供這些描述檔；可從命令列用 greycard rawtherapee 匯入"
 
 #: crates/greycard-ui/src/panel/recent.rs:190
@@ -6972,7 +7193,8 @@ msgid "{} no longer exists"
 msgstr "{} 已不存在"
 
 #: crates/greycard-ui/src/panel/retouch.rs:17
-msgid "click or drag to repair; scroll for size; drag pins to move; Esc to finish"
+msgid ""
+"click or drag to repair; scroll for size; drag pins to move; Esc to finish"
 msgstr "按一下或拖曳進行修復；捲動以調整大小；拖曳圖釘可移動；按 Esc 結束"
 
 #. A card short of the generative remove: its need and the card's
@@ -7093,8 +7315,12 @@ msgid "{from}: cannot be read; nothing changed on the way to the screen"
 msgstr "{from}：無法讀取；到螢幕的過程中未做任何變更"
 
 #: crates/greycard-ui/src/panel/startup.rs:2938
-msgid "Library and Loupe, top left (or G), switch between the grid and one frame; Cull and Develop (C and D) are the Loupe's two modes; ? lists the keys"
-msgstr "左上角的「圖庫」和「放大檢視」（或按 G）在格點和單張相片之間切換；「挑片」和「編修」（C 和 D）是放大檢視的兩種模式；按 ? 列出快速鍵"
+msgid ""
+"Library and Loupe, top left (or G), switch between the grid and one frame; "
+"Cull and Develop (C and D) are the Loupe's two modes; ? lists the keys"
+msgstr ""
+"左上角的「圖庫」和「放大檢視」（或按 G）在格點和單張相片之間切換；「挑片」和"
+"「編修」（C 和 D）是放大檢視的兩種模式；按 ? 列出快速鍵"
 
 #: crates/greycard-ui/src/panel/sync.rs:137
 msgid "From {from} onto {n} other frame."
@@ -7102,15 +7328,26 @@ msgid_plural "From {from} onto {n} other frames."
 msgstr[0] "從 {from} 同步到其他 {n} 張相片。"
 
 #: crates/greycard-ui/src/panel/sync.rs:177
-msgid "This frame's as-shot light cannot be read (it is no raw, or its raw does not say): its Temperature and Tint are set."
-msgstr "此相片拍攝時的光線無法讀取（它不是 RAW，或其 RAW 未記錄）：其色溫和色調為設定值。"
+msgid ""
+"This frame's as-shot light cannot be read (it is no raw, or its raw does not "
+"say): its Temperature and Tint are set."
+msgstr ""
+"此相片拍攝時的光線無法讀取（它不是 RAW，或其 RAW 未記錄）：其色溫和色調為設定"
+"值。"
 
 #: crates/greycard-ui/src/panel/sync.rs:182
-msgid "Set gives every frame this frame's value. Shift moves each frame from its own by this frame's difference from its as-shot light (Temperature, Tint) or from 0 EV (Exposure)."
-msgstr "「設為」會將每張相片設為此相片的值。「偏移」會讓每張相片在各自的值上，移動此相片相對其拍攝時光線（色溫、色調）或 0 EV（曝光度）的差值。"
+msgid ""
+"Set gives every frame this frame's value. Shift moves each frame from its "
+"own by this frame's difference from its as-shot light (Temperature, Tint) or "
+"from 0 EV (Exposure)."
+msgstr ""
+"「設為」會將每張相片設為此相片的值。「偏移」會讓每張相片在各自的值上，移動此"
+"相片相對其拍攝時光線（色溫、色調）或 0 EV（曝光度）的差值。"
 
 #: crates/greycard-ui/src/panel/sync.rs:188
-msgid "Each frame moves from its own value: {}. That is this frame's difference from its as-shot light and from 0 EV."
+msgid ""
+"Each frame moves from its own value: {}. That is this frame's difference "
+"from its as-shot light and from 0 EV."
 msgstr "每張相片從各自的值移動：{}。即此相片相對其拍攝時光線和 0 EV 的差值。"
 
 #: crates/greycard-ui/src/panel/sync.rs:723
@@ -7404,7 +7641,9 @@ msgid "Rename the version"
 msgstr "重新命名版本"
 
 #: crates/greycard-ui/src/panel/versions.rs:164
-msgid "A version of {file}, with an edit of its own; the rating, flag, label and keywords are the file's"
+msgid ""
+"A version of {file}, with an edit of its own; the rating, flag, label and "
+"keywords are the file's"
 msgstr "{file} 的一個版本，有自己的編輯；星等、旗標、色標和關鍵字屬於該檔案"
 
 #: crates/greycard-ui/src/panel/versions.rs:171
@@ -7571,12 +7810,16 @@ msgid "click a color to center the mask's hue on it; Esc to finish"
 msgstr "按一下某種顏色，使遮色片的色相以其為中心；按 Esc 結束"
 
 #: crates/greycard-ui/src/panel/viewport.rs:873
-msgid "defringe is off while picking; zoom to 1:1 and click a fringe; Esc to finish"
+msgid ""
+"defringe is off while picking; zoom to 1:1 and click a fringe; Esc to finish"
 msgstr "取樣時去除色邊已關閉；縮放到 1:1 並按一下色邊；按 Esc 結束"
 
 #: crates/greycard-ui/src/panel/viewport.rs:877
-msgid "click a color for its band, drag up or down for saturation, sideways for hue; Esc to finish"
-msgstr "按一下某種顏色選擇其色帶，上下拖曳調整飽和度，左右拖曳調整色相；按 Esc 結束"
+msgid ""
+"click a color for its band, drag up or down for saturation, sideways for "
+"hue; Esc to finish"
+msgstr ""
+"按一下某種顏色選擇其色帶，上下拖曳調整飽和度，左右拖曳調整色相；按 Esc 結束"
 
 #. The file chooser's filter name for profiles
 #: crates/greycard-ui/src/panel/viewport.rs:1430
@@ -7596,8 +7839,11 @@ msgid "no fringe there: that color does not depart from its neighbors'"
 msgstr "那裡沒有色邊：該顏色與周圍的顏色沒有偏離"
 
 #: crates/greycard-ui/src/panel/viewport.rs:1811
-msgid "that color is nearly grey (chroma {chroma}, under the floor's {floor}): lower Chroma to take it in"
-msgstr "該顏色接近灰色（色度 {chroma}，低於下限 {floor}）：降低「色度」才能納入它"
+msgid ""
+"that color is nearly grey (chroma {chroma}, under the floor's {floor}): "
+"lower Chroma to take it in"
+msgstr ""
+"該顏色接近灰色（色度 {chroma}，低於下限 {floor}）：降低「色度」才能納入它"
 
 #: crates/greycard-ui/src/placeholder.rs:184
 msgid "{word}: {what}, {at}; developing..."
@@ -7662,8 +7908,12 @@ msgid "{owner} there answers to {} too"
 msgstr "那裡的 {owner} 也使用 {} 這個名稱"
 
 #: crates/greycard-ui/src/report.rs:367
-msgid "the form is open in the browser, and the log's folder: drag greycard-ui.log into the form"
-msgstr "已在瀏覽器中開啟表單，並開啟了記錄檔所在的資料夾：請將 greycard-ui.log 拖入表單"
+msgid ""
+"the form is open in the browser, and the log's folder: drag greycard-ui.log "
+"into the form"
+msgstr ""
+"已在瀏覽器中開啟表單，並開啟了記錄檔所在的資料夾：請將 greycard-ui.log 拖入表"
+"單"
 
 #: crates/greycard-ui/src/report.rs:370
 msgid "the form is open in the browser; there is no log to attach"
@@ -8096,7 +8346,9 @@ msgstr "：未計入"
 #. over: its cell would go at the next turn, and the next save
 #. would write a sidecar without it over the real one.
 #: crates/greycard-ui/src/rows.rs:1521
-msgid "{}'s sidecar was not found, though the library has an edit, an export or a version of it on record; nothing is written over it"
+msgid ""
+"{}'s sidecar was not found, though the library has an edit, an export or a "
+"version of it on record; nothing is written over it"
 msgstr "找不到 {} 的附屬檔案，但圖庫中記錄了它的編輯、匯出或版本；不會覆寫它"
 
 #: crates/greycard-ui/src/sidecars.rs:238
@@ -8332,11 +8584,14 @@ msgid "moved in time"
 msgstr "拍攝時間已調整"
 
 #: crates/greycard-ui/src/tags.rs:130
-msgid "{who} {done} and hidden by the filter ({filter}); Clear the filter to see them"
+msgid ""
+"{who} {done} and hidden by the filter ({filter}); Clear the filter to see "
+"them"
 msgstr "{who}{done}，並被篩選器隱藏（{filter}）；清除篩選器即可看到"
 
 #: crates/greycard-ui/src/tags.rs:137
-msgid "{who} {done} and hidden by the filter ({filter}); Clear the filter to see it"
+msgid ""
+"{who} {done} and hidden by the filter ({filter}); Clear the filter to see it"
 msgstr "{who} {done}，並被篩選器隱藏（{filter}）；清除篩選器即可看到"
 
 #: crates/greycard-ui/src/tags.rs:189
@@ -8360,7 +8615,9 @@ msgid "nothing under {name}"
 msgstr "{name} 下沒有任何內容"
 
 #: crates/greycard-ui/src/tree.rs:425
-msgid "nothing directly in {name}: turn on With subfolders to see the frames under it"
+msgid ""
+"nothing directly in {name}: turn on With subfolders to see the frames under "
+"it"
 msgstr "{name} 中沒有直接包含的相片：開啟「包含子資料夾」可檢視其下的相片"
 
 #: crates/greycard-ui/src/update.rs:295
@@ -8382,4 +8639,3 @@ msgstr "正在檢查..."
 #: crates/greycard-ui/src/update.rs:415
 msgid "the release page is open in the browser: {url}"
 msgstr "已在瀏覽器中開啟發佈頁面：{url}"
-

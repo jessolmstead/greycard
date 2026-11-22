@@ -2350,12 +2350,8 @@ fn click_all_cameras(app: &App) {
     app.set_panel_scroll(0.0);
     for _ in 0..40 {
         crate::testing::settle(app);
-        // A Toggle is named by its label; the label's Text says
-        // nothing itself.
-        let found = ElementHandle::find_by_element_id(app, "Toggle::root").find(|root| {
-            root.accessible_label()
-                .is_some_and(|l| l == "Show all cameras")
-        });
+        let found =
+            ElementHandle::find_by_element_id(app, "CameraSection::all-cameras-toggle").next();
         if let Some(root) = found {
             let (at, size) = crate::testing::toggle_parts(&root).switch;
             if at.y > 300.0 {
@@ -2571,24 +2567,21 @@ fn a_body_s_two_names_profiles_list_with_their_file_names() {
     );
 }
 
-/// Row `a` of the rows `id` names, pressed by a screen reader, leaves
-/// `chosen` as a click on it does: `a` clicked, then `b`, then `a`
-/// pressed.
+/// The row keyed `a` of the rows `id` names, pressed by a screen
+/// reader, leaves `chosen` as a click on it does: `a` clicked, then
+/// `b`, then `a` pressed.
 fn pressed_as_clicked<T: PartialEq + std::fmt::Debug>(
     app: &App,
     id: &str,
-    (a, b): (usize, usize),
+    (a, b): (&str, &str),
     chosen: impl Fn() -> T,
 ) {
-    use i_slint_backend_testing::ElementHandle;
-    let row = |i: usize| {
+    let row = |key: &str| {
         crate::testing::settle(app);
-        ElementHandle::find_by_element_id(app, id)
-            .nth(i)
-            .unwrap_or_else(|| panic!("no {id} {i}"))
+        crate::testing::keyed(app, id, key).unwrap_or_else(|| panic!("no {id} {key}"))
     };
-    let click = |i: usize| {
-        let (at, size) = crate::testing::bounds_of(&row(i));
+    let click = |key: &str| {
+        let (at, size) = crate::testing::bounds_of(&row(key));
         crate::testing::click(app, at.x + size.width / 2.0, at.y + size.height / 2.0);
     };
     click(a);
@@ -2604,17 +2597,16 @@ fn pressed_as_clicked<T: PartialEq + std::fmt::Debug>(
 #[test]
 fn a_screen_reader_presses_a_profile_row_as_a_click_does() {
     let (app, state, _worker) = profile_window();
-    let profiles: Vec<usize> = app
+    let profiles: Vec<String> = app
         .get_camera_profile_rows()
         .iter()
-        .enumerate()
-        .filter(|(_, r)| !r.heading)
-        .map(|(i, _)| i)
+        .filter(|r| !r.heading)
+        .map(|r| r.name.to_string())
         .collect();
     pressed_as_clicked(
         &app,
         "CameraSection::profile-row",
-        (profiles[0], profiles[1]),
+        (&profiles[0], &profiles[1]),
         || {
             (
                 app.get_camera_profile().to_string(),
@@ -2645,19 +2637,23 @@ fn a_screen_reader_presses_a_look_row_as_a_click_does() {
     };
     state.borrow_mut().develop.looks = vec![entry("Print"), entry("Slide")];
     show_looks(&state.borrow(), &LookLut::default(), &app);
-    let looks: Vec<usize> = app
+    let looks: Vec<String> = app
         .get_look_rows()
         .iter()
-        .enumerate()
-        .filter(|(_, r)| !r.heading && !r.name.is_empty())
-        .map(|(i, _)| i)
+        .filter(|r| !r.heading && !r.name.is_empty())
+        .map(|r| r.name.to_string())
         .collect();
-    pressed_as_clicked(&app, "LookSection::look-row", (looks[0], looks[1]), || {
-        (
-            app.get_look_name().to_string(),
-            state.borrow().develop.edit.look_lut.clone(),
-        )
-    });
+    pressed_as_clicked(
+        &app,
+        "LookSection::look-row",
+        (&looks[0], &looks[1]),
+        || {
+            (
+                app.get_look_name().to_string(),
+                state.borrow().develop.edit.look_lut.clone(),
+            )
+        },
+    );
 }
 
 /// In French the LOOK list's first row says no look in French while
@@ -2666,7 +2662,6 @@ fn a_screen_reader_presses_a_look_row_as_a_click_does() {
 #[test]
 fn the_no_look_row_says_none_in_the_window_language() {
     use greycard_edit::look::{Entry, LookLut, LutChoice, NONE};
-    use i_slint_backend_testing::ElementHandle;
     let (app, state, _worker) = profile_window();
     app.set_collapsed_camera(true);
     app.set_collapsed_look(false);
@@ -2701,24 +2696,24 @@ fn the_no_look_row_says_none_in_the_window_language() {
         .position(|r| r.name == word.as_str())
         .expect("the look of that name");
     assert!(own > 0);
-    let press = |n: usize| {
-        let row = ElementHandle::find_by_element_id(&app, "LookSection::look-row")
-            .nth(n)
-            .expect("the row");
+    // A row by its key, the look's name or `NONE`: two rows say the
+    // same word, and the key tells them apart.
+    let press = |key: &str| {
+        let row = crate::testing::keyed(&app, "LookSection::look-row", key).expect("the row");
         assert!(
             row.accessible_label().unwrap_or_default().contains(&word),
-            "row {n} says its look"
+            "row {key} says its look"
         );
         row.invoke_accessible_default_action();
         crate::testing::settle(&app);
     };
-    press(own);
+    press(&word);
     assert_eq!(app.get_look_name(), word.as_str());
     assert_eq!(
         state.borrow().develop.edit.look_lut.lut,
         LutChoice::Named(word.clone())
     );
-    press(0);
+    press(NONE);
     assert_eq!(app.get_look_name(), NONE);
     assert_eq!(state.borrow().develop.edit.look_lut.lut, LutChoice::None);
 }

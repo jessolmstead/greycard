@@ -144,6 +144,8 @@ export component MatchSheet inherits Rectangle {
                             Rectangle {
                                 width: 20px;
                                 group-check := Check {
+                                    // Its key, for automation: the group's name.
+                                    accessible-id: group.name;
                                     x: 0;
                                     y: 0;
                                     width: 20px;

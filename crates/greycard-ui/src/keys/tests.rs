@@ -184,9 +184,8 @@ fn every_key_the_handler_binds_is_on_the_sheet_and_every_line_is_bound() {
             }
             let keys = keys_of(b, &Keymap::default(), mac);
             assert!(
-                sheet
-                    .iter()
-                    .any(|r| r.keys == keys.as_str() && r.does == platform(b.does, mac).as_str()),
+                sheet.iter().any(|r| r.keys == keys.as_str()
+                    && r.does == platform(&crate::i18n::text(b.does), mac).as_str()),
                 "{keys} is not on the sheet"
             );
             for c in b.chords {
@@ -286,9 +285,10 @@ fn f11_is_bound_everywhere_but_a_mac() {
     );
     assert_eq!(chord_on(&f11, false, false, false, false, true, LOUPE), "");
     let full = |mac| {
-        rows("full screen", mac)
+        let does = crate::i18n::text("Full screen, and back");
+        rows("", mac)
             .iter()
-            .any(|r| !r.heading && r.keys == "F11")
+            .any(|r| !r.heading && r.does == does && r.keys == "F11")
     };
     assert!(full(false));
     assert!(!full(true));
@@ -297,7 +297,10 @@ fn f11_is_bound_everywhere_but_a_mac() {
 
 #[test]
 fn the_sheet_says_the_platforms_modifier() {
+    // A line by its words in the catalog's language, as the sheet
+    // shows it.
     let find = |mac, does: &str| {
+        let does = crate::i18n::text(does);
         rows("", mac)
             .into_iter()
             .find(|r| r.does == does)
@@ -305,11 +308,9 @@ fn the_sheet_says_the_platforms_modifier() {
     };
     assert_eq!(find(false, "Undo").as_deref(), Some("Ctrl+Z"));
     assert_eq!(find(true, "Undo").as_deref(), Some("Cmd+Z"));
-    assert_eq!(
-        find(false, "Redo").as_deref(),
-        Some("Ctrl+Shift+Z or Ctrl+Y")
-    );
-    assert_eq!(find(true, "Redo").as_deref(), Some("Cmd+Shift+Z or Cmd+Y"));
+    let or = |a: &str, b: &str| crate::tr!("{} or {}", a, b);
+    assert_eq!(find(false, "Redo"), Some(or("Ctrl+Shift+Z", "Ctrl+Y")));
+    assert_eq!(find(true, "Redo"), Some(or("Cmd+Shift+Z", "Cmd+Y")));
     let delete = "Delete the selected frames, after a confirmation";
     assert_eq!(find(false, delete).as_deref(), Some("Delete"));
     assert_eq!(find(true, delete).as_deref(), Some("Delete, ⌫"));
@@ -772,7 +773,7 @@ fn the_loupes_step_rebound_leaves_the_grids_arrows() {
     let keys = |does: &str| {
         sheet
             .iter()
-            .find(|r| r.does == does)
+            .find(|r| r.does == crate::i18n::text(does))
             .map(|r| r.keys.to_string())
     };
     assert_eq!(keys("Previous or next frame").as_deref(), Some("A, →"));
@@ -834,20 +835,25 @@ fn an_action_bound_to_no_key_reads_none() {
     assert_eq!(map.resolve("]", false, LOUPE), "]");
     let rows = binding_rows(&map, false);
     let turn = rows.iter().find(|r| r.id == "turn-left").unwrap();
-    assert_eq!((turn.keys.as_str(), turn.keys2.as_str()), ("None", "]"));
+    assert_eq!(
+        (turn.keys.as_str(), turn.keys2.as_str()),
+        (no_chord().as_str(), "]")
+    );
     let crop = rows.iter().find(|r| r.id == "crop").unwrap();
-    assert_eq!(crop.keys, "None");
+    assert_eq!(crop.keys, no_chord());
     let sheet = rows_in(&map, "", false);
+    let turn = crate::i18n::text("Turn the frame a quarter left or right; not part of the edit");
     assert!(
         sheet
             .iter()
-            .any(|r| r.keys == "None, ]" && r.does.starts_with("Turn the frame")),
+            .any(|r| r.keys == format!("{}, ]", no_chord()) && r.does == turn),
         "the turn's help line"
     );
     assert!(
         sheet
             .iter()
-            .any(|r| r.keys == "[ ]" && r.does == "Brush size, smaller and bigger"),
+            .any(|r| r.keys == "[ ]"
+                && r.does == crate::i18n::text("Brush size, smaller and bigger")),
         "the brush's size stays on the brackets"
     );
     assert_eq!(map.saved().get("turn-left").map(String::as_str), Some(""));
@@ -1076,7 +1082,7 @@ fn a_rebinding_moves_the_action_and_frees_its_old_chord() {
     let keys = |does: &str| {
         sheet
             .iter()
-            .find(|r| r.does == does)
+            .find(|r| r.does == crate::i18n::text(does))
             .map(|r| r.keys.to_string())
     };
     assert_eq!(
@@ -1217,9 +1223,7 @@ fn the_settings_categories_step_by_the_keys() {
         1
     );
     // A click on a name shows its category.
-    let tab = i_slint_backend_testing::ElementHandle::find_by_accessible_label(&app, "Library")
-        .find(|e| e.accessible_role() == Some(i_slint_backend_testing::AccessibleRole::Tab))
-        .expect("the Library tab");
+    let tab = category_tab(&app, "Library");
     tab.invoke_accessible_default_action();
     assert_eq!(app.get_settings_category(), "Library");
     assert_eq!(
@@ -1262,25 +1266,24 @@ fn the_keys_category_scrolls_in_a_small_window() {
         crate::testing::count_id(&app, "SettingsSheet::reset-keys-button"),
         0
     );
-    assert!(crate::testing::count_labeled(&app, "Select every frame shown") > 0);
+    assert!(crate::testing::count_keyed(&app, "SettingsSheet::bind-chip", "select-all") > 0);
 }
 
-/// An action's chord button, not the words beside it, found
-/// afresh: a binding makes the rows again.
-fn row_of(app: &App, does: &'static str) -> i_slint_backend_testing::ElementHandle {
-    app.window().dispatch_event(WindowEvent::PointerMoved {
-        position: slint::LogicalPosition::new(0.0, 0.0),
-    });
-    i_slint_backend_testing::ElementQuery::from_root(app)
-        .match_descendants()
-        .match_accessible_role(i_slint_backend_testing::AccessibleRole::Button)
-        .match_predicate(move |e| e.accessible_label().as_deref() == Some(does))
-        .find_first()
-        .expect("the action's row")
+/// An action's chord button, by the action's settings name, not the
+/// words beside it, found afresh: a binding makes the rows again.
+fn row_of(app: &App, action: &str) -> i_slint_backend_testing::ElementHandle {
+    crate::testing::keyed(app, "SettingsSheet::bind-chip", action).expect("the action's row")
 }
 
+/// The Crop action's chord button.
 fn row(app: &App) -> i_slint_backend_testing::ElementHandle {
-    row_of(app, "Crop, and Done")
+    row_of(app, "crop")
+}
+
+/// The Settings sheet's tab of the category `category`.
+fn category_tab(app: &App, category: &str) -> i_slint_backend_testing::ElementHandle {
+    crate::testing::keyed(app, "SettingsSheet::category-tab", category)
+        .unwrap_or_else(|| panic!("the {category} tab"))
 }
 
 fn shown(app: &App) -> String {
@@ -1297,7 +1300,7 @@ fn a_key_bound_in_the_settings_sheet_is_what_the_window_goes_by() {
     let (app, _state, _worker) = settings_window();
     assert_eq!(shown(&app), "R");
     row(&app).invoke_accessible_default_action();
-    assert_eq!(shown(&app), "Press a key");
+    assert_eq!(shown(&app), listening());
     // A modifier alone waits; the chord with it is taken.
     shifted(&app, "k");
     assert_eq!(shown(&app), "Shift+K");
@@ -1324,7 +1327,7 @@ fn a_key_bound_in_the_settings_sheet_is_what_the_window_goes_by() {
     assert!(
         rows("", false)
             .iter()
-            .any(|r| r.keys == "K" && r.does == "Crop, and Done"),
+            .any(|r| r.keys == "K" && r.does == crate::i18n::text("Crop, and Done")),
         "the keys sheet shows the binding"
     );
     // A modifier alone does not end the listening.
@@ -1338,17 +1341,23 @@ fn a_key_bound_in_the_settings_sheet_is_what_the_window_goes_by() {
     assert!(app.get_crop_mode());
 }
 
-/// A pair's two chord buttons on its one row, left to right.
-fn chips_of(app: &App, does: &'static str) -> Vec<i_slint_backend_testing::ElementHandle> {
-    app.window().dispatch_event(WindowEvent::PointerMoved {
-        position: slint::LogicalPosition::new(0.0, 0.0),
-    });
-    let mut chips: Vec<_> =
-        i_slint_backend_testing::ElementHandle::find_by_element_type_name(app, "BindChip")
-            .filter(|e| e.accessible_label().as_deref() == Some(does))
-            .collect();
-    chips.sort_by(|a, b| a.absolute_position().x.total_cmp(&b.absolute_position().x));
-    chips
+/// A pair's chord buttons on its one row, the first's and the
+/// second's, by the two actions' settings names: none for an action
+/// the row does not have.
+fn chips_of(app: &App, pair: [&str; 2]) -> Vec<i_slint_backend_testing::ElementHandle> {
+    let first = crate::testing::keyed(app, "SettingsSheet::bind-chip", pair[0]);
+    let second = crate::testing::keyed(app, "SettingsSheet::second-bind-chip", pair[1]);
+    first.into_iter().chain(second).collect()
+}
+
+/// What a chord button says while it listens, and for no chord, in
+/// the window's language.
+fn listening() -> String {
+    crate::tr!("Press a key")
+}
+
+fn no_chord() -> String {
+    crate::tr!("key binding" => "None")
 }
 
 fn value(e: &i_slint_backend_testing::ElementHandle) -> String {
@@ -1361,17 +1370,20 @@ fn value(e: &i_slint_backend_testing::ElementHandle) -> String {
 #[test]
 fn backspace_or_delete_binds_an_action_to_no_key() {
     let (app, _state, _worker) = settings_window();
-    let step = "Previous or next frame";
+    let step = ["previous-frame", "next-frame"];
     let chips = chips_of(&app, step);
     assert_eq!(chips.len(), 2, "one row, two chords");
+    // On one row, the first's left of the second's.
+    let (a, b) = (chips[0].absolute_position(), chips[1].absolute_position());
+    assert!((a.y - b.y).abs() < 1.0 && a.x < b.x, "{a:?} {b:?}");
     assert_eq!(
         (value(&chips[0]), value(&chips[1])),
         ("←".into(), "→".into())
     );
     chips[0].invoke_accessible_default_action();
-    assert_eq!(value(&chips_of(&app, step)[0]), "Press a key");
+    assert_eq!(value(&chips_of(&app, step)[0]), listening());
     press(&app, Key::Backspace);
-    assert_eq!(value(&chips_of(&app, step)[0]), "None");
+    assert_eq!(value(&chips_of(&app, step)[0]), no_chord());
     assert!(app.get_settings_open());
     // The second by Delete, after an Escape that kept it.
     chips_of(&app, step)[1].invoke_accessible_default_action();
@@ -1379,12 +1391,12 @@ fn backspace_or_delete_binds_an_action_to_no_key() {
     assert_eq!(value(&chips_of(&app, step)[1]), "→");
     chips_of(&app, step)[1].invoke_accessible_default_action();
     press(&app, Key::Delete);
-    assert_eq!(value(&chips_of(&app, step)[1]), "None");
+    assert_eq!(value(&chips_of(&app, step)[1]), no_chord());
     // The second chip binds its own action to a chord.
     chips_of(&app, step)[1].invoke_accessible_default_action();
     press(&app, "k");
     assert_eq!(value(&chips_of(&app, step)[1]), "K");
-    assert_eq!(value(&chips_of(&app, step)[0]), "None");
+    assert_eq!(value(&chips_of(&app, step)[0]), no_chord());
     assert_eq!(
         with_map(|m| m.saved()),
         BTreeMap::from([
@@ -1406,7 +1418,7 @@ fn backspace_or_delete_binds_an_action_to_no_key() {
 fn closing_the_sheet_while_a_row_listens_gives_the_keys_back() {
     let (app, _state, _worker) = settings_window();
     row(&app).invoke_accessible_default_action();
-    assert_eq!(shown(&app), "Press a key");
+    assert_eq!(shown(&app), listening());
     app.set_settings_open(false);
     slint::platform::update_timers_and_animations();
     press(&app, "g");
@@ -1422,15 +1434,8 @@ fn reset_while_a_row_listens_gives_the_keys_back() {
     press(&app, "k");
     assert_eq!(shown(&app), "K");
     row(&app).invoke_accessible_default_action();
-    // The sheet's last button above Done: below the last row.
-    let last = row_of(&app, "The keys sheet").absolute_position().y;
-    let reset =
-        i_slint_backend_testing::ElementHandle::find_by_element_type_name(&app, "PanelButton")
-            .filter(|b| b.absolute_position().y > last)
-            .min_by(|a, b| a.absolute_position().y.total_cmp(&b.absolute_position().y))
-            .expect("the reset");
-    let (at, size) = (reset.absolute_position(), reset.size());
-    crate::testing::click(&app, at.x + size.width / 2.0, at.y + size.height / 2.0);
+    // The sheet's last button above Done, below the last row.
+    crate::testing::click_id(&app, "SettingsSheet::reset-keys-button");
     assert_eq!(shown(&app), "R");
     press(&app, Key::DownArrow);
     assert_eq!(app.get_settings_category(), "About", "the column's again");
@@ -1453,14 +1458,14 @@ fn a_held_key_binds_once_and_does_nothing_more() {
         app.on_open_folder(move || asked.set(asked.get() + 1));
     }
     let open_folder = |app: &App| {
-        row_of(app, "Open a folder")
+        row_of(app, "open")
             .accessible_value()
             .unwrap_or_default()
             .to_string()
     };
-    row_of(&app, "Open a folder").invoke_accessible_default_action();
+    row_of(&app, "open").invoke_accessible_default_action();
     repeated(&app, "j");
-    assert_eq!(open_folder(&app), "Press a key", "a repeat is no chord");
+    assert_eq!(open_folder(&app), listening(), "a repeat is no chord");
     app.window()
         .dispatch_event(WindowEvent::KeyPressed { text: "k".into() });
     assert_eq!(open_folder(&app), "K");
@@ -1529,12 +1534,10 @@ fn a_click_on_the_card_keeps_the_listening() {
     let (app, _state, _worker) = settings_window();
     row(&app).invoke_accessible_default_action();
     // Below the column's last name, on the card.
-    let about = i_slint_backend_testing::ElementHandle::find_by_accessible_label(&app, "About")
-        .find(|e| e.accessible_role() == Some(i_slint_backend_testing::AccessibleRole::Tab))
-        .expect("the About tab");
+    let about = category_tab(&app, "About");
     let (at, size) = (about.absolute_position(), about.size());
     crate::testing::click(&app, at.x + size.width / 2.0, at.y + size.height + 40.0);
-    assert_eq!(shown(&app), "Press a key");
+    assert_eq!(shown(&app), listening());
     press(&app, "k");
     assert_eq!(shown(&app), "K");
     let ctrl = |key: Key, shift: bool| {
@@ -2094,7 +2097,7 @@ fn the_keys_sheet_keeps_its_last_row_under_wrapped_rows() {
     app.set_keys_open(true);
     crate::testing::settle(&app);
     app.set_keys_rows(ModelRc::from(Rc::new(VecModel::from(rows))));
-    crate::testing::keeps_its_last_line(&app, "Row 11: shows", (580.0, 600.0), 1400.0);
+    crate::testing::keeps_its_last_line(&app, "Row 11: shows", "KeysSheet::scroll", 1400.0);
 }
 
 /// Shift+J paints focus peaking over the Loupe's picture: on a frame

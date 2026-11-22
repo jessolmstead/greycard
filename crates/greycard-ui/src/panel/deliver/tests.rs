@@ -832,15 +832,15 @@ fn the_name_line_is_the_first_frame_s_file_under_the_pattern() {
         )
         .to_string()
     };
-    let shown = |text: &str| crate::testing::count_labeled(&app, text);
+    let shown = || crate::testing::label_of(&app, "ExportSheet::name-example-text");
     assert_eq!(app.get_export_name(), "{name}");
     assert_eq!(line(), "IMG_0002.jpg");
-    assert_eq!(shown("IMG_0002.jpg"), 1);
+    assert_eq!(shown(), "IMG_0002.jpg");
     assert!(!app.invoke_export_name_refused(app.get_export_name()));
 
     app.set_export_name("trip {seq} {name}".into());
     assert_eq!(line(), "trip 01 IMG_0002.jpg");
-    assert_eq!(shown("trip 01 IMG_0002.jpg"), 1);
+    assert_eq!(shown(), "trip 01 IMG_0002.jpg");
     app.set_export_name("{seq:101}".into());
     app.set_export_format("PNG".into());
     assert_eq!(line(), "101.png");
@@ -1301,18 +1301,32 @@ fn the_primary_button_reads_export_and_the_row_names_the_subfolder() {
     let app = crate::testing::window(2);
     let (_state, _worker) = crate::testing::state_for(&app, crate::testing::folder(2));
     app.invoke_select(0);
-    let count = |label: &str| crate::testing::count_labeled(&app, label);
-    let closed = count("Export");
+    use crate::testing::{count_id, label_of};
+    let (title, button) = ("ExportSheet::title", "ExportSheet::export-button");
+    assert_eq!(count_id(&app, button), 0, "the sheet closed");
     app.set_export_open(true);
-    assert_eq!(count("Export") - closed, 2, "the title and the button");
-    assert_eq!(count("Choose file..."), 0);
-    assert_eq!(count("Choose..."), 1, "the Folder row's");
-    assert_eq!(count("Add to queue"), 1);
-    assert_eq!(count("/nowhere"), 1, "the frame's own folder");
+    // The title and the button say Export.
+    assert_eq!(label_of(&app, title), crate::tr!("Export"));
+    assert_eq!(label_of(&app, button), crate::tr!("Export"));
+    // The Folder row's button chooses a folder, not a file.
+    assert_eq!(
+        label_of(&app, "ExportSheet::folder-choose-button"),
+        crate::tr!("Choose..."),
+        "the Folder row's"
+    );
+    assert_eq!(count_id(&app, "ExportSheet::queue-add-button"), 1);
+    assert_eq!(
+        label_of(&app, "ExportSheet::folder-line-text"),
+        "/nowhere",
+        "the frame's own folder"
+    );
     // A set: the title counts the frames, the button is the same.
     app.set_set_count(3);
-    assert_eq!(count("Export 3 frames"), 1);
-    assert_eq!(count("Export") - closed, 1, "the button");
+    assert_eq!(
+        label_of(&app, title),
+        crate::tr!("Export {n} frame" | "Export {n} frames" % 3)
+    );
+    assert_eq!(label_of(&app, button), crate::tr!("Export"), "the button");
 
     let long = "a-very-long-subfolder/for-the-web-gallery";
     app.set_export_subfolder(long.into());
@@ -1501,24 +1515,12 @@ fn the_name_line_reads_a_file_only_when_the_index_has_no_row() {
     crate::testing::remove_scratch(state, &dir);
 }
 
-/// Where the element a screen reader knows as `label` is, and how
-/// big, if it is on show: the topmost of several.
-fn shown(app: &App, label: &str) -> Option<(slint::LogicalPosition, slint::LogicalSize)> {
+/// Where the element `id` is, and how big, if it is on show: the
+/// topmost of several.
+fn shown_id(app: &App, id: &str) -> Option<(slint::LogicalPosition, slint::LogicalSize)> {
     use i_slint_backend_testing::ElementHandle;
     // A control a property has just brought in is built on the
     // next event: a pointer move at the corner, where nothing is.
-    app.window()
-        .dispatch_event(slint::platform::WindowEvent::PointerMoved {
-            position: slint::LogicalPosition::new(0.0, 0.0),
-        });
-    ElementHandle::find_by_accessible_label(app, label)
-        .map(|e| (e.absolute_position(), e.size()))
-        .min_by(|a, b| a.0.y.total_cmp(&b.0.y))
-}
-
-/// [`shown`] of the element `id`.
-fn shown_id(app: &App, id: &str) -> Option<(slint::LogicalPosition, slint::LogicalSize)> {
-    use i_slint_backend_testing::ElementHandle;
     app.window()
         .dispatch_event(slint::platform::WindowEvent::PointerMoved {
             position: slint::LogicalPosition::new(0.0, 0.0),
@@ -1740,18 +1742,13 @@ fn the_export_sheet_fits_a_short_window_and_its_choices_scroll() {
     app.set_export_open(true);
 
     let bottom = |id: &str| {
-        let (at, size) = if id.contains("::") {
-            shown_id(&app, id)
-        } else {
-            shown(&app, id)
-        }
-        .unwrap_or_else(|| panic!("{id} on show"));
+        let (at, size) = shown_id(&app, id).unwrap_or_else(|| panic!("{id} on show"));
         at.y + size.height
     };
     // Every button in the window, below the choices, and the
     // Folder row with them: its folder by the path it shows.
     for id in [
-        "/nowhere",
+        "ExportSheet::folder-line-text",
         "ExportSheet::folder-choose-button",
         "ExportSheet::cancel-button",
         "ExportSheet::queue-add-button",
@@ -1762,7 +1759,7 @@ fn the_export_sheet_fits_a_short_window_and_its_choices_scroll() {
     }
     let (title, _) = shown_id(&app, "ExportSheet::title").expect("the title");
     let (cancel, _) = shown_id(&app, "ExportSheet::cancel-button").expect("Cancel");
-    let (folder, _) = shown(&app, "/nowhere").expect("the Folder row");
+    let (folder, _) = shown_id(&app, "ExportSheet::folder-line-text").expect("the Folder row");
     // The watermark's strength is past the fold, until the choices
     // are scrolled to it.
     assert!(
@@ -1792,7 +1789,9 @@ fn the_export_sheet_fits_a_short_window_and_its_choices_scroll() {
         "the buttons stay"
     );
     assert_eq!(
-        shown(&app, "/nowhere").expect("the Folder row").0,
+        shown_id(&app, "ExportSheet::folder-line-text")
+            .expect("the Folder row")
+            .0,
         folder,
         "the folder stays"
     );
@@ -1998,12 +1997,11 @@ fn the_folder_row_follows_the_frame_not_its_name() {
     let (_state, _worker) = crate::testing::state_for(&app, files);
     app.invoke_select(0);
     app.set_export_open(true);
-    let count = |label: &str| crate::testing::count_labeled(&app, label);
-    assert_eq!(count("/nowhere/card-one"), 1);
+    let folder = || crate::testing::label_of(&app, "ExportSheet::folder-line-text");
+    assert_eq!(folder(), "/nowhere/card-one");
     app.invoke_select(1);
     assert_eq!(app.get_file_name(), "IMG_0001.CR3");
-    assert_eq!(count("/nowhere/card-two"), 1);
-    assert_eq!(count("/nowhere/card-one"), 0);
+    assert_eq!(folder(), "/nowhere/card-two");
 }
 
 /// A probe name taken already is passed over, never read as the
@@ -2204,10 +2202,15 @@ fn the_sheets_fields_and_sliders_hand_enter_back_to_the_sheet() {
     // And with the queue's Clear asked, its no.
     app.set_export_queue_sets(1);
     app.set_export_open(true);
-    let asked = || crate::testing::count_labeled(&app, "Clear the queue of 1 set?");
+    let asked = || crate::testing::count_id(&app, "ExportSheet::clear-question");
     let (p, s) = shown_id(&app, "ExportSheet::queue-clear-button").expect("the queue's Clear");
     click(&app, p.x + s.width / 2.0, p.y + s.height / 2.0);
     assert_eq!(asked(), 1);
+    // It counts the one set.
+    assert_eq!(
+        crate::testing::label_of(&app, "ExportSheet::clear-question"),
+        crate::tr!("Clear the queue of {n} set?" | "Clear the queue of {n} sets?" % 1)
+    );
     press(&app, Key::Escape);
     assert!(app.get_export_open());
     assert_eq!(asked(), 0);

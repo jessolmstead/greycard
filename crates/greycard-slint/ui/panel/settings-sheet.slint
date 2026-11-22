@@ -444,7 +444,7 @@ export component SettingsSheet inherits Rectangle {
                                 VerticalLayout {
                                     padding: 2px;
                                     spacing: 2px;
-                                    for name[i] in root.categories: Rectangle {
+                                    for name[i] in root.categories: category-tab := Rectangle {
                                         property <bool> on: name == root.category;
                                         height: Theme.control-height;
                                         border-radius: Theme.radius-sm;
@@ -452,6 +452,8 @@ export component SettingsSheet inherits Rectangle {
                                         animate background { duration: Theme.quick; }
                                         accessible-role: tab;
                                         accessible-label: root.category-words[i];
+                                        // Its key, for automation: the category.
+                                        accessible-id: name;
                                         accessible-checked: self.on;
                                         accessible-action-default => { root.choose(name); }
                                         Text {
@@ -521,13 +523,13 @@ export component SettingsSheet inherits Rectangle {
                                 color: Theme.text-muted;
                                 wrap: word-wrap;
                             }
-                            if root.ui-scale-by-hand: Text {
+                            if root.ui-scale-by-hand: scale-by-hand-note := Text {
                                 text: @tr("SLINT_SCALE_FACTOR is set, and wins over this.");
                                 font-size: Theme.font-xs;
                                 color: Theme.text-secondary;
                                 wrap: word-wrap;
                             }
-                            if !root.ui-scale-by-hand && root.ui-scale-percent != root.ui-scale-started: Text {
+                            if !root.ui-scale-by-hand && root.ui-scale-percent != root.ui-scale-started: scale-next-start := Text {
                                 text: @tr("Applies at the next start.");
                                 font-size: Theme.font-xs;
                                 color: Theme.text-secondary;
@@ -580,7 +582,7 @@ export component SettingsSheet inherits Rectangle {
                                 }
                                 Rectangle { horizontal-stretch: 1; }
                             }
-                            Text {
+                            language-next-start := Text {
                                 text: @tr("Applies at the next start.");
                                 font-size: Theme.font-xs;
                                 color: Theme.text-muted;
@@ -593,7 +595,7 @@ export component SettingsSheet inherits Rectangle {
                                 toggled => { root.one-section-changed(); }
                             }
                             HorizontalLayout {
-                                PanelButton {
+                                reset-order-button := PanelButton {
                                     // Interface: every view's sections back in
                                     // their first order, after dragging them
                                     text: @tr("Reset section order");
@@ -631,7 +633,7 @@ export component SettingsSheet inherits Rectangle {
                                     selected(c) => { root.start-picked(c); }
                                 }
                             }
-                            if root.start-choice == "Chosen folder": Text {
+                            if root.start-choice == "Chosen folder": start-folder-text := Text {
                                 text: root.start-folder;
                                 font-size: Theme.font-xs;
                                 color: Theme.text-secondary;
@@ -920,7 +922,7 @@ export component SettingsSheet inherits Rectangle {
                             if root.display-profile == "File": HorizontalLayout {
                                 spacing: Theme.space-2;
                                 padding-left: 68px + Theme.space-2;
-                                Text {
+                                display-file-text := Text {
                                     text: root.display-file == "" ? @tr("No profile chosen") : root.display-file;
                                     font-size: Theme.font-xs;
                                     color: root.display-file == "" ? Theme.text-muted : Theme.text-secondary;
@@ -973,7 +975,7 @@ export component SettingsSheet inherits Rectangle {
                                     selected(i) => { root.proof-changed(); }
                                 }
                             }
-                            Toggle {
+                            lens-on-new-toggle := Toggle {
                                 label: @tr("Lens corrections on new edits");
                                 checked <=> root.lens-on-new;
                                 toggled => { root.lens-on-new-changed(); }
@@ -1164,7 +1166,7 @@ export component SettingsSheet inherits Rectangle {
                             // scroll however long the list.
                             HorizontalLayout {
                                 alignment: start;
-                                PanelButton {
+                                models-fetch-button := PanelButton {
                                     text: root.models-fetch-label;
                                     icon: @image-url("../icons/image-down.svg");
                                     enabled: root.models-fetch-enabled;
@@ -1260,14 +1262,17 @@ export component SettingsSheet inherits Rectangle {
                                     }
                                     HorizontalLayout {
                                         spacing: Theme.space-1;
-                                        BindChip {
+                                        bind-chip := BindChip {
+                                            // Its key, for automation: the action.
+                                            accessible-id: row.id;
                                             on: root.listening == row.id;
                                             keys: row.keys;
                                             does: row.does;
                                             warn: row.warn;
                                             listen => { root.listen(row.id); }
                                         }
-                                        if row.id2 != "": BindChip {
+                                        if row.id2 != "": second-bind-chip := BindChip {
+                                            accessible-id: row.id2;
                                             on: root.listening == row.id2;
                                             keys: row.keys2;
                                             does: row.does;
@@ -1311,7 +1316,7 @@ export component SettingsSheet inherits Rectangle {
                                 spacing: Theme.space-2;
                                 // About: the version row
                                 Text { text: @tr("Version"); width: 68px; color: Theme.text; font-size: Theme.font-sm; }
-                                Text { text: root.version; font-size: Theme.font-sm; color: Theme.text-secondary; horizontal-stretch: 1; }
+                                version-text := Text { text: root.version; font-size: Theme.font-sm; color: Theme.text-secondary; horizontal-stretch: 1; }
                             }
                             Rectangle { height: Theme.space-1; }
                             Text {

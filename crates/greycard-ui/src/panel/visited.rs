@@ -690,9 +690,7 @@ mod tests {
 
         // The forward button over c's tile in a: b again, not c.
         slint::platform::update_timers_and_animations();
-        let tile = ElementHandle::find_by_accessible_label(&app, "Folder c")
-            .next()
-            .expect("c's tile");
+        let tile = crate::testing::keyed(&app, "GridSheet::folder-tile", "c").expect("c's tile");
         let (at, size) = (tile.absolute_position(), tile.size());
         let middle = slint::LogicalPosition::new(at.x + size.width / 2.0, at.y + size.height / 2.0);
         side_button(&app, middle, PointerEventButton::Forward);

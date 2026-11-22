@@ -87,19 +87,19 @@ export component ArchiveRejectsSheet inherits Rectangle {
                 Rectangle { height: Theme.space-2; }
                 HorizontalLayout {
                     spacing: Theme.space-2;
-                    PanelButton {
+                    cancel-button := PanelButton {
                         text: @tr("Cancel");
                         clicked => { root.answered(0); }
                     }
-                    if root.trash-text != "": DangerButton {
+                    if root.trash-text != "": trash-button := DangerButton {
                         text: root.trash-text;
                         clicked => { root.answered(2); }
                     }
-                    if root.permanent-text != "": DangerButton {
+                    if root.permanent-text != "": permanent-button := DangerButton {
                         text: root.permanent-text;
                         clicked => { root.answered(3); }
                     }
-                    if root.move-text != "": PanelButton {
+                    if root.move-text != "": move-button := PanelButton {
                         text: root.move-text;
                         icon: @image-url("../icons/folder-open.svg");
                         primary: true;

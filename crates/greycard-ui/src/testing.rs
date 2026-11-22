@@ -341,27 +341,21 @@ pub(crate) fn folder(count: usize) -> Vec<std::path::PathBuf> {
 }
 
 /// How many elements anywhere in the window carry `label` as their
-/// accessible label: whether a control the layout means to show once
-/// is there once, or twice by a mistake in it.
+/// accessible label, for a label that is data (a frame's name, a name
+/// typed), never the window's words: those are found by id
+/// ([`count_id`]), or, for a test whose subject is what a screen
+/// reader hears, by the catalog's ([`spoken`]).
 pub(crate) fn count_labeled(app: &App, label: &str) -> usize {
     use i_slint_backend_testing::ElementHandle;
-    // As `labeled`'s own first move: a control a property has just
-    // brought in is built on the next event. Query only once the
-    // layout has settled into the shape under test — a query before
-    // a control's `if` turns true leaves later ones, even of a
-    // control already there, finding nothing: call this again after
-    // such a change rather than before it.
+    // A control a property has just brought in is built on the next
+    // event. Query only once the layout has settled into the shape
+    // under test — a query before a control's `if` turns true leaves
+    // later ones, even of a control already there, finding nothing:
+    // call this again after such a change rather than before it.
     app.window().dispatch_event(WindowEvent::PointerMoved {
         position: slint::LogicalPosition::new(0.0, 0.0),
     });
     ElementHandle::find_by_accessible_label(app, label).count()
-}
-
-/// The bounds of the element a screen reader knows as `label`,
-/// scrolled into the panel's view first: its top left and its size,
-/// in logical pixels from the window's top left.
-pub(crate) fn labeled(app: &App, label: &str) -> (slint::LogicalPosition, slint::LogicalSize) {
-    labeled_where(app, label, |_| true)
 }
 
 /// The part `part` (as `Section::row`) of the first section of the
@@ -404,25 +398,184 @@ pub(crate) fn section_bounds(
     })
 }
 
-/// [`labeled`] of the first element labeled `label` that `pick` takes.
-pub(crate) fn labeled_where(
-    app: &App,
-    label: &str,
-    pick: impl Fn(&i_slint_backend_testing::ElementHandle) -> bool,
-) -> (slint::LogicalPosition, slint::LogicalSize) {
-    let what = format!("labeled {label:?}");
-    in_panel_view(app, &what, |app| {
-        i_slint_backend_testing::ElementHandle::find_by_accessible_label(app, label)
-            .find(|e| pick(e))
-    })
-}
-
 /// The bounds of the panel's element `id` (as `Section::name`),
-/// scrolled into the panel's view as [`labeled`] scrolls.
+/// scrolled into the panel's view first: its top left and its size,
+/// in logical pixels from the window's top left.
 pub(crate) fn by_id(app: &App, id: &str) -> (slint::LogicalPosition, slint::LogicalSize) {
     in_panel_view(app, &format!("with the id {id:?}"), |app| {
         i_slint_backend_testing::ElementHandle::find_by_element_id(app, id).next()
     })
+}
+
+/// The elements `id` (as `MaskPanel::mask-item`) built now, in the
+/// window's order. A row of a repeater shares its id with every other
+/// row: its key, below, tells it from them.
+pub(crate) fn all_by_id(app: &App, id: &str) -> Vec<i_slint_backend_testing::ElementHandle> {
+    count_id(app, id);
+    i_slint_backend_testing::ElementHandle::find_by_element_id(app, id).collect()
+}
+
+/// The key of an element in a repeater: its `accessible-id`, which
+/// the .slint sets to the row's data, never its words (the row's
+/// index in its model, a code, a path). A screen reader does not say
+/// it; it is the row's name for automation.
+pub(crate) fn key_of(element: &i_slint_backend_testing::ElementHandle) -> Option<String> {
+    element.accessible_id().map(|k| k.to_string())
+}
+
+/// The one element `id` whose key is `key`, if it is built. Two with
+/// the key are a row built twice: a failure, unless a test means it
+/// ([`first_keyed`]).
+pub(crate) fn keyed(
+    app: &App,
+    id: &str,
+    key: impl std::fmt::Display,
+) -> Option<i_slint_backend_testing::ElementHandle> {
+    let key = key.to_string();
+    let mut found: Vec<_> = all_by_id(app, id)
+        .into_iter()
+        .filter(|e| key_of(e).as_deref() == Some(key.as_str()))
+        .collect();
+    the_one(found.len(), id, &key);
+    found.pop()
+}
+
+/// The first of the elements `id` whose key is `key`, in the window's
+/// order, for a test whose row is listed twice on purpose.
+pub(crate) fn first_keyed(
+    app: &App,
+    id: &str,
+    key: impl std::fmt::Display,
+) -> Option<i_slint_backend_testing::ElementHandle> {
+    let key = key.to_string();
+    all_by_id(app, id)
+        .into_iter()
+        .find(|e| key_of(e).as_deref() == Some(key.as_str()))
+}
+
+/// No more than one element `id` keyed `key`.
+fn the_one(found: usize, id: &str, key: &str) {
+    assert!(
+        found <= 1,
+        "{found} elements {id} keyed {key:?}: a row built twice, or a key that is not one"
+    );
+}
+
+/// How many elements `id` have the key `key`: one when the row is
+/// built, none when it is not.
+pub(crate) fn count_keyed(app: &App, id: &str, key: impl std::fmt::Display) -> usize {
+    let key = key.to_string();
+    all_by_id(app, id)
+        .iter()
+        .filter(|e| key_of(e).as_deref() == Some(key.as_str()))
+        .count()
+}
+
+/// The bounds of the element `id` whose key is `key`, scrolled into
+/// the panel's view as [`by_id`] scrolls.
+pub(crate) fn by_key(
+    app: &App,
+    id: &str,
+    key: impl std::fmt::Display,
+) -> (slint::LogicalPosition, slint::LogicalSize) {
+    let key = key.to_string();
+    in_panel_view(app, &format!("{id} keyed {key:?}"), |app| {
+        let mut found: Vec<_> = i_slint_backend_testing::ElementHandle::find_by_element_id(app, id)
+            .filter(|e| key_of(e).as_deref() == Some(key.as_str()))
+            .collect();
+        the_one(found.len(), id, &key);
+        found.pop()
+    })
+}
+
+/// A click at the middle of the element `id` keyed `key`, scrolled
+/// into the panel's view as [`by_id`] scrolls.
+pub(crate) fn click_key(app: &App, id: &str, key: impl std::fmt::Display) {
+    let (at, size) = by_key(app, id, key);
+    click(app, at.x + size.width / 2.0, at.y + size.height / 2.0);
+}
+
+/// A click at the middle of the first element `id` keyed `key`, as
+/// [`first_keyed`] finds it, for a row listed twice on purpose,
+/// scrolled into the panel's view as [`by_id`] scrolls.
+pub(crate) fn click_first_key(app: &App, id: &str, key: impl std::fmt::Display) {
+    let key = key.to_string();
+    let (at, size) = in_panel_view(app, &format!("{id} keyed {key:?}"), |app| {
+        first_keyed(app, id, &key)
+    });
+    click(app, at.x + size.width / 2.0, at.y + size.height / 2.0);
+}
+
+/// The words the element `id` says: its own label, or, for a control
+/// whose words are drawn in it and said by them (a `PanelButton`'s
+/// text), the first of its parts that has any. Compared with data, or
+/// with the catalog's ([`crate::tr!`]) in the window's language.
+pub(crate) fn label_of(app: &App, id: &str) -> String {
+    let mut found = all_by_id(app, id);
+    assert!(
+        found.len() <= 1,
+        "{} elements {id}: a row's words by its key (`keyed`)",
+        found.len()
+    );
+    words_of(&found.pop().unwrap_or_else(|| panic!("no {id}")))
+}
+
+/// The words `element` says, as [`label_of`] reads them: for a row
+/// found by its key.
+pub(crate) fn words_of(element: &i_slint_backend_testing::ElementHandle) -> String {
+    let said =
+        |e: &i_slint_backend_testing::ElementHandle| e.accessible_label().filter(|l| !l.is_empty());
+    said(element)
+        .or_else(|| {
+            element
+                .query_descendants()
+                .match_predicate(move |e| said(e).is_some())
+                .find_first()
+                .and_then(|e| said(&e))
+        })
+        .unwrap_or_default()
+        .to_string()
+}
+
+/// The elements a screen reader knows by the catalog's `msgid` in the
+/// window's language, for a test whose subject is what it hears: the
+/// words, not the control.
+pub(crate) fn spoken(app: &App, msgid: &str) -> Vec<i_slint_backend_testing::ElementHandle> {
+    settle(app);
+    i_slint_backend_testing::ElementHandle::find_by_accessible_label(app, &crate::i18n::text(msgid))
+        .collect()
+}
+
+/// The bounds of the first of [`spoken`], scrolled into the panel's
+/// view as [`by_id`] scrolls.
+pub(crate) fn spoken_bounds(
+    app: &App,
+    msgid: &str,
+) -> (slint::LogicalPosition, slint::LogicalSize) {
+    let words = crate::i18n::text(msgid);
+    in_panel_view(app, &format!("spoken as {words:?}"), |app| {
+        i_slint_backend_testing::ElementHandle::find_by_accessible_label(app, &words).next()
+    })
+}
+
+/// The entries of the menus up, top first: Slint draws a menu's
+/// entries itself, from the `MenuItem`s' titles, and gives them no
+/// id of ours, so an entry is known by its title in the window's
+/// language.
+pub(crate) fn menu_entries(app: &App) -> Vec<i_slint_backend_testing::ElementHandle> {
+    let mut found = all_by_id(app, "MenuItemBase::label");
+    found.sort_by(|a, b| a.absolute_position().y.total_cmp(&b.absolute_position().y));
+    found
+}
+
+/// How many entries of the menus up have the catalog's `msgid` as
+/// their title, in the window's language.
+pub(crate) fn count_menu_entries(app: &App, msgid: &str) -> usize {
+    let title = crate::i18n::text(msgid);
+    menu_entries(app)
+        .iter()
+        .filter(|e| e.accessible_label().as_deref() == Some(title.as_str()))
+        .count()
 }
 
 /// The bounds of the panel's element `pick` finds, scrolled into the
@@ -590,21 +743,6 @@ pub(crate) fn toggle_parts(root: &i_slint_backend_testing::ElementHandle) -> Tog
     }
 }
 
-/// The parts of the `Toggle` labeled `label`, scrolled into the
-/// panel's view first as [`labeled`] scrolls.
-pub(crate) fn toggle(app: &App, label: &str) -> ToggleParts {
-    use i_slint_backend_testing::ElementHandle;
-    let (at, size) = labeled(app, label);
-    let (x, y) = (at.x + 1.0, at.y + size.height / 2.0);
-    let root = ElementHandle::find_by_element_id(app, "Toggle::root")
-        .find(|e| {
-            let (p, s) = bounds_of(e);
-            x >= p.x && x <= p.x + s.width && y >= p.y && y <= p.y + s.height
-        })
-        .unwrap_or_else(|| panic!("no Toggle under {label:?}"));
-    toggle_parts(&root)
-}
-
 /// The parts of the `Toggle` `id` (as
 /// `WhiteBalanceSection::as-shot-toggle`), scrolled into the panel's
 /// view first as [`by_id`] scrolls.
@@ -620,23 +758,6 @@ pub(crate) fn toggle_by_id(app: &App, id: &str) -> ToggleParts {
 pub(crate) fn click_switch_by_id(app: &App, id: &str) {
     let (at, size) = toggle_by_id(app, id).switch;
     click(app, at.x + size.width / 2.0, at.y + size.height / 2.0);
-}
-
-/// The buttons a screen reader knows as `label`, top first: their top
-/// left and size, in logical pixels from the window's top left. A
-/// text's own label is its words, so a row whose name is drawn in it
-/// is found once here rather than twice.
-pub(crate) fn buttons(app: &App, label: &str) -> Vec<(slint::LogicalPosition, slint::LogicalSize)> {
-    use i_slint_backend_testing::{AccessibleRole, ElementHandle};
-    app.window().dispatch_event(WindowEvent::PointerMoved {
-        position: slint::LogicalPosition::new(0.0, 0.0),
-    });
-    let mut found: Vec<_> = ElementHandle::find_by_accessible_label(app, label)
-        .filter(|e| e.accessible_role() == Some(AccessibleRole::Button))
-        .map(|e| (e.absolute_position(), e.size()))
-        .collect();
-    found.sort_by(|a, b| a.0.y.total_cmp(&b.0.y));
-    found
 }
 
 /// The middle of row `i`'s picture in the strip, in logical pixels
@@ -703,21 +824,8 @@ pub(crate) fn left_in(dir: &std::path::Path) -> Vec<std::path::PathBuf> {
     left
 }
 
-/// The pointer at the middle of the element a screen reader knows as
-/// `label`, resting there past the hold; its place in the window.
-pub(crate) fn rest_on(app: &App, label: &str) -> (f32, f32) {
-    let (at, size) = labeled(app, label);
-    let (x, y) = (at.x + size.width / 2.0, at.y + size.height / 2.0);
-    app.window().dispatch_event(WindowEvent::PointerMoved {
-        position: slint::LogicalPosition::new(x, y),
-    });
-    slint::platform::update_timers_and_animations();
-    i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(800));
-    slint::platform::update_timers_and_animations();
-    (x, y)
-}
-
-/// [`rest_on`] the element `id`.
+/// The pointer at the middle of the element `id`, resting there past
+/// the hold; its place in the window.
 pub(crate) fn rest_on_id(app: &App, id: &str) -> (f32, f32) {
     let (at, size) = by_id(app, id);
     let (x, y) = (at.x + size.width / 2.0, at.y + size.height / 2.0);
@@ -752,20 +860,19 @@ fn line_starting(app: &App, words: &str) -> Option<(f32, f32)> {
         .map(|e| (e.absolute_position().y, e.size().height))
 }
 
-/// A sheet's scroller, the one `width` wide (at least the first
-/// number and under the second): its top left and size.
-fn pane(app: &App, width: (f32, f32)) -> (slint::LogicalPosition, slint::LogicalSize) {
-    use i_slint_backend_testing::ElementHandle;
-    ElementHandle::find_by_element_type_name(app, "Flickable")
+/// A sheet's scroller `id` (as `KeysSheet::scroll`): its top left and
+/// size.
+fn pane(app: &App, id: &str) -> (slint::LogicalPosition, slint::LogicalSize) {
+    i_slint_backend_testing::ElementHandle::find_by_element_id(app, id)
+        .next()
         .map(|e| (e.absolute_position(), e.size()))
-        .find(|(p, s)| s.width >= width.0 && s.width < width.1 && p.y > 0.0)
-        .expect("the sheet's pane")
+        .unwrap_or_else(|| panic!("no {id}"))
 }
 
 /// Whether the line that starts with `last` lies whole inside the pane
-/// `pane_width` wide, as laid out now, and where it is.
-fn inside(app: &App, last: &str, pane_width: (f32, f32)) -> (bool, String) {
-    let (p, s) = pane(app, pane_width);
+/// `pane_id`, as laid out now, and where it is.
+fn inside(app: &App, last: &str, pane_id: &str) -> (bool, String) {
+    let (p, s) = pane(app, pane_id);
     let foot = p.y + s.height;
     match line_starting(app, last) {
         Some((y, h)) => (
@@ -780,13 +887,13 @@ fn inside(app: &App, last: &str, pane_width: (f32, f32)) -> (bool, String) {
 }
 
 /// The line that starts with `last` is past the foot of the pane
-/// `pane_width` wide, and the wheel over the pane brings it in: the
-/// pane's content is as tall as what it draws.
-pub(crate) fn wheel_brings_in(app: &App, last: &str, pane_width: (f32, f32)) {
+/// `pane_id`, and the wheel over the pane brings it in: the pane's
+/// content is as tall as what it draws.
+pub(crate) fn wheel_brings_in(app: &App, last: &str, pane_id: &str) {
     settle(app);
-    let (whole, said) = inside(app, last, pane_width);
+    let (whole, said) = inside(app, last, pane_id);
     assert!(!whole, "the wheel has nothing to prove: {said}");
-    let (p, s) = pane(app, pane_width);
+    let (p, s) = pane(app, pane_id);
     for _ in 0..40 {
         app.window().dispatch_event(WindowEvent::PointerScrolled {
             position: slint::LogicalPosition::new(p.x + 40.0, p.y + (s.height / 2.0).min(40.0)),
@@ -794,28 +901,28 @@ pub(crate) fn wheel_brings_in(app: &App, last: &str, pane_width: (f32, f32)) {
             delta_y: -120.0,
         });
         settle(app);
-        if inside(app, last, pane_width).0 {
+        if inside(app, last, pane_id).0 {
             return;
         }
     }
-    let (_, said) = inside(app, last, pane_width);
+    let (_, said) = inside(app, last, pane_id);
     panic!("the wheel left {said}");
 }
 
 /// A sheet whose notes wrap keeps its last line, the text that starts
-/// with `last`, in its pane `pane_width` wide: inside it in a window
+/// with `last`, in its pane `pane_id`: inside it in a window
 /// `tall` high, room for all of the sheet, and in one 400 high the
 /// wheel over the pane brings it in. A layout's preferred height, read
 /// as a property, can count a wrapped note as one line, and a sheet or
 /// a pane sized from it cuts its foot.
-pub(crate) fn keeps_its_last_line(app: &App, last: &str, pane_width: (f32, f32), tall: f32) {
+pub(crate) fn keeps_its_last_line(app: &App, last: &str, pane_id: &str, tall: f32) {
     app.window().set_size(slint::LogicalSize::new(1500.0, tall));
     settle(app);
-    let (whole, said) = inside(app, last, pane_width);
+    let (whole, said) = inside(app, last, pane_id);
     assert!(whole, "in a window {tall} high, {said}");
     app.window()
         .set_size(slint::LogicalSize::new(1500.0, 400.0));
-    wheel_brings_in(app, last, pane_width);
+    wheel_brings_in(app, last, pane_id);
 }
 
 /// The middle of the panel slider `id`'s track (as
@@ -870,37 +977,37 @@ pub(crate) fn click_id(app: &App, id: &str) {
 /// The panel's tabs, as the row `App::panel-tabs` lists its options.
 pub(crate) const PANEL_TABS: [&str; 4] = ["Develop", "Crop", "Masks", "Retouch"];
 
-/// The option `option` of the `Segmented` row `id`, whose options are
-/// `options` in their order: its top left and size.
+/// The option `option` of the `Segmented` row `id`, by the option
+/// itself (its code, not its words), which is the key of its segment:
+/// its top left and size.
 pub(crate) fn segment(
     app: &App,
     id: &str,
-    options: &[&str],
     option: &str,
 ) -> (slint::LogicalPosition, slint::LogicalSize) {
-    let at = options
-        .iter()
-        .position(|o| *o == option)
-        .unwrap_or_else(|| panic!("no option {option:?} in {options:?}"));
     app.window().dispatch_event(WindowEvent::PointerMoved {
         position: slint::LogicalPosition::new(0.0, 0.0),
     });
-    i_slint_backend_testing::ElementHandle::find_by_element_id(app, id)
-        .find_map(|row| {
+    let mut found: Vec<_> = i_slint_backend_testing::ElementHandle::find_by_element_id(app, id)
+        .flat_map(|row| {
             row.query_descendants()
                 .match_id("Segmented::seg")
                 .find_all()
                 .into_iter()
-                .nth(at)
+                .filter(|seg| key_of(seg).as_deref() == Some(option))
         })
+        .collect();
+    the_one(found.len(), id, option);
+    found
+        .pop()
         .map(|e| bounds_of(&e))
         .unwrap_or_else(|| panic!("{id} has its option {option:?}"))
 }
 
 /// A click at the middle of the option `option` of the `Segmented`
 /// row `id`, as [`segment`] finds it: a row in view, as a sheet's is.
-pub(crate) fn click_segment(app: &App, id: &str, options: &[&str], option: &str) {
-    let (at, size) = segment(app, id, options, option);
+pub(crate) fn click_segment(app: &App, id: &str, option: &str) {
+    let (at, size) = segment(app, id, option);
     click(app, at.x + size.width / 2.0, at.y + size.height / 2.0);
 }
 
@@ -920,7 +1027,8 @@ pub(crate) fn segments_shown(app: &App, id: &str) -> usize {
 
 /// A click on the panel's tab `tab` (one of [`PANEL_TABS`]).
 pub(crate) fn click_panel_tab(app: &App, tab: &str) {
-    let (at, size) = segment(app, "App::panel-tabs", &PANEL_TABS, tab);
+    assert!(PANEL_TABS.contains(&tab), "no panel tab {tab:?}");
+    let (at, size) = segment(app, "App::panel-tabs", tab);
     click(app, at.x + size.width / 2.0, at.y + size.height / 2.0);
 }
 

@@ -264,7 +264,7 @@ export component ImportSheet inherits Rectangle {
                                 label: @tr("Verify against the card");
                                 checked <=> root.import-verify;
                             }
-                            Text {
+                            verify-note := Text {
                                 text: @tr("Verify compares every byte (slower).");
                                 wrap: word-wrap;
                                 height: self.preferred-height;

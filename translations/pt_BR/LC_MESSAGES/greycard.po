@@ -290,84 +290,84 @@ msgid "{} value"
 msgstr "Valor de {}"
 
 #. Spoken by a screen reader for a thumbnail: its stars
-#: crates/greycard-slint/ui/controls.slint:2826
+#: crates/greycard-slint/ui/controls.slint:2828
 msgid "{n} star"
 msgid_plural "{n} stars"
 msgstr[0] "{n} estrela"
 msgstr[1] "{n} estrelas"
 
 #. Spoken by a screen reader for a thumbnail: its flag
-#: crates/greycard-slint/ui/controls.slint:2828
+#: crates/greycard-slint/ui/controls.slint:2830
 msgid "pick"
 msgstr "escolhida"
 
 #. Spoken by a screen reader for a thumbnail: its flag
-#: crates/greycard-slint/ui/controls.slint:2828
+#: crates/greycard-slint/ui/controls.slint:2830
 msgid "reject"
 msgstr "rejeitada"
 
 #. Spoken by a screen reader for a thumbnail: its label
-#: crates/greycard-slint/ui/controls.slint:2832
+#: crates/greycard-slint/ui/controls.slint:2834
 msgid "green"
 msgstr "verde"
 
 #. Spoken by a screen reader for a thumbnail: its label
-#: crates/greycard-slint/ui/controls.slint:2832
+#: crates/greycard-slint/ui/controls.slint:2834
 msgid "red"
 msgstr "vermelho"
 
 #. Spoken by a screen reader for a thumbnail: its label
-#: crates/greycard-slint/ui/controls.slint:2832
+#: crates/greycard-slint/ui/controls.slint:2834
 msgid "yellow"
 msgstr "amarelo"
 
 #. Spoken by a screen reader for a thumbnail: its label
-#: crates/greycard-slint/ui/controls.slint:2834
+#: crates/greycard-slint/ui/controls.slint:2836
 msgid "blue"
 msgstr "azul"
 
 #. Spoken by a screen reader for a thumbnail: its label
-#: crates/greycard-slint/ui/controls.slint:2834
+#: crates/greycard-slint/ui/controls.slint:2836
 msgid "purple"
 msgstr "roxo"
 
 #. Spoken by a screen reader: a thumbnail's badge
-#: crates/greycard-slint/ui/controls.slint:2921
+#: crates/greycard-slint/ui/controls.slint:2923
 msgid "Edited"
 msgstr "Editada"
 
 #. Spoken by a screen reader: a thumbnail's badge
-#: crates/greycard-slint/ui/controls.slint:2935
+#: crates/greycard-slint/ui/controls.slint:2937
 msgid "Exported"
 msgstr "Exportada"
 
 #. Spoken by a screen reader: a thumbnail's badge
-#: crates/greycard-slint/ui/controls.slint:2949
+#: crates/greycard-slint/ui/controls.slint:2951
 msgid "In a collection"
 msgstr "Em uma coleção"
 
 #. Spoken by a screen reader: a thumbnail's badge
-#: crates/greycard-slint/ui/controls.slint:2960
+#: crates/greycard-slint/ui/controls.slint:2962
 msgid "With the camera's JPEG"
 msgstr "Com o JPEG da câmera"
 
 #. Spoken by a screen reader: a thumbnail's stack badge
-#: crates/greycard-slint/ui/controls.slint:2988
+#: crates/greycard-slint/ui/controls.slint:2990
 msgid "Frame {} of a stack of {}, open"
 msgstr "Foto {} de uma pilha de {}, aberta"
 
 #. Spoken by a screen reader: a thumbnail's stack badge
-#: crates/greycard-slint/ui/controls.slint:2990
+#: crates/greycard-slint/ui/controls.slint:2992
 msgid "Stack of {}"
 msgstr "Pilha de {}"
 
 #. Spoken by a screen reader: a thumbnail's version badge
-#: crates/greycard-slint/ui/controls.slint:3037
+#: crates/greycard-slint/ui/controls.slint:3039
 msgid "Version {}"
 msgstr "Versão {}"
 
 #. Spoken by a screen reader: a scroll bar
-#: crates/greycard-slint/ui/controls.slint:3491
+#: crates/greycard-slint/ui/controls.slint:3493
 msgid "Scroll"
 msgstr "Rolar"
 
@@ -399,51 +399,51 @@ msgid "raw only"
 msgstr "só raw"
 
 #. Look section: a look's fold button; {} is the look's name
-#: crates/greycard-slint/ui/panel/assets.slint:66
+#: crates/greycard-slint/ui/panel/assets.slint:70
 msgid "Fold {}"
 msgstr "Recolher {}"
 
 #. Look section: a look's fold button; {} is the look's name
-#: crates/greycard-slint/ui/panel/assets.slint:66
+#: crates/greycard-slint/ui/panel/assets.slint:70
 msgid "Unfold {}"
 msgstr "Expandir {}"
 
 #. Look section: the tag on a look fitted to the open frame's camera
-#: crates/greycard-slint/ui/panel/assets.slint:109
+#: crates/greycard-slint/ui/panel/assets.slint:113
 msgid "this camera"
 msgstr "esta câmera"
 
-#: crates/greycard-slint/ui/panel/assets.slint:146
+#: crates/greycard-slint/ui/panel/assets.slint:150
 msgid "Profile tone curve"
 msgstr "Curva de tons do perfil"
 
-#: crates/greycard-slint/ui/panel/assets.slint:153
+#: crates/greycard-slint/ui/panel/assets.slint:157
 msgid "Show all cameras"
 msgstr "Mostrar todas as câmeras"
 
-#: crates/greycard-slint/ui/panel/assets.slint:210
+#: crates/greycard-slint/ui/panel/assets.slint:214
 msgid "LOOK"
 msgstr "VISUAL"
 
 #. Spoken by a screen reader: a look's row; {} is its name
-#: crates/greycard-slint/ui/panel/assets.slint:240
+#: crates/greycard-slint/ui/panel/assets.slint:247
 msgid "Look {}"
 msgstr "Visual {}"
 
 #. Look section: the slider
-#: crates/greycard-slint/ui/panel/assets.slint:332
+#: crates/greycard-slint/ui/panel/assets.slint:339
 msgid "Strength"
 msgstr "Intensidade"
 
-#: crates/greycard-slint/ui/panel/assets.slint:384
+#: crates/greycard-slint/ui/panel/assets.slint:391
 msgid "Rename..."
 msgstr "Renomear..."
 
-#: crates/greycard-slint/ui/panel/assets.slint:389
+#: crates/greycard-slint/ui/panel/assets.slint:396
 msgid "Remove this look..."
 msgstr "Remover este visual..."
 
-#: crates/greycard-slint/ui/panel/assets.slint:401
+#: crates/greycard-slint/ui/panel/assets.slint:408
 msgid "Fit this camera's look..."
 msgstr "Ajustar à câmera..."
 
@@ -461,17 +461,17 @@ msgid "Uncheck all"
 msgstr "Desmarcar tudo"
 
 #. where edits are kept
-#: crates/greycard-slint/ui/panel/carry-list.slint:186
+#: crates/greycard-slint/ui/panel/carry-list.slint:187
 msgid "Masks go"
 msgstr "Destino das máscaras"
 
 #. Sync sheet: how the masks go across
-#: crates/greycard-slint/ui/panel/carry-list.slint:189
+#: crates/greycard-slint/ui/panel/carry-list.slint:190
 msgid "Add to masks"
 msgstr "Adicionar às máscaras"
 
 #. Sync sheet: how the masks go across
-#: crates/greycard-slint/ui/panel/carry-list.slint:189
+#: crates/greycard-slint/ui/panel/carry-list.slint:190
 msgid "Replace masks"
 msgstr "Substituir máscaras"
 
@@ -504,11 +504,11 @@ msgstr[1] "Esquecer {n} fotos ausentes"
 msgid "Delete..."
 msgstr "Excluir..."
 
-#: crates/greycard-slint/ui/panel/collections.slint:195
+#: crates/greycard-slint/ui/panel/collections.slint:197
 msgid "No collections yet"
 msgstr "Nenhuma coleção ainda"
 
-#: crates/greycard-slint/ui/panel/collections.slint:206
+#: crates/greycard-slint/ui/panel/collections.slint:208
 msgid "+ New collection..."
 msgstr "+ Nova coleção..."
 
@@ -685,30 +685,30 @@ msgid "Shadows"
 msgstr "Sombras"
 
 #. Spoken by a screen reader: the color grading wheel for {}
-#: crates/greycard-slint/ui/panel/color.slint:707
+#: crates/greycard-slint/ui/panel/color.slint:709
 msgid "{} wheel"
 msgstr "Roda de {}"
 
 #. Color grading: show the {} wheel large, or small again
-#: crates/greycard-slint/ui/panel/color.slint:720
+#: crates/greycard-slint/ui/panel/color.slint:723
 msgid "Enlarge {}"
 msgstr "Ampliar {}"
 
 #. Color grading: show the {} wheel large, or small again
-#: crates/greycard-slint/ui/panel/color.slint:720
+#: crates/greycard-slint/ui/panel/color.slint:723
 msgid "Shrink {}"
 msgstr "Reduzir {}"
 
-#: crates/greycard-slint/ui/panel/color.slint:784
+#: crates/greycard-slint/ui/panel/color.slint:787
 msgid "Balance"
 msgstr "Equilíbrio"
 
-#: crates/greycard-slint/ui/panel/color.slint:830
+#: crates/greycard-slint/ui/panel/color.slint:833
 msgid "TINT"
 msgstr "TINGIMENTO"
 
 #. Tint section: the slider
-#: crates/greycard-slint/ui/panel/color.slint:905
+#: crates/greycard-slint/ui/panel/color.slint:908
 msgid "Amount"
 msgstr "Quantidade"
 
@@ -1854,27 +1854,27 @@ msgstr[0] "{n} rejeitada"
 msgstr[1] "{n} rejeitadas"
 
 #. Spoken by a screen reader: a folder tile
-#: crates/greycard-slint/ui/panel/grid.slint:686
+#: crates/greycard-slint/ui/panel/grid.slint:688
 msgid "Folder {}"
 msgstr "Pasta {}"
 
 #. A tile's word when its picture could not be read
-#: crates/greycard-slint/ui/panel/grid.slint:916
+#: crates/greycard-slint/ui/panel/grid.slint:920
 msgid "Unreadable"
 msgstr "Ilegível"
 
 #. A tile's word while its picture is made
-#: crates/greycard-slint/ui/panel/grid.slint:930
+#: crates/greycard-slint/ui/panel/grid.slint:934
 msgid "Developing"
 msgstr "Revelando"
 
 #. Spoken by a screen reader: the grid's scroll bar
-#: crates/greycard-slint/ui/panel/grid.slint:1252
+#: crates/greycard-slint/ui/panel/grid.slint:1256
 msgid "Grid scroll"
 msgstr "Rolagem da grade"
 
 #. language.
-#: crates/greycard-slint/ui/panel/grid.slint:1326
+#: crates/greycard-slint/ui/panel/grid.slint:1330
 msgid "Close lightbox"
 msgstr "Fechar mesa de luz"
 
@@ -1882,42 +1882,42 @@ msgstr "Fechar mesa de luz"
 msgid "SNAPSHOTS"
 msgstr "INSTANTÂNEOS"
 
-#: crates/greycard-slint/ui/panel/history.slint:204
+#: crates/greycard-slint/ui/panel/history.slint:208
 msgid "Restore {}"
 msgstr "Restaurar {}"
 
-#: crates/greycard-slint/ui/panel/history.slint:205
+#: crates/greycard-slint/ui/panel/history.slint:209
 msgid "Restore"
 msgstr "Restaurar"
 
-#: crates/greycard-slint/ui/panel/history.slint:213
+#: crates/greycard-slint/ui/panel/history.slint:218
 msgid "Rename {}"
 msgstr "Renomear {}"
 
-#: crates/greycard-slint/ui/panel/history.slint:214
+#: crates/greycard-slint/ui/panel/history.slint:219
 msgid "Rename"
 msgstr "Renomear"
 
 #. Snapshots: remove the snapshot
-#: crates/greycard-slint/ui/panel/history.slint:227
+#: crates/greycard-slint/ui/panel/history.slint:232
 msgid "Remove"
 msgstr "Remover"
 
 #. Snapshots: the list when there are none
-#: crates/greycard-slint/ui/panel/history.slint:241
+#: crates/greycard-slint/ui/panel/history.slint:246
 msgid "None yet."
 msgstr "Nenhum ainda."
 
 #. Snapshots: take a snapshot of the edit as it is
-#: crates/greycard-slint/ui/panel/history.slint:250
+#: crates/greycard-slint/ui/panel/history.slint:255
 msgid "Take"
 msgstr "Criar"
 
-#: crates/greycard-slint/ui/panel/history.slint:268
+#: crates/greycard-slint/ui/panel/history.slint:273
 msgid "HISTORY"
 msgstr "HISTÓRICO"
 
-#: crates/greycard-slint/ui/panel/history.slint:355
+#: crates/greycard-slint/ui/panel/history.slint:360
 msgid "No changes yet."
 msgstr "Nenhuma alteração ainda."
 
@@ -2185,203 +2185,203 @@ msgstr "Copiar máscaras"
 msgid "Paste mask"
 msgstr "Colar máscara"
 
-#: crates/greycard-slint/ui/panel/mask.slint:279
+#: crates/greycard-slint/ui/panel/mask.slint:281
 msgid "New mask"
 msgstr "Nova máscara"
 
-#: crates/greycard-slint/ui/panel/mask.slint:365
+#: crates/greycard-slint/ui/panel/mask.slint:367
 msgid "MASK"
 msgstr "MÁSCARA"
 
 #. Spoken by a screen reader: the mask's name field
-#: crates/greycard-slint/ui/panel/mask.slint:396
+#: crates/greycard-slint/ui/panel/mask.slint:398
 msgid "Mask name"
 msgstr "Nome da máscara"
 
-#: crates/greycard-slint/ui/panel/mask.slint:415
+#: crates/greycard-slint/ui/panel/mask.slint:417
 msgid "Invert"
 msgstr "Inverter"
 
-#: crates/greycard-slint/ui/panel/mask.slint:422
+#: crates/greycard-slint/ui/panel/mask.slint:424
 msgid "Refine edge"
 msgstr "Refinar borda"
 
-#: crates/greycard-slint/ui/panel/mask.slint:453
+#: crates/greycard-slint/ui/panel/mask.slint:455
 msgid "Shapes"
 msgstr "Formas"
 
-#: crates/greycard-slint/ui/panel/mask.slint:540
+#: crates/greycard-slint/ui/panel/mask.slint:542
 msgid "Invert this shape"
 msgstr "Inverter esta forma"
 
-#: crates/greycard-slint/ui/panel/mask.slint:596
+#: crates/greycard-slint/ui/panel/mask.slint:598
 msgid "Remove this shape"
 msgstr "Remover esta forma"
 
 #. Luminance range: the fade at the dark end
-#: crates/greycard-slint/ui/panel/mask.slint:710
+#: crates/greycard-slint/ui/panel/mask.slint:712
 msgid "Low fade"
 msgstr "Transição escura"
 
 #. Luminance range: the fade at the light end
-#: crates/greycard-slint/ui/panel/mask.slint:738
+#: crates/greycard-slint/ui/panel/mask.slint:740
 msgid "High fade"
 msgstr "Transição clara"
 
 #. Color range: the button that reads a color off the picture
-#: crates/greycard-slint/ui/panel/mask.slint:766
+#: crates/greycard-slint/ui/panel/mask.slint:768
 msgid "Sample"
 msgstr "Amostra"
 
 #. Color range: the fade
-#: crates/greycard-slint/ui/panel/mask.slint:811
+#: crates/greycard-slint/ui/panel/mask.slint:813
 msgid "Hue fade"
 msgstr "Transição de matiz"
 
 #. Color range: the fade
-#: crates/greycard-slint/ui/panel/mask.slint:841
+#: crates/greycard-slint/ui/panel/mask.slint:843
 msgid "Chroma fade"
 msgstr "Transição de croma"
 
 #. Add a shape: a brush; once one exists its button says Paint
-#: crates/greycard-slint/ui/panel/mask.slint:905
+#: crates/greycard-slint/ui/panel/mask.slint:907
 msgid "Brush"
 msgstr "Pincel"
 
 #. Brush: what a stroke does
-#: crates/greycard-slint/ui/panel/mask.slint:908
+#: crates/greycard-slint/ui/panel/mask.slint:910
 msgid "Add"
 msgstr "Adicionar"
 
 #. Brush: what a stroke does
-#: crates/greycard-slint/ui/panel/mask.slint:908
+#: crates/greycard-slint/ui/panel/mask.slint:910
 msgid "Erase"
 msgstr "Apagar"
 
 #. Brush: what a stroke does
-#: crates/greycard-slint/ui/panel/mask.slint:908
+#: crates/greycard-slint/ui/panel/mask.slint:910
 msgid "Subtract"
 msgstr "Subtrair"
 
-#: crates/greycard-slint/ui/panel/mask.slint:917
+#: crates/greycard-slint/ui/panel/mask.slint:919
 msgid "Add a shape"
 msgstr "Adicionar forma"
 
 #. Spoken by a screen reader: the shape mode row
-#: crates/greycard-slint/ui/panel/mask.slint:942
+#: crates/greycard-slint/ui/panel/mask.slint:944
 msgid "Next shape mode"
 msgstr "Próximo modo da forma"
 
 #. Shape mode: the shape cuts the mask down to where both are
-#: crates/greycard-slint/ui/panel/mask.slint:945
+#: crates/greycard-slint/ui/panel/mask.slint:947
 msgid "Intersect"
 msgstr "Interseção"
 
 #. Add a shape: the kinds
-#: crates/greycard-slint/ui/panel/mask.slint:952
+#: crates/greycard-slint/ui/panel/mask.slint:954
 msgid "Linear"
 msgstr "Linear"
 
 #. Add a shape: the kinds
-#: crates/greycard-slint/ui/panel/mask.slint:959
+#: crates/greycard-slint/ui/panel/mask.slint:961
 msgid "Radial"
 msgstr "Radial"
 
 #. Add a shape: a brush; once one exists its button says Paint
-#: crates/greycard-slint/ui/panel/mask.slint:966
+#: crates/greycard-slint/ui/panel/mask.slint:968
 msgid "Paint"
 msgstr "Pintar"
 
-#: crates/greycard-slint/ui/panel/mask.slint:975
+#: crates/greycard-slint/ui/panel/mask.slint:977
 msgid "Subject"
 msgstr "Assunto"
 
-#: crates/greycard-slint/ui/panel/mask.slint:982
+#: crates/greycard-slint/ui/panel/mask.slint:984
 msgid "Background"
 msgstr "Fundo"
 
-#: crates/greycard-slint/ui/panel/mask.slint:991
+#: crates/greycard-slint/ui/panel/mask.slint:993
 msgid "Sky"
 msgstr "Céu"
 
-#: crates/greycard-slint/ui/panel/mask.slint:1008
+#: crates/greycard-slint/ui/panel/mask.slint:1010
 msgid "Landscape"
 msgstr "Paisagem"
 
-#: crates/greycard-slint/ui/panel/mask.slint:1027
+#: crates/greycard-slint/ui/panel/mask.slint:1029
 msgid "Object"
 msgstr "Objeto"
 
-#: crates/greycard-slint/ui/panel/mask.slint:1046
+#: crates/greycard-slint/ui/panel/mask.slint:1048
 msgid "People"
 msgstr "Pessoas"
 
-#: crates/greycard-slint/ui/panel/mask.slint:1058
+#: crates/greycard-slint/ui/panel/mask.slint:1060
 msgid "Whole person"
 msgstr "Pessoa inteira"
 
-#: crates/greycard-slint/ui/panel/mask.slint:1060
+#: crates/greycard-slint/ui/panel/mask.slint:1062
 msgid "Face"
 msgstr "Rosto"
 
-#: crates/greycard-slint/ui/panel/mask.slint:1062
+#: crates/greycard-slint/ui/panel/mask.slint:1064
 msgid "Facial skin"
 msgstr "Pele do rosto"
 
-#: crates/greycard-slint/ui/panel/mask.slint:1063
+#: crates/greycard-slint/ui/panel/mask.slint:1065
 msgid "Eyebrows"
 msgstr "Sobrancelhas"
 
-#: crates/greycard-slint/ui/panel/mask.slint:1064
+#: crates/greycard-slint/ui/panel/mask.slint:1066
 msgid "Eyes"
 msgstr "Olhos"
 
-#: crates/greycard-slint/ui/panel/mask.slint:1065
+#: crates/greycard-slint/ui/panel/mask.slint:1067
 msgid "Iris"
 msgstr "Íris"
 
-#: crates/greycard-slint/ui/panel/mask.slint:1066
+#: crates/greycard-slint/ui/panel/mask.slint:1068
 msgid "Lips"
 msgstr "Lábios"
 
-#: crates/greycard-slint/ui/panel/mask.slint:1067
+#: crates/greycard-slint/ui/panel/mask.slint:1069
 msgid "Teeth"
 msgstr "Dentes"
 
-#: crates/greycard-slint/ui/panel/mask.slint:1069
+#: crates/greycard-slint/ui/panel/mask.slint:1071
 msgid "Body"
 msgstr "Corpo"
 
-#: crates/greycard-slint/ui/panel/mask.slint:1070
+#: crates/greycard-slint/ui/panel/mask.slint:1072
 msgid "Skin"
 msgstr "Pele"
 
-#: crates/greycard-slint/ui/panel/mask.slint:1071
+#: crates/greycard-slint/ui/panel/mask.slint:1073
 msgid "Hair"
 msgstr "Cabelo"
 
-#: crates/greycard-slint/ui/panel/mask.slint:1072
+#: crates/greycard-slint/ui/panel/mask.slint:1074
 msgid "Hands"
 msgstr "Mãos"
 
-#: crates/greycard-slint/ui/panel/mask.slint:1074
+#: crates/greycard-slint/ui/panel/mask.slint:1076
 msgid "Clothing"
 msgstr "Roupas"
 
-#: crates/greycard-slint/ui/panel/mask.slint:1075
+#: crates/greycard-slint/ui/panel/mask.slint:1077
 msgctxt "clothing"
 msgid "Top"
 msgstr "Parte de cima"
 
-#: crates/greycard-slint/ui/panel/mask.slint:1076
+#: crates/greycard-slint/ui/panel/mask.slint:1078
 msgid "Bottoms"
 msgstr "Parte de baixo"
 
-#: crates/greycard-slint/ui/panel/mask.slint:1077
+#: crates/greycard-slint/ui/panel/mask.slint:1079
 msgid "Shoes"
 msgstr "Sapatos"
 
-#: crates/greycard-slint/ui/panel/mask.slint:1078
+#: crates/greycard-slint/ui/panel/mask.slint:1080
 msgid "All clothing"
 msgstr "Todas as roupas"
 
@@ -2397,11 +2397,11 @@ msgstr ""
 "Ajusta um visual por câmera e estilo de imagem aos JPEGs dela. Grupos com "
 "menos de 20 fotos pegam emprestado ou são pulados."
 
-#: crates/greycard-slint/ui/panel/match-sheet.slint:151
+#: crates/greycard-slint/ui/panel/match-sheet.slint:153
 msgid "Fit {}"
 msgstr "Ajustar {}"
 
-#: crates/greycard-slint/ui/panel/match-sheet.slint:176
+#: crates/greycard-slint/ui/panel/match-sheet.slint:178
 msgid "Replace existing looks"
 msgstr "Substituir visuais existentes"
 
@@ -2514,16 +2514,16 @@ msgstr "Nome do grupo"
 msgid "PRESETS"
 msgstr "PREDEFINIÇÕES"
 
-#: crates/greycard-slint/ui/panel/presets.slint:301
+#: crates/greycard-slint/ui/panel/presets.slint:305
 msgid "Save the edit or import a Lightroom preset."
 msgstr "Salve a edição ou importe uma predefinição do Lightroom."
 
-#: crates/greycard-slint/ui/panel/presets.slint:314
+#: crates/greycard-slint/ui/panel/presets.slint:318
 msgid "Remove {} from the list?"
 msgstr "Remover {} da lista?"
 
 #. Presets section: the button that opens the sync sheet
-#: crates/greycard-slint/ui/panel/presets.slint:359
+#: crates/greycard-slint/ui/panel/presets.slint:363
 msgid "Sync..."
 msgstr "Sincronizar..."
 
@@ -2609,7 +2609,7 @@ msgid "Generate"
 msgstr "Gerar"
 
 #. Fill: another variation of the fill
-#: crates/greycard-slint/ui/panel/retouch.slint:197
+#: crates/greycard-slint/ui/panel/retouch.slint:200
 msgid "Another"
 msgstr "Outra"
 
@@ -2656,11 +2656,11 @@ msgstr "Remover da biblioteca"
 msgid "All roots"
 msgstr "Todas as raízes"
 
-#: crates/greycard-slint/ui/panel/roots.slint:451
+#: crates/greycard-slint/ui/panel/roots.slint:453
 msgid "+ Add this folder"
 msgstr "+ Esta pasta"
 
-#: crates/greycard-slint/ui/panel/roots.slint:456
+#: crates/greycard-slint/ui/panel/roots.slint:458
 msgid "+ Add a root..."
 msgstr "+ Nova raiz..."
 
@@ -2750,328 +2750,328 @@ msgstr "Modelos"
 msgid "Settings"
 msgstr "Configurações"
 
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:501
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:503
 msgid "INTERFACE"
 msgstr "INTERFACE"
 
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:519
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:521
 msgid "Type and controls, on top of the system's own scaling."
 msgstr "Texto e controles, além da escala do sistema."
 
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:525
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:527
 msgid "SLINT_SCALE_FACTOR is set, and wins over this."
 msgstr "SLINT_SCALE_FACTOR está definido e prevalece sobre isto."
 
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:531
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:533
 msgid "Applies at the next start."
 msgstr "Vale a partir do próximo início."
 
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:538
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:540
 msgid "Theme"
 msgstr "Tema"
 
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:542
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:544
 msgid "Charcoal"
 msgstr "Carvão"
 
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:542
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:544
 msgid "Grey"
 msgstr "Cinza"
 
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:542
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:544
 msgctxt "theme"
 msgid "Light"
 msgstr "Claro"
 
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:549
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:551
 msgid "Scroll bars"
 msgstr "Rolagem"
 
 #. Scroll bars: fade when idle, or stay
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:554
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:556
 msgid "Fade"
 msgstr "Esmaecer"
 
 #. Scroll bars: fade when idle, or stay
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:554
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:556
 msgid "Stay"
 msgstr "Fixas"
 
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:561
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:563
 msgid "Scroll bar size"
 msgstr "Espessura"
 
 #. Scroll bar size
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:566
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:568
 msgid "Medium"
 msgstr "Média"
 
 #. Scroll bar size
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:566
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:568
 msgid "Thin"
 msgstr "Fina"
 
 #. Scroll bar size
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:566
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:568
 msgid "Wide"
 msgstr "Larga"
 
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:573
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:575
 msgid "Language"
 msgstr "Idioma"
 
 #. Interface: the develop panel's sections
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:591
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:593
 msgid "One section open at a time"
 msgstr "Uma seção aberta por vez"
 
 #. their first order, after dragging them
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:599
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:601
 msgid "Reset section order"
 msgstr "Redefinir ordem das seções"
 
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:617
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:619
 msgid "LIBRARY"
 msgstr "BIBLIOTECA"
 
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:624
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:626
 msgid "Start in"
 msgstr "Abrir em"
 
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:628
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:630
 msgid "Chosen folder"
 msgstr "Pasta escolhida"
 
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:628
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:630
 msgid "Last folder"
 msgstr "Última pasta"
 
 #. that picks the view greycard opens in, Loupe or Library
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:646
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:648
 msgid "Start view"
 msgstr "Visão inicial"
 
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:654
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:656
 msgid "Show the filter bar"
 msgstr "Mostrar a barra de filtro"
 
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:660
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:662
 msgid "Cell size"
 msgstr "Célula"
 
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:671
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:673
 msgid "Resize with the wheel"
 msgstr "Redimensionar com a roda"
 
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:677
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:679
 msgid "SIDECARS"
 msgstr "AUXILIARES"
 
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:684
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:686
 msgid "Edits go"
 msgstr "Salvar em"
 
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:688
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:690
 msgid "Beside the raw"
 msgstr "Ao lado do raw"
 
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:688
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:690
 msgid "Hidden folder"
 msgstr "Pasta oculta"
 
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:698
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:700
 msgid "In a hidden .greycard folder."
 msgstr "Numa pasta oculta .greycard."
 
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:699
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:701
 msgid "IMG_0001.CR3.gcd, beside the raw."
 msgstr "IMG_0001.CR3.gcd, ao lado do raw."
 
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:705
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:707
 msgid "Sidecars move when next saved."
 msgstr "Os auxiliares mudam no próximo salvamento."
 
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:714
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:716
 msgid "Sidecars are not written this run (--no-sidecars), so none are moved."
 msgstr ""
 "Os auxiliares não são gravados nesta execução (--no-sidecars), então nenhum "
 "é movido."
 
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:716
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:718
 msgid "Counting the sidecars of {}..."
 msgstr "Contando os auxiliares de {}..."
 
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:718
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:720
 msgid "Every sidecar of {} is in the chosen place."
 msgstr "Todo auxiliar de {} está no lugar escolhido."
 
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:719
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:721
 msgid "{} of {} is in the other place."
 msgid_plural "{} of {} are in the other place."
 msgstr[0] "{} de {} está no outro lugar."
 msgstr[1] "{} de {} estão no outro lugar."
 
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:725
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:727
 msgid "Move the open frame's sidecar"
 msgstr "Mover o auxiliar da foto aberta"
 
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:725
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:727
 msgid "Move the open frames' sidecars"
 msgstr "Mover os auxiliares das fotos abertas"
 
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:737
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:739
 msgid "Move {}"
 msgstr "Mover {}"
 
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:753
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:755
 msgid "Write XMP sidecars"
 msgstr "Gravar auxiliares XMP"
 
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:758
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:760
 msgid "Rating, label and keywords, for Lightroom and darktable."
 msgstr "Classificação, rótulo e palavras-chave, para Lightroom e darktable."
 
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:771
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:773
 msgid "Treat a JPEG beside its raw as a separate frame"
 msgstr "Tratar um JPEG ao lado do raw como foto separada"
 
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:777
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:779
 msgid "IMG_0001.JPG is a frame of its own, with its own rating."
 msgstr "IMG_0001.JPG é uma foto própria, com classificação própria."
 
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:778
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:780
 msgid "IMG_0001.JPG goes with IMG_0001.CR3: one frame, marked +JPEG."
 msgstr "IMG_0001.JPG acompanha IMG_0001.CR3: uma foto, marcada +JPEG."
 
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:785
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:787
 msgid "THUMBNAILS"
 msgstr "MINIATURAS"
 
 #. Thumbnails: before the size field
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:809
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:811
 msgid "Keep up to"
 msgstr "Manter até"
 
 #. Thumbnails: after the size field
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:819
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:821
 msgid "MB, 0 for none"
 msgstr "MB, 0 para nenhum"
 
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:823
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:825
 msgid "Previews up to"
 msgstr "Prévias até"
 
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:835
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:837
 msgid "Previews let you cull offline drives; about 0.5 MB a frame."
 msgstr ""
 "Prévias permitem a triagem de discos offline; cerca de 0,5 MB por foto."
 
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:842
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:844
 msgid "NETWORK FOLDERS"
 msgstr "PASTAS DE REDE"
 
 #. Network folders: before the minutes field
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:850
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:852
 msgid "Rescan every"
 msgstr "Reanalisar a cada"
 
 #. Network folders: after the minutes field
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:860
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:862
 msgid "minutes, 0 for never"
 msgstr "minutos, 0 para nunca"
 
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:863
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:865
 msgid "Shares can't be watched, so they're rescanned."
 msgstr "Compartilhamentos não podem ser observados, então são reanalisados."
 
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:977
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:979
 msgid "Lens corrections on new edits"
 msgstr "Correções de lente em novas edições"
 
 #. Editing: the aspect a new crop opens at
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:995
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:997
 msgid "Last used"
 msgstr "Último usado"
 
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:1002
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:1004
 msgid "An uncropped frame's crop opens at the aspect last picked."
 msgstr "O corte de uma foto sem corte abre na última proporção escolhida."
 
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:1004
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:1006
 msgid "An uncropped frame's crop opens free, any shape."
 msgstr "O corte de uma foto sem corte abre livre, em qualquer formato."
 
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:1005
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:1007
 msgid "An uncropped frame's crop opens at the frame's own shape."
 msgstr "O corte de uma foto sem corte abre no formato da própria foto."
 
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:1055
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:1057
 msgid "Restores removed built-in presets."
 msgstr "Restaura as predefinições embutidas removidas."
 
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:1062
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:1064
 msgid "EXPORT"
 msgstr "EXPORTAR"
 
 #. Export presets: the button that adds one
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:1118
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:1120
 msgid "Add..."
 msgstr "Adicionar..."
 
 #. Editing: the name every export carries
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:1127
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:1129
 msgid "Author"
 msgstr "Autor"
 
 #. Editing: the copyright notice every export carries
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:1138
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:1140
 msgid "Copyright"
 msgstr "Copyright"
 
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:1158
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:1160
 msgid "MODELS"
 msgstr "MODELOS"
 
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:1232
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:1234
 msgid "KEYS"
 msgstr "ATALHOS"
 
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:1289
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:1294
 msgid "Reset to defaults"
 msgstr "Restaurar padrões"
 
 #. About: the version row
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:1313
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:1318
 msgid "Version"
 msgstr "Versão"
 
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:1318
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:1323
 msgid "UPDATES"
 msgstr "ATUALIZAÇÕES"
 
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:1324
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:1329
 msgid "Check for a new version at launch"
 msgstr "Procurar nova versão ao abrir"
 
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:1329
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:1334
 msgid "Once a day; sends only the version number."
 msgstr "Uma vez por dia; envia só o número da versão."
 
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:1345
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:1350
 msgid "Check now"
 msgstr "Verificar"
 
 #. About: the cache folder's row
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:1400
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:1405
 msgid "Caches"
 msgstr "Caches"
 
 #. About: the log folder's row
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:1423
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:1428
 msgid "Log"
 msgstr "Log"
 
-#: crates/greycard-slint/ui/panel/strip.slint:380
+#: crates/greycard-slint/ui/panel/strip.slint:382
 msgid "Strip scroll"
 msgstr "Rolagem da tira"
 
@@ -3219,82 +3219,82 @@ msgid "Mask {}"
 msgstr "Máscara {}"
 
 #. Sync sheet: a section of the edit
-#: crates/greycard-ui/src/carry.rs:393
+#: crates/greycard-ui/src/carry.rs:401
 msgid "Light"
 msgstr "Luz"
 
-#: crates/greycard-ui/src/carry.rs:395
+#: crates/greycard-ui/src/carry.rs:403
 msgid "White balance"
 msgstr "Equilíbrio de branco"
 
-#: crates/greycard-ui/src/carry.rs:396
+#: crates/greycard-ui/src/carry.rs:404
 msgid "Noise"
 msgstr "Ruído"
 
-#: crates/greycard-ui/src/carry.rs:397
+#: crates/greycard-ui/src/carry.rs:405
 msgid "Detail"
 msgstr "Detalhe"
 
-#: crates/greycard-ui/src/carry.rs:399
+#: crates/greycard-ui/src/carry.rs:407
 msgid "Output sharpen"
 msgstr "Nitidez de saída"
 
-#: crates/greycard-ui/src/carry.rs:401
+#: crates/greycard-ui/src/carry.rs:409
 msgid "Color mixer"
 msgstr "Misturador de cores"
 
-#: crates/greycard-ui/src/carry.rs:403
+#: crates/greycard-ui/src/carry.rs:411
 msgid "Black and white"
 msgstr "Preto e branco"
 
-#: crates/greycard-ui/src/carry.rs:404
+#: crates/greycard-ui/src/carry.rs:412
 msgid "Color grading"
 msgstr "Gradação de cores"
 
-#: crates/greycard-ui/src/carry.rs:405
+#: crates/greycard-ui/src/carry.rs:413
 msgid "Color tint"
 msgstr "Tingimento"
 
-#: crates/greycard-ui/src/carry.rs:406
+#: crates/greycard-ui/src/carry.rs:414
 msgid "Look"
 msgstr "Visual"
 
-#: crates/greycard-ui/src/carry.rs:408
+#: crates/greycard-ui/src/carry.rs:416
 msgid "Vignette"
 msgstr "Vinheta"
 
-#: crates/greycard-ui/src/carry.rs:409
+#: crates/greycard-ui/src/carry.rs:417
 msgid "Grain"
 msgstr "Granulação"
 
-#: crates/greycard-ui/src/carry.rs:411
+#: crates/greycard-ui/src/carry.rs:419
 msgid "Camera profile"
 msgstr "Perfil da câmera"
 
 #. Sync sheet: the color mixer's parts
-#: crates/greycard-ui/src/carry.rs:428
+#: crates/greycard-ui/src/carry.rs:436
 msgid "RGB"
 msgstr "RGB"
 
 #. Sync sheet: the lens correction's parts
-#: crates/greycard-ui/src/carry.rs:433
+#: crates/greycard-ui/src/carry.rs:441
 msgid "R/G"
 msgstr "R/G"
 
-#: crates/greycard-ui/src/carry.rs:434
+#: crates/greycard-ui/src/carry.rs:442
 msgid "B/Y"
 msgstr "B/Y"
 
 #. Sync sheet: the black and white filter's part
-#: crates/greycard-ui/src/carry.rs:441
+#: crates/greycard-ui/src/carry.rs:449
 msgid "Weights"
 msgstr "Pesos"
 
-#: crates/greycard-ui/src/carry.rs:448
+#: crates/greycard-ui/src/carry.rs:456
 msgid "Manual aberration"
 msgstr "Aberração manual"
 
-#: crates/greycard-ui/src/carry.rs:449
+#: crates/greycard-ui/src/carry.rs:457
 msgid "Manual distortion"
 msgstr "Distorção manual"
 
@@ -4003,7 +4003,7 @@ msgstr ""
 "ou voltar a uma foto"
 
 #. Keys sheet: two keys that do the same
-#: crates/greycard-ui/src/keys.rs:622
+#: crates/greycard-ui/src/keys.rs:622 crates/greycard-ui/src/keys/tests.rs:311
 msgid "{} or {}"
 msgstr "{} ou {}"
 
@@ -4014,6 +4014,7 @@ msgstr "clique"
 
 #. What the sheets write for an action bound to no key.
 #: crates/greycard-ui/src/keys.rs:1083
+#: crates/greycard-ui/src/keys/tests.rs:1360
 msgctxt "key binding"
 msgid "None"
 msgstr "Nenhuma"
@@ -7207,6 +7208,7 @@ msgid "skipped: {}"
 msgstr "ignorado: {}"
 
 #: crates/greycard-ui/src/panel/models.rs:309
+#: crates/greycard-ui/src/panel/models.rs:889
 msgid "Each under its own license, kept beside it in the store."
 msgstr "Cada um sob sua própria licença, guardada ao lado no armazenamento."
 

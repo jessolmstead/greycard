@@ -1340,7 +1340,8 @@ mod tests {
     }
 
     /// The line in the tab bar's place over a frozen frame.
-    const WHY: &str = "Queued for export, shown as it will export. Edit it from its folder.";
+    // The note that says why the panel will not edit a queued frame.
+    const WHY: &str = "App::frozen-note";
 
     /// A click on the middle of the top's button named `label`.
     fn press_button(s: &Setup, id: &str) {
@@ -1380,7 +1381,7 @@ mod tests {
         s.app.invoke_select(0);
         assert!(s.app.get_frozen());
         assert_eq!(crate::testing::count_id(&s.app, "App::cull-mode-button"), 0);
-        assert_eq!(crate::testing::count_labeled(&s.app, WHY), 1);
+        assert_eq!(crate::testing::count_id(&s.app, WHY), 1);
         press_button(&s, "App::loupe-view-button");
         crate::roots::land_sent(&s.state, &s.app, &s.worker);
         assert_eq!(starts_on(&s), Some(s.files[1].clone()));
@@ -1398,7 +1399,7 @@ mod tests {
         assert!(!s.app.get_frozen());
         assert!(!s.app.get_queue_view_on());
         assert_eq!(crate::testing::count_id(&s.app, "App::cull-mode-button"), 1);
-        assert_eq!(crate::testing::count_labeled(&s.app, WHY), 0);
+        assert_eq!(crate::testing::count_id(&s.app, WHY), 0);
         teardown(s);
     }
 

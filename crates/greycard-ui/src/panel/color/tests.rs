@@ -45,10 +45,33 @@ fn the_preview_is_the_identity_at_the_base_white_point() {
     }
 }
 
-/// The center of whatever is labeled `label`, scrolled into view.
-fn center(app: &App, label: &str) -> (f32, f32) {
-    let (at, size) = crate::testing::labeled(app, label);
+/// A grading wheel, keyed by its range: 0 the shadows, 1 the
+/// mid-tones, 2 the highlights.
+const GRADE_WHEEL: &str = "GradingSection::grade-wheel";
+
+/// The center of the element `id` keyed `key`, scrolled into view.
+fn center_of(app: &App, id: &str, key: usize) -> (f32, f32) {
+    let (at, size) = crate::testing::by_key(app, id, key);
     (at.x + size.width / 2.0, at.y + size.height / 2.0)
+}
+
+/// The center of the grading wheel of the range `range`.
+fn wheel(app: &App, range: usize) -> (f32, f32) {
+    center_of(app, GRADE_WHEEL, range)
+}
+
+/// The center of the name under the grading wheel of the range
+/// `range`, which enlarges it or shrinks it again.
+fn wheel_name(app: &App, range: usize) -> (f32, f32) {
+    center_of(app, "GradingSection::wheel-name", range)
+}
+
+/// What the name under the wheel of `range` offers a screen reader.
+fn wheel_name_says(app: &App, range: usize) -> String {
+    crate::testing::keyed(app, "GradingSection::wheel-name", range)
+        .and_then(|e| e.accessible_label())
+        .unwrap_or_default()
+        .to_string()
 }
 
 /// The grading the panel holds, wheel by wheel.
@@ -65,10 +88,10 @@ fn sliders(app: &App) -> Wheel {
     }
 }
 
-/// A drag across the wheel labeled `label`, from its center out to
-/// the right and up: a hue a little over 0 and some strength.
-fn drag_wheel(app: &App, label: &str, up: f32) {
-    let (x, y) = center(app, label);
+/// A drag across the wheel of the range `range`, from its center
+/// out to the right and up: a hue a little over 0 and some strength.
+fn drag_wheel(app: &App, range: usize, up: f32) {
+    let (x, y) = wheel(app, range);
     crate::testing::drag(app, &[(x, y), (x + 10.0, y), (x + 25.0, y - up)]);
 }
 
@@ -90,9 +113,9 @@ fn the_sliders_follow_the_chosen_wheel(app: &App, state: &Rc<Shared>, prefix: &s
 
     // Three wheels with three different points, each dragged, the
     // highlights last.
-    drag_wheel(app, "Shadows wheel", 5.0);
-    drag_wheel(app, "Midtones wheel", 15.0);
-    drag_wheel(app, "Highlights wheel", 25.0);
+    drag_wheel(app, 0, 5.0);
+    drag_wheel(app, 1, 15.0);
+    drag_wheel(app, 2, 25.0);
     let before = wheels(app);
     assert_eq!(app.get_grade_range(), 2);
     assert!(
@@ -104,7 +127,7 @@ fn the_sliders_follow_the_chosen_wheel(app: &App, state: &Rc<Shared>, prefix: &s
     // A click in the shadows wheel, up and to the right of its
     // center: chosen, its point at the click (a hue of 45 degrees),
     // the sliders on its new values, the others unmoved.
-    let (x, y) = center(app, "Shadows wheel");
+    let (x, y) = wheel(app, 0);
     click(app, x + 20.0, y - 20.0);
     assert_eq!(app.get_grade_range(), 0, "the marker follows the click");
     let clicked = wheels(app);
@@ -130,7 +153,12 @@ fn the_sliders_follow_the_chosen_wheel(app: &App, state: &Rc<Shared>, prefix: &s
     );
 
     // Enlarging the mid-tones chooses them too.
-    let (x, y) = center(app, "Enlarge Midtones");
+    let midtones = crate::i18n::text("Midtones");
+    assert_eq!(
+        wheel_name_says(app, 1),
+        crate::tr!("Enlarge {}", midtones.as_str())
+    );
+    let (x, y) = wheel_name(app, 1);
     click(app, x, y);
     // The section grows to the enlarged wheel over its 120ms
     // animation, which the mock clock only runs when told.
@@ -154,7 +182,7 @@ fn the_sliders_follow_the_chosen_wheel(app: &App, state: &Rc<Shared>, prefix: &s
     // left of its center: chosen, its point at the click (a hue of
     // 180 degrees); the enlarged one keeps its size and its point
     // and loses the mark.
-    let (x, y) = center(app, "Highlights wheel");
+    let (x, y) = wheel(app, 2);
     click(app, x - 20.0, y);
     assert_eq!(app.get_grade_range(), 2);
     assert_eq!(app.get_grade_big(), 1);
@@ -165,7 +193,11 @@ fn the_sliders_follow_the_chosen_wheel(app: &App, state: &Rc<Shared>, prefix: &s
     assert_eq!(sliders(app), pressed[2]);
 
     // Shrinking it chooses it again.
-    let (x, y) = center(app, "Shrink Midtones");
+    assert_eq!(
+        wheel_name_says(app, 1),
+        crate::tr!("Shrink {}", midtones.as_str())
+    );
+    let (x, y) = wheel_name(app, 1);
     click(app, x, y);
     assert_eq!(app.get_grade_big(), -1);
     assert_eq!(app.get_grade_range(), 1);
@@ -335,9 +367,9 @@ fn shift_holds_a_wheels_hue_and_ctrl_its_strength() {
     };
 
     // Scrolled into view, and measured where the scroll leaves it.
-    center(&app, "Shadows wheel");
+    wheel(&app, 0);
     i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_secs(1));
-    let (x, y) = center(&app, "Shadows wheel");
+    let (x, y) = wheel(&app, 0);
     check(
         &[
             (x + 20.0, y - 5.0),
@@ -354,8 +386,8 @@ fn shift_holds_a_wheels_hue_and_ctrl_its_strength() {
     assert_eq!(app.get_wheel_hand(), 0, "the wheel pressed is in hand");
 
     let ring =
-        i_slint_backend_testing::ElementHandle::find_by_element_type_name(&app, "CurveEditor")
-            .find(|e| e.size().width == 176.0)
+        i_slint_backend_testing::ElementHandle::find_by_element_id(&app, "TintSection::ring")
+            .next()
             .expect("the tint ring is on screen");
     let (at, size) = (ring.absolute_position(), ring.size());
     let (x, y) = (at.x + size.width / 2.0, at.y + size.height / 2.0);
@@ -423,9 +455,9 @@ fn a_move_carries_the_keys_into_the_drag() {
             .dispatch_event(WindowEvent::PointerMoved { position: at(p) })
     };
     let read = || (wheels(&app)[0].hue, wheels(&app)[0].saturation);
-    center(&app, "Shadows wheel");
+    wheel(&app, 0);
     i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_secs(1));
-    let (cx, cy) = center(&app, "Shadows wheel");
+    let (cx, cy) = wheel(&app, 0);
     to((cx + 25.0, cy));
     app.window().dispatch_event(WindowEvent::PointerPressed {
         position: at((cx + 25.0, cy)),
@@ -459,9 +491,9 @@ fn mid_drag() -> (App, Rc<Shared>, Rc<Worker>, (f32, f32)) {
     let (state, worker) = testing::state_for(&app, testing::folder(2));
     app.invoke_select(0);
     app.set_panel_tab("Develop".into());
-    center(&app, "Shadows wheel");
+    wheel(&app, 0);
     i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_secs(1));
-    let (cx, cy) = center(&app, "Shadows wheel");
+    let (cx, cy) = wheel(&app, 0);
     let at = slint::LogicalPosition::new(cx + 25.0, cy);
     app.window()
         .dispatch_event(WindowEvent::PointerMoved { position: at });
@@ -788,16 +820,16 @@ fn a_key_held_mid_drag_holds_the_wheel_from_there() {
     };
 
     // Scrolled into view, and measured where the scroll leaves it.
-    center(&app, "Shadows wheel");
+    wheel(&app, 0);
     i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_secs(1));
-    check(center(&app, "Shadows wheel"), &|| {
+    check(wheel(&app, 0), &|| {
         (wheels(&app)[0].hue, wheels(&app)[0].saturation)
     });
     assert_eq!(app.get_wheel_hand(), 0);
 
     let ring =
-        i_slint_backend_testing::ElementHandle::find_by_element_type_name(&app, "CurveEditor")
-            .find(|e| e.size().width == 176.0)
+        i_slint_backend_testing::ElementHandle::find_by_element_id(&app, "TintSection::ring")
+            .next()
             .expect("the tint ring is on screen");
     let (pos, size) = (ring.absolute_position(), ring.size());
     check(
@@ -884,8 +916,8 @@ fn a_lone_release_on_the_tint_ring_is_nothing() {
         app.on_tint_release(move || releases.set(releases.get() + 1));
     }
     let ring =
-        i_slint_backend_testing::ElementHandle::find_by_element_type_name(&app, "CurveEditor")
-            .find(|e| e.size().width == 176.0)
+        i_slint_backend_testing::ElementHandle::find_by_element_id(&app, "TintSection::ring")
+            .next()
             .expect("the tint ring is on screen");
     let (at, size) = (ring.absolute_position(), ring.size());
     let (x, y) = (at.x + size.width / 2.0, at.y + size.height / 2.0);
@@ -955,25 +987,29 @@ fn click_header_switch(app: &App, section: &str) {
 }
 
 /// The control `id` names ("Toggle::root", "PanelButton::root")
-/// around the words `label`, scrolled into view.
-fn control_around(app: &App, id: &str, label: &str) -> i_slint_backend_testing::ElementHandle {
+/// around what a screen reader hears as the catalog's `msgid`,
+/// scrolled into view: for a test whose subject is the words.
+fn control_around(app: &App, id: &str, msgid: &str) -> i_slint_backend_testing::ElementHandle {
     use i_slint_backend_testing::ElementHandle;
-    let (at, size) = crate::testing::labeled(app, label);
+    let (at, size) = crate::testing::spoken_bounds(app, msgid);
     let (x, y) = (at.x + size.width / 2.0, at.y + size.height / 2.0);
     ElementHandle::find_by_element_id(app, id)
         .find(|e| {
             let (p, s) = (e.absolute_position(), e.size());
             x >= p.x && x <= p.x + s.width && y >= p.y && y <= p.y + s.height
         })
-        .unwrap_or_else(|| panic!("no {id} around {label:?}"))
+        .unwrap_or_else(|| panic!("no {id} around {msgid:?}"))
 }
 
-/// Whether the control `id` names around the words `label` takes a
-/// hand, as it tells a screen reader.
-fn control_enabled(app: &App, id: &str, label: &str) -> bool {
-    control_around(app, id, label)
+/// Whether the control `id` takes a hand, as it tells a screen
+/// reader.
+fn control_enabled(app: &App, id: &str) -> bool {
+    crate::testing::by_id(app, id);
+    crate::testing::all_by_id(app, id)
+        .first()
+        .unwrap_or_else(|| panic!("no {id}"))
         .accessible_enabled()
-        .unwrap_or_else(|| panic!("{id} around {label:?} says nothing of it"))
+        .unwrap_or_else(|| panic!("{id} says nothing of it"))
 }
 
 /// What a screen reader hears of `e`: its role, its name, whether
@@ -998,19 +1034,19 @@ fn heard(
     )
 }
 
-/// The one element a screen reader knows as `label` in `role`,
-/// scrolled into view.
+/// The one element a screen reader knows as the catalog's `msgid`
+/// in `role`, scrolled into view.
 fn the_one(
     app: &App,
     role: i_slint_backend_testing::AccessibleRole,
-    label: &str,
+    msgid: &str,
 ) -> i_slint_backend_testing::ElementHandle {
-    use i_slint_backend_testing::ElementHandle;
-    crate::testing::labeled(app, label);
-    let found: Vec<_> = ElementHandle::find_by_accessible_label(app, label)
+    crate::testing::spoken_bounds(app, msgid);
+    let found: Vec<_> = crate::testing::spoken(app, msgid)
+        .into_iter()
         .filter(|e| e.accessible_role() == Some(role))
         .collect();
-    assert_eq!(found.len(), 1, "one {role:?} named {label:?}");
+    assert_eq!(found.len(), 1, "one {role:?} named {msgid:?}");
     found.into_iter().next().unwrap()
 }
 
@@ -1027,6 +1063,10 @@ fn a_screen_reader_hears_the_white_balance() {
     use i_slint_backend_testing::AccessibleRole::{Button, Switch, Text};
     let m = mono("mono-heard", true);
     let app = &m.app;
+    // The words heard, in the window's language.
+    let as_shot_words = crate::i18n::text("As shot");
+    let undo_words = crate::i18n::text("Undo");
+    let wb_words = crate::i18n::text("WHITE BALANCE");
     for (row, monochrome) in [(1, false), (0, true)] {
         app.set_panel_tab("Develop".into());
         app.invoke_tab_changed("Develop".into());
@@ -1038,13 +1078,13 @@ fn a_screen_reader_hears_the_white_balance() {
             heard(&as_shot),
             (
                 Some(Switch),
-                "As shot".into(),
+                as_shot_words.clone(),
                 live,
                 Some(app.get_as_shot())
             ),
         );
         assert_eq!(
-            crate::testing::count_labeled(app, "As shot"),
+            crate::testing::spoken(app, "As shot").len(),
             1,
             "heard once"
         );
@@ -1052,14 +1092,14 @@ fn a_screen_reader_hears_the_white_balance() {
         assert_eq!(heard(&neutral), (Some(Button), String::new(), live, None));
         assert_eq!(the_one(app, Text, "Neutral").accessible_role(), Some(Text));
         assert_eq!(
-            crate::testing::count_labeled(app, "Neutral"),
+            crate::testing::spoken(app, "Neutral").len(),
             1,
             "heard once"
         );
         // The picture-alone button itself.
         let undo: Vec<_> =
             i_slint_backend_testing::ElementHandle::find_by_element_id(app, "PanelButton::root")
-                .filter(|e| e.accessible_label().as_deref() == Some("Undo"))
+                .filter(|e| e.accessible_label().as_deref() == Some(undo_words.as_str()))
                 .collect();
         assert_eq!(undo.len(), 1, "one button named Undo by its words");
         assert_eq!(heard(&undo[0]).0, Some(Button));
@@ -1073,12 +1113,7 @@ fn a_screen_reader_hears_the_white_balance() {
         assert!(app.get_local_wb_on());
         assert_eq!(
             heard(&switch),
-            (
-                Some(Switch),
-                "WHITE BALANCE".into(),
-                live,
-                Some(!monochrome)
-            ),
+            (Some(Switch), wb_words.clone(), live, Some(!monochrome)),
         );
     }
 }
@@ -1323,16 +1358,12 @@ impl Mono {
         self.settle();
     }
 
-    /// A click on the button labeled `label` in the white
-    /// balance's row of Neutral, and on its right edge (a menu's
-    /// chevron) too.
-    fn click_row(&self, label: &str) {
+    /// A click on the button `id` in the white balance's row of
+    /// Neutral, and on its right edge (a menu's chevron) too.
+    fn click_row(&self, id: &str) {
         let (neutral, _) = crate::testing::by_id(&self.app, "WhiteBalanceSection::neutral-button");
-        let (at, size) =
-            i_slint_backend_testing::ElementHandle::find_by_accessible_label(&self.app, label)
-                .map(|e| (e.absolute_position(), e.size()))
-                .find(|(at, _)| (at.y - neutral.y).abs() < 4.0)
-                .unwrap_or_else(|| panic!("no {label:?} by Neutral"));
+        let (at, size) = crate::testing::by_id(&self.app, id);
+        assert!((at.y - neutral.y).abs() < 4.0, "{id} by Neutral");
         let y = at.y + size.height / 2.0;
         crate::testing::click(&self.app, at.x + size.width / 2.0, y);
         crate::testing::click(&self.app, at.x + size.width + 12.0, y);
@@ -1350,7 +1381,7 @@ impl Mono {
     fn presets_shown(&self) -> usize {
         WHITE_PRESETS
             .iter()
-            .map(|(n, ..)| crate::testing::count_labeled(&self.app, n))
+            .map(|(n, ..)| crate::testing::count_menu_entries(&self.app, n))
             .sum()
     }
 }
@@ -1388,17 +1419,17 @@ fn a_monochrome_frames_white_balance_rests() {
 
     let before = m.moved();
     assert!(!m.enabled(TEMPERATURE) && !m.enabled(TINT));
-    assert!(!control_enabled(app, "Toggle::root", "As shot"));
-    assert!(!control_enabled(app, "PanelButton::root", "Neutral"));
+    assert!(!control_enabled(app, "WhiteBalanceSection::as-shot-toggle"));
+    assert!(!control_enabled(app, "WhiteBalanceSection::neutral-button"));
     m.drag(TEMPERATURE);
     m.drag(TINT);
     m.double_click(TEMPERATURE);
     m.double_click(TINT);
     crate::testing::click_switch_by_id(app, "WhiteBalanceSection::as-shot-toggle");
     m.settle();
-    m.click_row("Auto");
+    m.click_row("WhiteBalanceSection::auto-button");
     assert!(!app.get_menu_up(), "no presets' menu");
-    m.click_row("Neutral");
+    m.click_row("WhiteBalanceSection::neutral-button");
     assert_eq!(app.get_picking(), "");
     crate::testing::press(app, "w");
     assert_eq!(app.get_picking(), "");
@@ -1458,8 +1489,8 @@ fn a_monochrome_frames_white_balance_rests() {
     m.open(1);
     assert!(!app.get_monochrome_open());
     assert!(m.enabled(TEMPERATURE) && m.enabled(TINT));
-    assert!(control_enabled(app, "Toggle::root", "As shot"));
-    assert!(control_enabled(app, "PanelButton::root", "Neutral"));
+    assert!(control_enabled(app, "WhiteBalanceSection::as-shot-toggle"));
+    assert!(control_enabled(app, "WhiteBalanceSection::neutral-button"));
     let before = m.moved();
     m.drag(TEMPERATURE);
     assert_ne!(m.moved(), before);
@@ -1509,8 +1540,11 @@ fn a_monochrome_frames_mask_white_balance_rests() {
 
     let before = m.moved();
     assert!(!m.enabled(TEMPERATURE) && !m.enabled(TINT));
-    assert!(!control_enabled(app, "Toggle::root", "Follow global"));
-    assert!(!control_enabled(app, "PanelButton::root", "Neutral"));
+    assert!(!control_enabled(
+        app,
+        "WhiteBalanceSection::follow-global-toggle"
+    ));
+    assert!(!control_enabled(app, "WhiteBalanceSection::neutral-button"));
     m.drag(TEMPERATURE);
     m.drag(TINT);
     m.double_click(TEMPERATURE);
@@ -1554,8 +1588,11 @@ fn a_monochrome_frames_mask_white_balance_rests() {
     assert!(!app.get_monochrome_open());
     to_mask();
     assert!(m.enabled(TEMPERATURE) && m.enabled(TINT));
-    assert!(control_enabled(app, "Toggle::root", "Follow global"));
-    assert!(control_enabled(app, "PanelButton::root", "Neutral"));
+    assert!(control_enabled(
+        app,
+        "WhiteBalanceSection::follow-global-toggle"
+    ));
+    assert!(control_enabled(app, "WhiteBalanceSection::neutral-button"));
     let before = m.moved();
     m.drag(TEMPERATURE);
     assert_ne!(m.moved(), before);
@@ -1822,11 +1859,11 @@ fn capture_the_wheel_guides() {
                     // then; the crop, a margin round it (round the
                     // row of three for the grading).
                     let (c, crop) = if ring {
-                        let e = i_slint_backend_testing::ElementHandle::find_by_element_type_name(
+                        let e = i_slint_backend_testing::ElementHandle::find_by_element_id(
                             &app,
-                            "CurveEditor",
+                            "TintSection::ring",
                         )
-                        .find(|e| e.size().width == 176.0)
+                        .next()
                         .expect("the tint ring is on screen");
                         let (at, size) = (e.absolute_position(), e.size());
                         (
@@ -1839,12 +1876,12 @@ fn capture_the_wheel_guides() {
                             ),
                         )
                     } else {
-                        let _ = center(&app, "Shadows wheel");
+                        let _ = wheel(&app, 0);
                         i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_secs(
                             1,
                         ));
-                        let (a, sa) = testing::labeled(&app, "Shadows wheel");
-                        let (b, sb) = testing::labeled(&app, "Highlights wheel");
+                        let (a, sa) = testing::by_key(&app, GRADE_WHEEL, 0);
+                        let (b, sb) = testing::by_key(&app, GRADE_WHEEL, 2);
                         (
                             (a.x + sa.width / 2.0, a.y + sa.height / 2.0),
                             (
@@ -1893,11 +1930,11 @@ fn capture_the_wheel_guides() {
                     // develop settling above), and the snapshot is
                     // of now.
                     let crop = if ring {
-                        let e = i_slint_backend_testing::ElementHandle::find_by_element_type_name(
+                        let e = i_slint_backend_testing::ElementHandle::find_by_element_id(
                             &app,
-                            "CurveEditor",
+                            "TintSection::ring",
                         )
-                        .find(|e| e.size().width == 176.0)
+                        .next()
                         .expect("the tint ring is on screen");
                         let (at, size) = (e.absolute_position(), e.size());
                         (

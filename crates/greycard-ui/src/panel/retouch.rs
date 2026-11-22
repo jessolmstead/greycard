@@ -1290,7 +1290,8 @@ mod tests {
         };
         let (chosen, chosen_feather) = outlines();
         assert!(!chosen.is_empty() && !chosen_feather.is_empty());
-        let (p, size) = crate::testing::labeled(&app, "Heal 2");
+        // The second patch's row, keyed by its place.
+        let (p, size) = crate::testing::by_key(&app, "RetouchSection::prow", 1);
         app.window().dispatch_event(WindowEvent::PointerMoved {
             position: slint::LogicalPosition::new(p.x + size.width / 2.0, p.y + size.height / 2.0),
         });
@@ -1312,7 +1313,7 @@ mod tests {
         });
         assert_eq!(app.get_patch_lit(), -1);
         // The whole row counts: the chosen row's bin too.
-        let (p, size) = crate::testing::labeled(&app, "Remove Heal 1");
+        let (p, size) = crate::testing::by_key(&app, "RetouchSection::patch-bin", 0);
         app.window().dispatch_event(WindowEvent::PointerMoved {
             position: slint::LogicalPosition::new(p.x + size.width / 2.0, p.y + size.height / 2.0),
         });

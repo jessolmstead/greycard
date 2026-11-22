@@ -1633,18 +1633,16 @@ mod tests {
             }
         };
         settle();
+        // The sheet's last line, the note under Verify.
         let last = || {
-            ElementHandle::find_by_element_type_name(&app, "Text")
-                .find(|e| {
-                    e.accessible_label()
-                        .is_some_and(|l| l.starts_with("Verify compares"))
-                })
+            ElementHandle::find_by_element_id(&app, "ImportSheet::verify-note")
+                .next()
                 .map(|e| (e.absolute_position().y, e.size().height))
         };
         let pane = || {
-            ElementHandle::find_by_element_type_name(&app, "Flickable")
+            ElementHandle::find_by_element_id(&app, "ImportSheet::scroll")
+                .next()
                 .map(|e| (e.absolute_position(), e.size()))
-                .find(|(p, s)| s.width > 500.0 && s.width < 540.0 && p.y > 0.0)
                 .expect("the sheet's pane")
         };
         // Room for all of it: the last line inside the pane.

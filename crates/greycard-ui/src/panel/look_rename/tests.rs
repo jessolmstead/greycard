@@ -417,7 +417,7 @@ fn the_sheet_renames_a_look_and_everything_of_the_folder_that_names_it() {
     assert!(app.get_look_renamable());
     // The section's body grows to its rows over a moment.
     for _ in 0..4 {
-        crate::testing::count_labeled(&app, "x");
+        crate::testing::count_id(&app, "x");
         i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(300));
         slint::platform::update_timers_and_animations();
     }

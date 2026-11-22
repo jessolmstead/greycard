@@ -1,7 +1,33 @@
 use super::*;
 
 use crate::Pt;
-use crate::testing::{click, count_labeled, window};
+use crate::testing::{click, window};
+
+/// A row of the Adjustments list, keyed by its place: 0 Global, then
+/// each mask in turn.
+const MASK_ROW: &str = "AdjustmentsList::mask-item";
+
+/// Where the Adjustments list's row `i` (0 Global) is: none while it
+/// is scrolled out of the list, which builds only what is in sight.
+fn mask_row(app: &App, i: usize) -> Vec<(slint::LogicalPosition, slint::LogicalSize)> {
+    crate::testing::keyed(app, MASK_ROW, i)
+        .map(|e| crate::testing::bounds_of(&e))
+        .into_iter()
+        .collect()
+}
+
+/// The middle of the bin of the Adjustments list's row `i`, the
+/// chosen one.
+fn mask_bin(app: &App, i: usize) -> (f32, f32) {
+    let row = crate::testing::keyed(app, MASK_ROW, i).unwrap_or_else(|| panic!("no row {i}"));
+    let bin = row
+        .query_descendants()
+        .match_id("AdjustmentsList::mask-bin")
+        .find_first()
+        .unwrap_or_else(|| panic!("row {i} has no bin"));
+    let (at, size) = crate::testing::bounds_of(&bin);
+    (at.x + size.width / 2.0, at.y + size.height / 2.0)
+}
 use crate::worker::Outcome;
 use std::cell::Cell;
 
@@ -1819,8 +1845,14 @@ fn new_mask_is_there_with_nothing_chosen_and_no_shape_button_yet() {
         crate::testing::count_id(&app, "AdjustmentsList::new-mask-button"),
         1
     );
-    assert_eq!(count_labeled(&app, "Subject"), 0);
-    assert_eq!(count_labeled(&app, "Background"), 0);
+    assert_eq!(
+        crate::testing::count_id(&app, "AdjustmentsSection::shape-subject"),
+        0
+    );
+    assert_eq!(
+        crate::testing::count_id(&app, "AdjustmentsSection::shape-background"),
+        0
+    );
 }
 
 /// The Masks tab's own read of the roadmap line this redesign is
@@ -1864,11 +1896,11 @@ fn the_shape_buttons_and_new_mask_each_appear_once() {
         settle_layout(&app);
     }
     // Counted over the whole window, by what they are: panel
-    // buttons carrying the word, so a second way to the same shape
-    // anywhere (the list, a menu) is caught, and the mixer's
-    // Luminance slider is not one.
-    let buttons = |label: &str| {
-        let label = slint::SharedString::from(label);
+    // buttons carrying the word, in the window's language, so a
+    // second way to the same shape anywhere (the list, a menu) is
+    // caught, and the mixer's Luminance slider is not one.
+    let buttons = |msgid: &str| {
+        let label = slint::SharedString::from(crate::i18n::text(msgid));
         ElementHandle::find_by_element_type_name(&app, "PanelButton")
             .filter(|b| {
                 let label = label.clone();
@@ -2528,7 +2560,7 @@ fn the_grey_around_the_picture_is_not_the_body() {
 /// follows changes: the layout is read first, then the clock run.
 fn settle_layout(app: &App) {
     for _ in 0..2 {
-        placed(app, "Global");
+        mask_row(app, 0);
         i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(500));
         slint::platform::update_timers_and_animations();
     }
@@ -2545,21 +2577,6 @@ fn placed_id(app: &App, id: &str) -> Vec<(slint::LogicalPosition, slint::Logical
     found
 }
 
-/// Where each element labeled `label` is, whatever its role, top
-/// first.
-fn placed(app: &App, label: &str) -> Vec<(slint::LogicalPosition, slint::LogicalSize)> {
-    use i_slint_backend_testing::ElementHandle;
-    app.window()
-        .dispatch_event(slint::platform::WindowEvent::PointerMoved {
-            position: slint::LogicalPosition::new(0.0, 0.0),
-        });
-    let mut found: Vec<_> = ElementHandle::find_by_accessible_label(app, label)
-        .map(|e| (e.absolute_position(), e.size()))
-        .collect();
-    found.sort_by(|a, b| a.0.y.total_cmp(&b.0.y));
-    found
-}
-
 /// The Adjustments list is pinned above the Masks tab's sections:
 /// with the sections scrolled down to the tint, the last of them, Global
 /// and each mask are still in sight, where they were before the
@@ -2567,7 +2584,6 @@ fn placed(app: &App, label: &str) -> Vec<(slint::LogicalPosition, slint::Logical
 /// chooses it.
 #[test]
 fn the_adjustments_list_stays_in_reach_from_far_down_the_tab() {
-    use crate::testing::buttons;
     let app = window(1);
     // Tall enough for all three rows in sight.
     app.window()
@@ -2578,13 +2594,13 @@ fn the_adjustments_list_stays_in_reach_from_far_down_the_tab() {
     app.invoke_new_mask();
     app.invoke_target_changed(1);
     settle_layout(&app);
-    let global_at = buttons(&app, "Global")[0].0;
+    let global_at = mask_row(&app, 0)[0].0;
 
     // Far down: the tint's Amount, at the foot of the tab, is in
     // the view under the list.
     let (amount, _) = crate::testing::by_id(&app, "TintSection::amount-slider");
     assert!(app.get_panel_scroll() < -1500.0, "the sections scrolled");
-    let global = buttons(&app, "Global");
+    let global = mask_row(&app, 0);
     assert_eq!(global.len(), 1);
     assert_eq!(global[0].0.y, global_at.y, "the list does not scroll");
     let foot = placed_id(&app, "AdjustmentsList::new-mask-button")[0];
@@ -2602,7 +2618,7 @@ fn the_adjustments_list_stays_in_reach_from_far_down_the_tab() {
     settle_layout(&app);
     crate::testing::by_id(&app, "TintSection::amount-slider");
     assert!(app.get_panel_scroll() < -1500.0, "the sections scrolled");
-    let second = buttons(&app, "Mask 2");
+    let second = mask_row(&app, 2);
     assert_eq!(second.len(), 1);
     let (at, size) = second[0];
     click(&app, at.x + size.width / 2.0, at.y + size.height / 2.0);
@@ -2616,7 +2632,6 @@ fn the_adjustments_list_stays_in_reach_from_far_down_the_tab() {
 /// and back at its head on Global.
 #[test]
 fn a_long_adjustments_list_scrolls_inside_itself() {
-    use crate::testing::buttons;
     let app = window(1);
     // A tall desktop window, the whole of the mask's section on it
     // with Refine edge under the toggles.
@@ -2626,11 +2641,11 @@ fn a_long_adjustments_list_scrolls_inside_itself() {
     app.set_panel_tab("Masks".into());
     settle_layout(&app);
     // Global alone: the list's top, and how far below it New mask is.
-    let top = buttons(&app, "Global")[0].0.y;
+    let top = mask_row(&app, 0)[0].0.y;
     let alone = placed_id(&app, "AdjustmentsList::new-mask-button")[0].0.y - top;
     app.invoke_new_mask();
     settle_layout(&app);
-    let pitch = buttons(&app, "Mask 1")[0].0.y - top;
+    let pitch = mask_row(&app, 1)[0].0.y - top;
     assert!(pitch > 0.0);
 
     for _ in 1..10 {
@@ -2644,17 +2659,17 @@ fn a_long_adjustments_list_scrolls_inside_itself() {
         "six rows shown, not eleven: New mask {} below the list's top",
         new_mask.0.y - top
     );
-    let chosen = buttons(&app, "Mask 10")[0];
+    let chosen = mask_row(&app, 10)[0];
     assert!(chosen.0.y >= top - 0.5, "the chosen row is in sight");
     assert!(chosen.0.y + chosen.1.height <= new_mask.0.y);
     // Scrolled up out of the list, and so out of sight.
-    assert!(buttons(&app, "Global").is_empty(), "Global scrolled out");
+    assert!(mask_row(&app, 0).is_empty(), "Global scrolled out");
 
     app.invoke_target_changed(0);
     settle_layout(&app);
-    let global = buttons(&app, "Global")[0];
+    let global = mask_row(&app, 0)[0];
     assert!((global.0.y - top).abs() < 0.5, "Global back at the head");
-    let (at, size) = buttons(&app, "Mask 3")[0];
+    let (at, size) = mask_row(&app, 3)[0];
     assert!(at.y + size.height <= new_mask.0.y);
     click(&app, at.x + size.width / 2.0, at.y + size.height / 2.0);
     assert_eq!(app.get_target(), 3);
@@ -2669,7 +2684,7 @@ fn a_long_adjustments_list_scrolls_inside_itself() {
         settle_layout(&app);
     }
     assert_eq!(app.get_adjustment_names().row_count(), 4);
-    let global = buttons(&app, "Global")[0];
+    let global = mask_row(&app, 0)[0];
     assert!((global.0.y - top).abs() < 0.5, "Global at the head again");
     let new_mask = placed_id(&app, "AdjustmentsList::new-mask-button")[0];
     assert!((new_mask.0.y - top - (alone + 3.0 * pitch)).abs() < 1.0);
@@ -2691,16 +2706,33 @@ fn the_folded_adjustments_list_names_the_chosen_row() {
         placed_id(&app, "AdjustmentsList::new-mask-button").is_empty(),
         "the rows are folded away"
     );
-    assert!(placed(&app, "Mask 2").is_empty());
+    assert!(mask_row(&app, 1).is_empty() && mask_row(&app, 2).is_empty());
     // The header's note, and the mask section's heading, which
     // shows the name as typed.
-    assert_eq!(placed(&app, "Mask 1").len(), 2);
+    let said = |section: &str, part: &str| {
+        crate::testing::section_part(&app, section, part)
+            .and_then(|e| e.accessible_label())
+            .map(|l| l.to_string())
+    };
+    let name = app.get_adjustment_names().row_data(1).unwrap().to_string();
+    assert_eq!(
+        said("AdjustmentsList", "Section::note-text"),
+        Some(name.clone())
+    );
+    assert_eq!(
+        said("AdjustmentsSection", "Section::owner-text"),
+        Some(name)
+    );
 }
 
-/// Where the bottom of the panel's footer (Fit and Export) is: the
-/// lowest "Fit", since the zoom's words say "Fit" too, higher up.
+/// Where the bottom of the panel's footer (Fit and Export) is: its
+/// Fit button's top.
 fn footer_y(app: &App) -> f32 {
-    placed(app, "Fit").last().expect("the footer").0.y
+    placed_id(app, "App::fit-button")
+        .last()
+        .expect("the footer")
+        .0
+        .y
 }
 
 /// In a short window, or under a tall scope, the list gives up
@@ -2715,11 +2747,7 @@ fn a_short_panel_keeps_its_footer_with_a_long_list() {
     for _ in 0..10 {
         app.invoke_new_mask();
     }
-    let shown = |app: &App| {
-        (0..=10)
-            .filter(|i| !crate::testing::buttons(app, &format!("Mask {i}")).is_empty())
-            .count()
-    };
+    let shown = |app: &App| (0..=10).filter(|i| !mask_row(app, *i).is_empty()).count();
     for scope in ["RGB", "Wave", "Vector"] {
         app.set_scope(scope.into());
         for height in [650.0, 700.0, 800.0, 900.0] {
@@ -2754,7 +2782,7 @@ fn a_short_panel_keeps_its_footer_with_a_long_list() {
                 "{scope} at {height}: {rows} rows over a view of {view}"
             );
             assert!(
-                !placed(&app, "Mask 10").is_empty(),
+                !mask_row(&app, 10).is_empty(),
                 "{scope} at {height}: the chosen row is in sight"
             );
         }
@@ -2896,7 +2924,6 @@ fn the_masks_sections_keep_their_room_under_the_list() {
 /// target that does not.
 #[test]
 fn the_chosen_row_is_in_sight_when_the_list_comes_back() {
-    use crate::testing::buttons;
     let app = window(1);
     // Tall enough for rows to scroll under the wheel.
     app.window()
@@ -2908,12 +2935,12 @@ fn the_chosen_row_is_in_sight_when_the_list_comes_back() {
     }
     app.invoke_target_changed(9);
     settle_layout(&app);
-    assert_eq!(buttons(&app, "Mask 9").len(), 1);
+    assert_eq!(mask_row(&app, 9).len(), 1);
     app.set_panel_tab("Develop".into());
     settle_layout(&app);
     app.set_panel_tab("Masks".into());
     settle_layout(&app);
-    assert_eq!(buttons(&app, "Mask 9").len(), 1, "Mask 9 in sight again");
+    assert_eq!(mask_row(&app, 9).len(), 1, "Mask 9 in sight again");
 
     // Global chosen and the list scrolled to its foot by the wheel,
     // then fewer rows with Global still chosen and the list as tall
@@ -2921,7 +2948,7 @@ fn the_chosen_row_is_in_sight_when_the_list_comes_back() {
     // shows the chosen row again, Global at its head.
     app.invoke_target_changed(0);
     settle_layout(&app);
-    let (global, size) = buttons(&app, "Global")[0];
+    let (global, size) = mask_row(&app, 0)[0];
     app.window()
         .dispatch_event(slint::platform::WindowEvent::PointerScrolled {
             position: slint::LogicalPosition::new(global.x + size.width / 2.0, global.y + 40.0),
@@ -2929,17 +2956,14 @@ fn the_chosen_row_is_in_sight_when_the_list_comes_back() {
             delta_y: -400.0,
         });
     settle_layout(&app);
-    assert!(
-        buttons(&app, "Global").is_empty(),
-        "the wheel scrolled the list"
-    );
+    assert!(mask_row(&app, 0).is_empty(), "the wheel scrolled the list");
     let names: Vec<slint::SharedString> = std::iter::once("Global".into())
         .chain((1..=8).map(|i| format!("Mask {i}").into()))
         .collect();
     app.set_adjustment_names(std::rc::Rc::new(slint::VecModel::from(names)).into());
     app.set_adjustment_on(std::rc::Rc::new(slint::VecModel::from(vec![true; 8])).into());
     settle_layout(&app);
-    let head = buttons(&app, "Global");
+    let head = mask_row(&app, 0);
     assert_eq!(head.len(), 1, "Global in sight");
     assert_eq!(head[0].0.y, global.y, "Global at the head");
 }
@@ -2950,16 +2974,23 @@ fn the_chosen_row_is_in_sight_when_the_list_comes_back() {
 /// when the bin is pressed.
 #[test]
 fn a_mask_s_bin_says_remove_after_a_rest_and_the_word_goes_with_a_press() {
-    use crate::testing::rest_on;
-    use slint::Model;
-
     let app = window(1);
     let (_state, _worker) = crate::testing::state_for(&app, Vec::new());
     app.set_panel_tab("Masks".into());
     app.invoke_new_mask();
     app.invoke_target_changed(1);
-    let name = app.get_adjustment_names().row_data(1).expect("the mask");
-    let label = format!("Remove {name}");
+    let rest_on_bin = || {
+        let (x, y) = mask_bin(&app, 1);
+        app.window()
+            .dispatch_event(slint::platform::WindowEvent::PointerMoved {
+                position: slint::LogicalPosition::new(x, y),
+            });
+        slint::platform::update_timers_and_animations();
+        i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(800));
+        slint::platform::update_timers_and_animations();
+        (x, y)
+    };
+    let remove = crate::i18n::text("Remove");
     let away = || {
         app.window()
             .dispatch_event(slint::platform::WindowEvent::PointerMoved {
@@ -2969,12 +3000,12 @@ fn a_mask_s_bin_says_remove_after_a_rest_and_the_word_goes_with_a_press() {
     };
 
     assert_eq!(app.get_tip_text(), "", "no word before a rest");
-    let (x, y) = rest_on(&app, &label);
-    assert_eq!(app.get_tip_text(), "Remove", "the bin's word after a rest");
+    let (x, y) = rest_on_bin();
+    assert_eq!(app.get_tip_text(), remove, "the bin's word after a rest");
     away();
     assert_eq!(app.get_tip_text(), "", "gone with the pointer");
-    rest_on(&app, &label);
-    assert_eq!(app.get_tip_text(), "Remove");
+    rest_on_bin();
+    assert_eq!(app.get_tip_text(), remove);
     click(&app, x, y);
     assert_eq!(app.get_tip_text(), "", "gone with the press");
 }
@@ -3384,11 +3415,12 @@ fn a_hovered_masks_row_lights_its_mask() {
     }
     app.set_panel_tab("Masks".into());
     app.set_target(1);
-    let at = |label: &str| {
-        let (p, size) = crate::testing::labeled(&app, label);
+    // The rows of the masks named Left and Right, the first two.
+    let at = |i: usize| {
+        let (p, size) = crate::testing::by_key(&app, MASK_ROW, i);
         slint::LogicalPosition::new(p.x + size.width / 2.0, p.y + size.height / 2.0)
     };
-    let (left, right) = (at("Left"), at("Right"));
+    let (left, right) = (at(1), at(2));
     let to = |position| {
         app.window()
             .dispatch_event(WindowEvent::PointerMoved { position })
@@ -3449,13 +3481,14 @@ fn a_hovered_masks_row_lights_its_mask() {
     // The chosen row's bin counts as the row. Its switch does not:
     // the overlay goes down there, so a toggle shows the
     // adjustment's effect alone, and comes back on the row.
-    let (row, _) = crate::testing::labeled(&app, "Right");
+    let (row, _) = crate::testing::by_key(&app, MASK_ROW, 2);
     to(slint::LogicalPosition::new(row.x + 8.0 + 7.0, right.y));
     assert_eq!(app.get_mask_lit(), -1, "on the switch");
     assert_eq!(shown(), None, "the overlay down on the switch");
     to(right);
     assert_eq!(app.get_mask_lit(), 1, "back on the row");
-    to(at("Remove Left"));
+    let (x, y) = mask_bin(&app, 1);
+    to(slint::LogicalPosition::new(x, y));
     assert_eq!(app.get_mask_lit(), 0, "on the bin");
     to(away);
 

@@ -62,6 +62,10 @@ export component CameraSection inherits Section {
                         // A heading's fold, as the look list's; a
                         // profile by the label it shows.
                         accessible-role: button;
+                        // Its key, for automation: the profile's name
+                        // as the edit stores it, or the heading's
+                        // group key.
+                        accessible-id: row.name;
                         accessible-label: !row.heading ? row.label
                             : row.folded ? @tr("Unfold {}", row.label) : @tr("Fold {}", row.label);
                         accessible-action-default => { self.choose(); }
@@ -149,7 +153,7 @@ export component CameraSection inherits Section {
     }
     // At the foot of the list: every camera's profiles, a view of the
     // list kept in the window's settings, not in the edit.
-    if root.raw-input && root.camera-profiles-any: Toggle {
+    if root.raw-input && root.camera-profiles-any: all-cameras-toggle := Toggle {
         label: @tr("Show all cameras");
         checked <=> root.camera-profiles-all;
         toggled => { root.camera-profiles-all-changed(); }
@@ -230,6 +234,9 @@ export component LookSection inherits Section {
                 look-row := TouchArea {
                     mouse-cursor: MouseCursor.pointer;
                     accessible-role: button;
+                    // Its key, for automation: the look's name as the
+                    // edit stores it, or the heading's group key.
+                    accessible-id: row.name;
                     // Never a bare name: a look may be called anything,
                     // "Fit" included, and the panel's tests find the
                     // footer's Fit by its label.

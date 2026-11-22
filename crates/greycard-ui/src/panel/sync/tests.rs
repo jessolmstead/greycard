@@ -198,14 +198,24 @@ fn a_sync_and_a_paste_carry_the_highlight_fill_with_the_demosaic() {
     assert_eq!(st.line(2).unwrap().current.highlight_fill, None, "off");
 }
 
-/// The sheet's headings as its rows read: each section's title
-/// and how its checks stand, 0 off, 1 some, 2 on.
+/// The sheet's headings as its rows read: each section's settings
+/// name (its key) and how its checks stand, 0 off, 1 some, 2 on.
 fn headings(app: &App) -> Vec<(String, i32)> {
     let rows = app.get_sync_rows();
     (0..rows.row_count())
         .filter_map(|i| rows.row_data(i))
         .filter(|r| r.kind == 0)
-        .map(|r| (r.label.to_string(), r.state))
+        .map(|r| (r.key.to_string(), r.state))
+        .collect()
+}
+
+/// The words of the sheet's headings, as it shows them.
+fn heading_words(app: &App) -> Vec<String> {
+    let rows = app.get_sync_rows();
+    (0..rows.row_count())
+        .filter_map(|i| rows.row_data(i))
+        .filter(|r| r.kind == 0)
+        .map(|r| r.label.to_string())
         .collect()
 }
 
@@ -216,7 +226,7 @@ fn defaults() -> Vec<(String, i32)> {
         .iter()
         .map(|s| {
             (
-                s.title().to_string(),
+                s.name().to_string(),
                 if s.syncs_by_default() { 2 } else { 0 },
             )
         })
@@ -230,7 +240,7 @@ fn choose(app: &App, on: impl Fn(Section) -> bool) {
     let rows = app.get_sync_rows();
     for i in 0..rows.row_count() {
         let r = rows.row_data(i).unwrap();
-        if r.kind == 0 && Section::ALL.iter().any(|s| r.label == s.title() && on(*s)) {
+        if r.kind == 0 && Section::ALL.iter().any(|s| r.key == s.name() && on(*s)) {
             app.invoke_sync_row_toggled(i as i32);
         }
     }
@@ -289,8 +299,14 @@ fn ctrl_click_grows_the_set_and_the_sync_sheet_opens_on_it() {
     );
     let heads = headings(&app);
     assert_eq!(heads.len(), Section::ALL.len());
+    // Each heading says its section's title, in the window's words.
+    let titles: Vec<String> = Section::ALL
+        .iter()
+        .map(|s| crate::i18n::text(s.title()))
+        .collect();
+    assert_eq!(heading_words(&app), titles);
     for ((name, on), s) in heads.iter().zip(Section::ALL) {
-        assert_eq!(name, s.title());
+        assert_eq!(name, s.name());
         assert_eq!(*on, if *s == Section::Adjustments { 0 } else { 2 }, "{s:?}");
     }
     // Escape leaves the sheet, then a second one the set.
@@ -1815,7 +1831,7 @@ fn copy_and_paste_lay_the_copy_over_the_set_and_leave_its_source() {
     // nothing new to lay over, records nothing.
     with_control(&app, || press(&app, "v"));
     for ((name, on), s) in headings(&app).iter().zip(Section::ALL) {
-        assert_eq!(name, s.title());
+        assert_eq!(name, s.name());
         assert_eq!(*on, if *s == Section::Light { 2 } else { 0 }, "{s:?}");
     }
     app.invoke_sync_applied();
@@ -1880,9 +1896,9 @@ fn a_paste_carries_the_display_curve_when_its_row_is_on() {
     let heads = headings(&app);
     let at = heads
         .iter()
-        .position(|(name, _)| name == "Display curve")
+        .position(|(name, _)| name == "display-curve")
         .expect("a Display curve row");
-    assert_eq!(heads[at - 1].0, "Light");
+    assert_eq!(heads[at - 1].0, "light");
     assert_eq!(heads[at].1, 2);
     // Light alone: frame 3 keeps per channel.
     choose(&app, |s| s == Section::Light);
@@ -1948,10 +1964,10 @@ fn a_pasted_display_curve_shows_on_the_frame_on_screen() {
     app.invoke_paste_asked();
     let heads = headings(&app);
     assert!(
-        heads.contains(&("Display curve".to_string(), 0)),
+        heads.contains(&("display-curve".to_string(), 0)),
         "{heads:?}"
     );
-    assert!(heads.contains(&("Light".to_string(), 2)), "{heads:?}");
+    assert!(heads.contains(&("light".to_string(), 2)), "{heads:?}");
     app.invoke_sync_applied();
     assert_eq!(app.get_exposure(), 0.3);
     assert_eq!(app.get_display_curve(), agx);
@@ -2154,7 +2170,6 @@ fn tab_and_shift_tab_go_round_the_paste_sheet() {
 /// the menu's own hand-back, a moment later, takes nothing from it.
 #[test]
 fn the_menus_paste_opens_on_paste_too() {
-    use i_slint_backend_testing::ElementQuery;
     use slint::platform::PointerEventButton;
     let app = window(3);
     app.window()
@@ -2180,13 +2195,24 @@ fn the_menus_paste_opens_on_paste_too() {
         app.window().dispatch_event(event);
     }
     assert!(app.get_menu_up());
-    let item = ElementQuery::from_root(&app)
-        .match_descendants()
-        .match_predicate(|e| {
+    // The menu's Paste by its title in the catalog's words: from the
+    // copied frame, onto the one frame or onto a few.
+    let from = "IMG_0000.CR3";
+    let titles: Vec<String> = std::iter::once(crate::tr!("Paste settings from {}", from))
+        .chain((1..10).map(|n| {
+            crate::tr!(
+                "Paste settings from {} onto {n} frame..."
+                    | "Paste settings from {} onto {n} frames..." % n,
+                from
+            )
+        }))
+        .collect();
+    let item = crate::testing::menu_entries(&app)
+        .into_iter()
+        .find(|e| {
             e.accessible_label()
-                .is_some_and(|l| l.starts_with("Paste settings from IMG_0000.CR3"))
+                .is_some_and(|l| titles.iter().any(|t| l.as_str() == t))
         })
-        .find_first()
         .expect("the menu's Paste");
     item.mock_single_click(PointerEventButton::Left);
     assert!(
@@ -2233,7 +2259,7 @@ fn a_check_tabbed_to_is_scrolled_into_view() {
         .filter(|(_, r)| r.kind == 1)
         .max_by_key(|(_, r)| r.line)
         .unwrap();
-    let low = low.a11y.to_string();
+    let low = low.key.to_string();
     // A button's words: its own label.
     let cancel = ElementHandle::find_by_element_id(&app, "SyncSheet::cancel")
         .next()
@@ -2242,12 +2268,8 @@ fn a_check_tabbed_to_is_scrolled_into_view() {
         .y;
     // Where the check's foot is, if it is drawn at all: one
     // scrolled out of the list's view is not.
-    let bottom = |label: &str| {
-        app.window().dispatch_event(WindowEvent::PointerMoved {
-            position: slint::LogicalPosition::new(0.0, 0.0),
-        });
-        ElementHandle::find_by_accessible_label(&app, label)
-            .next()
+    let bottom = |key: &str| {
+        crate::testing::keyed(&app, "CarryList::check", key)
             .map(|e| e.absolute_position().y + e.size().height)
     };
     assert!(
@@ -2554,41 +2576,30 @@ fn the_filter_field_keeps_its_own_copy_and_paste() {
 /// as `label`, of `role` when one is given: on a check, its box;
 /// otherwise its middle. It must be inside the window, so a click
 /// there lands on it and on nothing else.
-fn spot(
-    app: &App,
-    label: &str,
-    role: Option<i_slint_backend_testing::AccessibleRole>,
-) -> (f32, f32) {
-    use i_slint_backend_testing::ElementHandle;
-    app.window().dispatch_event(WindowEvent::PointerMoved {
-        position: slint::LogicalPosition::new(0.0, 0.0),
-    });
-    let found: Vec<_> = ElementHandle::find_by_accessible_label(app, label)
-        .filter(|e| role.is_none() || e.accessible_role() == role)
-        .collect();
-    assert_eq!(found.len(), 1, "one {label:?} on screen");
-    let (at, size) = (found[0].absolute_position(), found[0].size());
+fn spot(app: &App, key: &str) -> (f32, f32) {
+    assert_eq!(
+        crate::testing::count_keyed(app, "CarryList::check", key),
+        1,
+        "one {key:?} on screen"
+    );
+    let found = crate::testing::keyed(app, "CarryList::check", key).unwrap();
+    let (at, size) = (found.absolute_position(), found.size());
     let window = app.window().size().to_logical(app.window().scale_factor());
     assert!(
         at.x >= 0.0
             && at.y >= 0.0
             && at.x + size.width <= window.width
             && at.y + size.height <= window.height,
-        "{label:?} is off the window"
+        "{key:?} is off the window"
     );
-    match role {
-        Some(_) => (at.x + 7.0, at.y + size.height / 2.0),
-        None => (at.x + size.width / 2.0, at.y + size.height / 2.0),
-    }
+    // The box, at the check's left.
+    (at.x + 7.0, at.y + size.height / 2.0)
 }
 
-/// A click on the sheet's check `label` ("Detail: Dehaze").
-fn tick(app: &App, label: &str) {
-    let (x, y) = spot(
-        app,
-        label,
-        Some(i_slint_backend_testing::AccessibleRole::Checkbox),
-    );
+/// A click on the sheet's check `key`, a part's settings name
+/// ("detail.dehaze") or a mask's ("mask.2").
+fn tick(app: &App, key: &str) {
+    let (x, y) = spot(app, key);
     click(app, x, y);
 }
 
@@ -2612,7 +2623,7 @@ fn press_join(app: &App, add: bool) {
     const JOIN: [&str; 2] = ["Replace masks", "Add to masks"];
     let option = JOIN[usize::from(add)];
     assert_eq!(crate::testing::count_id(app, "CarryList::join"), 1);
-    let (at, size) = crate::testing::segment(app, "CarryList::join", &JOIN, option);
+    let (at, size) = crate::testing::segment(app, "CarryList::join", option);
     assert_in_window(app, at, size, option);
     click(app, at.x + size.width / 2.0, at.y + size.height / 2.0);
 }
@@ -2692,21 +2703,21 @@ fn the_sheet_sends_one_part_and_one_mask_and_the_rest_stays() {
     assert!(app.get_sync_open());
     // The frame's masks listed by name under Masks, unchecked as
     // a sync's masks start.
-    assert_eq!(heading(&app, "Masks"), 0);
+    assert_eq!(heading(&app, "adjustments"), 0);
     // Check all, then Uncheck all: every heading follows.
     press_id(&app, "CarryList::check-all");
     assert!(headings(&app).iter().all(|(_, on)| *on == 2));
     press_id(&app, "CarryList::uncheck-all");
     assert!(headings(&app).iter().all(|(_, on)| *on == 0));
     // Light's Exposure, Detail's Dehaze and the one mask, joining.
-    tick(&app, "Light: Exposure");
-    tick(&app, "Detail: Dehaze");
-    tick(&app, "Masks: Face 2");
+    tick(&app, "light.exposure");
+    tick(&app, "detail.dehaze");
+    tick(&app, "mask.2");
     press_join(&app, true);
-    assert_eq!(heading(&app, "Light"), 1);
-    assert_eq!(heading(&app, "Detail"), 1);
-    assert_eq!(heading(&app, "Masks"), 1);
-    assert_eq!(heading(&app, "Color"), 0);
+    assert_eq!(heading(&app, "light"), 1);
+    assert_eq!(heading(&app, "detail"), 1);
+    assert_eq!(heading(&app, "adjustments"), 1);
+    assert_eq!(heading(&app, "color"), 0);
     app.invoke_sync_applied();
     assert_eq!(
         app.get_status(),
@@ -2735,18 +2746,18 @@ fn a_check_takes_space_and_tab_moves_on_and_return_applies() {
         let rows = app.get_sync_rows();
         (0..rows.row_count())
             .filter_map(|i| rows.row_data(i))
-            .find(|r| r.a11y == "Detail: Dehaze")
+            .find(|r| r.key == "detail.dehaze")
             .unwrap()
             .state
     };
     // A click takes the focus as it turns the check over; the keys
     // then turn it back and again.
-    tick(&app, "Detail: Dehaze");
+    tick(&app, "detail.dehaze");
     assert_eq!(dehaze(&app), 0);
-    assert_eq!(heading(&app, "Detail"), 1);
+    assert_eq!(heading(&app, "detail"), 1);
     press(&app, " ");
     assert_eq!(dehaze(&app), 2);
-    assert_eq!(heading(&app, "Detail"), 2);
+    assert_eq!(heading(&app, "detail"), 2);
     press(&app, " ");
     assert_eq!(dehaze(&app), 0);
     // Tab leaves it: Space then turns over whatever is next, not
@@ -2755,13 +2766,13 @@ fn a_check_takes_space_and_tab_moves_on_and_return_applies() {
     press(&app, " ");
     assert_eq!(dehaze(&app), 0);
     // Escape from a check still leaves the sheet.
-    tick(&app, "Detail: Texture");
+    tick(&app, "detail.texture");
     press(&app, Key::Escape);
     assert!(!app.get_sync_open());
     // Return on a check is the sheet's Apply, the check left as
     // it was.
     app.invoke_sync_open_asked();
-    tick(&app, "Detail: Dehaze");
+    tick(&app, "detail.dehaze");
     let before = dehaze(&app);
     press(&app, Key::Return);
     assert!(!app.get_sync_open());
@@ -2776,7 +2787,7 @@ fn a_mask_pasted_alone_replaces_the_frames_and_the_sheet_remembers() {
     app.invoke_paste_asked();
     assert!(app.get_sync_paste());
     press_id(&app, "CarryList::uncheck-all");
-    tick(&app, "Masks: Sky 1");
+    tick(&app, "mask.1");
     app.invoke_sync_applied();
     assert_eq!(
         app.get_status(),
@@ -2798,15 +2809,15 @@ fn a_mask_pasted_alone_replaces_the_frames_and_the_sheet_remembers() {
     // The next paste opens on that choice: the masks partly on,
     // the Sky checked, Face not, the rest off.
     app.invoke_paste_asked();
-    assert_eq!(heading(&app, "Masks"), 1);
-    assert_eq!(heading(&app, "Light"), 0);
+    assert_eq!(heading(&app, "adjustments"), 1);
+    assert_eq!(heading(&app, "light"), 0);
     let rows = app.get_sync_rows();
     let checked: Vec<String> = (0..rows.row_count())
         .filter_map(|i| rows.row_data(i))
         .filter(|r| r.kind == 1 && r.state == 2)
-        .map(|r| r.a11y.to_string())
+        .map(|r| r.key.to_string())
         .collect();
-    assert_eq!(checked, ["Masks: Sky 1"]);
+    assert_eq!(checked, ["mask.1"]);
     press(&app, Key::Escape);
 }
 
@@ -2826,7 +2837,7 @@ fn masks_alone() -> Vec<(String, i32)> {
         .iter()
         .map(|s| {
             let on = *s == Section::Adjustments;
-            (s.title().to_string(), if on { 2 } else { 0 })
+            (s.name().to_string(), if on { 2 } else { 0 })
         })
         .collect()
 }
@@ -2883,7 +2894,7 @@ fn copy_masks_keeps_the_join_and_leaves_the_sections_chosen() {
     app.invoke_select(2);
     app.invoke_paste_asked();
     press_id(&app, "CarryList::uncheck-all");
-    tick(&app, "Light: Exposure");
+    tick(&app, "light.exposure");
     press_join(&app, true);
     app.invoke_sync_applied();
     // Copy masks: every mask, joining as that paste had them.
@@ -2906,8 +2917,8 @@ fn copy_masks_keeps_the_join_and_leaves_the_sections_chosen() {
     app.invoke_paste_asked();
     assert_eq!(joins(&app), 0);
     // The sections as the Light paste chose them, not the masks.
-    assert_eq!(heading(&app, "Light"), 1);
-    assert_eq!(heading(&app, "Masks"), 0);
+    assert_eq!(heading(&app, "light"), 1);
+    assert_eq!(heading(&app, "adjustments"), 0);
     press(&app, Key::Escape);
 }
 
@@ -3006,7 +3017,7 @@ fn enter_on_a_preset_check_saves_once_named() {
         .filter_map(|i| rows.row_data(i))
         .find(|r| r.kind != 2)
         .unwrap()
-        .a11y
+        .key
         .to_string();
     app.set_preset_name("".into());
     tick(&app, &check);
@@ -3032,20 +3043,20 @@ fn the_preset_sheet_saves_a_single_part_and_a_single_mask() {
     let on: Vec<String> = (0..rows.row_count())
         .filter_map(|i| rows.row_data(i))
         .filter(|r| r.kind == 1 && r.state == 2)
-        .map(|r| r.a11y.to_string())
+        .map(|r| r.key.to_string())
         .collect();
     assert_eq!(
         on,
         [
-            "Light: Exposure",
-            "Light: Contrast",
-            "Detail: Texture",
-            "Detail: Dehaze"
+            "light.exposure",
+            "light.contrast",
+            "detail.texture",
+            "detail.dehaze"
         ]
     );
     press_id(&app, "CarryList::uncheck-all");
-    tick(&app, "Detail: Dehaze");
-    tick(&app, "Masks: Face 2");
+    tick(&app, "detail.dehaze");
+    tick(&app, "mask.2");
     app.set_preset_name("Haze".into());
     app.invoke_preset_saved();
     assert!(

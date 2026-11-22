@@ -562,7 +562,7 @@ export component Section inherits VerticalLayout {
                         height: Theme.icon;
                         y: (parent.height - self.height) / 2;
                     }
-                    if root.owner != "": Text {
+                    if root.owner != "": owner-text := Text {
                         text: root.owner;
                         min-width: 0px;
                         horizontal-stretch: 1;
@@ -599,7 +599,7 @@ export component Section inherits VerticalLayout {
                         min-width: 0px;
                     }
                 }
-                if root.note != "": Text {
+                if root.note != "": note-text := Text {
                     x: parent.width - self.width;
                     text: root.note;
                     color: Theme.text-muted;
@@ -2484,9 +2484,11 @@ export component Segmented inherits Rectangle {
             // The keys' ring, on the option they move from.
             border-width: root.keys-here && i == root.at ? 2px : 0;
             border-color: Theme.focus-ring;
-            // Each option a radio button, named by its words.
+            // Each option a radio button, named by its words; its key,
+            // for automation, the option itself.
             accessible-role: radio-button;
             accessible-label: label.text;
+            accessible-id: option;
             accessible-checkable: true;
             accessible-checked: on;
             accessible-action-default => {
@@ -2910,7 +2912,7 @@ export component ThumbMarks inherits Rectangle {
         if root.edited: Rectangle {
             width: root.glyph;
             height: root.height;
-            Image {
+            edited-mark := Image {
                 source: @image-url("icons/pencil.svg");
                 colorize: Theme.over-text-secondary;
                 width: root.glyph;
@@ -2924,7 +2926,7 @@ export component ThumbMarks inherits Rectangle {
         if root.exported: Rectangle {
             width: root.glyph;
             height: root.height;
-            Image {
+            exported-mark := Image {
                 source: @image-url("icons/image-down.svg");
                 colorize: Theme.over-text-secondary;
                 width: root.glyph;

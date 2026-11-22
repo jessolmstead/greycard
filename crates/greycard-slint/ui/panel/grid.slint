@@ -410,7 +410,7 @@ export component GridSheet inherits Rectangle {
                 HorizontalLayout {
                     spacing: Theme.space-3;
                     height: Theme.control-height;
-                    if root.import-line != "": Text {
+                    if root.import-line != "": import-line-text := Text {
                         text: root.import-line;
                         color: Theme.text-secondary;
                         font-size: Theme.font-xs;
@@ -489,7 +489,7 @@ export component GridSheet inherits Rectangle {
                     // row, which has room to spare: beside the filter's
                     // count it took the last label chips off the row
                     // below at the editor's default width.
-                    Text {
+                    count-line := Text {
                         text: @tr("{n} frame" | "{n} frames" % root.thumbs.length) + " · "
                             // Grid header: 'by capture time', after the frame count
                             + (root.sort-menu.label == "" ? "" : @tr("by {}", root.sort-menu.label) + " · ")
@@ -542,7 +542,7 @@ export component GridSheet inherits Rectangle {
                     // on the frame menu, which is the selection's. Move
                     // back is in both, as it is in CULLING beside Move
                     // rejects. One menu, so the header keeps its width.
-                    PanelButton {
+                    rejects-button := PanelButton {
                         text: root.reject-count == 0 ? @tr("Rejects")
                             : @tr("{n} reject" | "{n} rejects" % root.reject-count);
                         icon: @image-url("../icons/folder-open.svg");
@@ -672,7 +672,9 @@ export component GridSheet inherits Rectangle {
                     root.grid-wheel(e.delta-y, e.modifiers.control);
                     return accept;
                 }
-                for t[k] in root.tiles: Rectangle {
+                for t[k] in root.tiles: folder-tile := Rectangle {
+                    // Its key, for automation: the folder's name.
+                    accessible-id: t.name;
                     x: root.grid-left + mod(k, root.grid-cols) * root.grid-pitch;
                     y: root.grid-pad + floor(k / root.grid-cols) * (root.grid-cell / 2 + root.grid-gap);
                     width: root.grid-cell;
@@ -838,6 +840,8 @@ export component GridSheet inherits Rectangle {
                     // as a click does.
                     accessible-role: list-item;
                     accessible-label: t.version != "" ? t.version : t.name;
+                    // Its key, for automation: its row in the frames.
+                    accessible-id: i;
                     accessible-item-selectable: true;
                     accessible-item-selected: in-set;
                     accessible-action-default => {
@@ -923,7 +927,7 @@ export component GridSheet inherits Rectangle {
                     // A frame whose edit's picture is still to be made, and
                     // nothing of it to show meanwhile: said, quietly, so a
                     // dark tile is not taken for a black picture.
-                    if root.lightbox && t.pending && t.big.width == 0: Text {
+                    if root.lightbox && t.pending && t.big.width == 0: developing := Text {
                         width: parent.width;
                         height: parent.height;
                         // A tile's word while its picture is made
@@ -982,7 +986,7 @@ export component GridSheet inherits Rectangle {
                     property <length> shown-h: t.image.width > 0 && t.image.height > 0
                         ? min(self.box-h, self.box-w * t.image.height / t.image.width)
                         : self.box-h;
-                    if !root.lightbox: ThumbBadges {
+                    if !root.lightbox: cell-badges := ThumbBadges {
                         // On the picture's bottom left corner,
                         // held inside the cell: a tall frame in a
                         // small cell is narrower than the badge,
@@ -1010,7 +1014,7 @@ export component GridSheet inherits Rectangle {
                     }
                     // In the lightbox when asked, the same badges on its
                     // tile's picture, which fills the cell.
-                    if root.lightbox && root.lightbox-badges: ThumbBadges {
+                    if root.lightbox && root.lightbox-badges: tile-badges := ThumbBadges {
                         property <length> bw: parent.width - 2 * Theme.space-1;
                         property <length> bh: parent.height - 2 * Theme.space-1;
                         property <length> pw: t.big.width > 0 && t.big.height > 0
@@ -1334,7 +1338,7 @@ export component GridSheet inherits Rectangle {
                             clicked => { root.focus-keys(); root.lightbox-close(); }
                         }
                     }
-                    Text {
+                    bar-words := Text {
                         horizontal-stretch: 1;
                         // The grid header's own words: the frame on
                         // screen, or it and the rest of the set, and

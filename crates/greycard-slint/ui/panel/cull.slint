@@ -75,10 +75,10 @@ export component CullSection inherits Section {
     property <bool> picture-over: LabelColumn.width + 2 * Theme.space-2 + camera-jpeg.preferred-width
         + developed.preferred-width > self.body-width;
     // Culling section: the row that picks which picture is shown
-    if root.picture-over: Text { text: @tr("Picture"); color: Theme.text; font-size: Theme.font-sm; }
+    if root.picture-over: picture-over-words := Text { text: @tr("Picture"); color: Theme.text; font-size: Theme.font-sm; }
     HorizontalLayout {
         spacing: Theme.space-2;
-        if !root.picture-over: Text { text: @tr("Picture"); width: LabelColumn.width; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
+        if !root.picture-over: picture-words := Text { text: @tr("Picture"); width: LabelColumn.width; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
         camera-jpeg := PanelButton {
             text: @tr("Camera JPEG");
             primary: !root.developed;
@@ -191,7 +191,7 @@ export component CullSection inherits Section {
         toggled => { root.move-on-changed(); root.focus-keys(); }
     }
     Rectangle { height: Theme.space-1; }
-    PanelButton {
+    move-rejects-button := PanelButton {
         text: root.reject-count == 0 ? @tr("No rejects to move")
             : @tr("Move {n} reject..." | "Move {n} rejects..." % root.reject-count);
         icon: @image-url("../icons/folder-open.svg");
@@ -201,7 +201,7 @@ export component CullSection inherits Section {
     Rectangle { height: Theme.space-1; }
     // The way back, for a frame in a rejects folder: no sheet, since
     // nothing is written over and the frame can go out again.
-    if root.back-count > 0: PanelButton {
+    if root.back-count > 0: move-back-button := PanelButton {
         text: root.back-count > 1
             ? @tr("Move {n} frame back to {}" | "Move {n} frames back to {}" % root.back-count, root.back-to)
             : @tr("Move back to {}", root.back-to);
@@ -216,7 +216,7 @@ export component CullSection inherits Section {
         clicked => { root.delete-asked("selection"); }
     }
     Rectangle { height: Theme.space-1; }
-    PanelButton {
+    delete-rejects-button := PanelButton {
         text: @tr("Delete rejects folder...");
         icon: @image-url("../icons/trash-2.svg");
         enabled: !root.queue-view;
@@ -224,7 +224,9 @@ export component CullSection inherits Section {
     }
     // The rejects' copies on an archive, found by hash: moved into a
     // rejects folder there, or deleted from it, behind a sheet.
-    for choice[i] in root.archive-rejects-choices: PanelButton {
+    for choice[i] in root.archive-rejects-choices: archive-rejects-button := PanelButton {
+        // Its key, for automation: its place among the archives.
+        accessible-id: i;
         text: choice;
         icon: @image-url("../icons/folder-open.svg");
         clicked => { root.archive-rejects-asked(i); }

@@ -153,6 +153,8 @@ export component Filmstrip inherits Rectangle {
                 // does.
                 accessible-role: list-item;
                 accessible-label: t.name;
+                // Its key, for automation: its row in the frames.
+                accessible-id: i;
                 accessible-item-selectable: true;
                 accessible-item-selected: in-set;
                 accessible-action-default => {
@@ -218,7 +220,7 @@ export component Filmstrip inherits Rectangle {
                     // the row with the name: the badges must
                     // not push the name out of the middle, and
                     // the cell's height is the strip's.
-                    ThumbBadges {
+                    cell-badges := ThumbBadges {
                         x: ring + Theme.space-1;
                         y: ring + photo-h - self.height - Theme.space-1;
                         rating: t.rating;

@@ -322,8 +322,13 @@ fn the_culling_picture_row_keeps_its_buttons_whole() {
         let button = ElementHandle::find_by_element_id(app, "CullSection::camera-jpeg")
             .next()
             .expect("the Camera JPEG button");
-        let label = ElementHandle::find_by_element_type_name(app, "Text")
-            .find(|e| e.accessible_label().is_some_and(|l| l == "Picture"))
+        // The row's words, over the buttons or beside them.
+        let label = ElementHandle::find_by_element_id(app, "CullSection::picture-over-words")
+            .chain(ElementHandle::find_by_element_id(
+                app,
+                "CullSection::picture-words",
+            ))
+            .next()
             .expect("the Picture label");
         (
             label.absolute_position().y,

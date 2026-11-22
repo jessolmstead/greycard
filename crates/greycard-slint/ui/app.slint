@@ -4142,7 +4142,7 @@ export component App inherits Window {
                     padding-right: Theme.space-1;
                     padding-top: root.frozen && root.selected < 0 ? 0 : Theme.space-2;
                     spacing: Theme.space-2;
-                    if root.frozen && root.selected >= 0: Text {
+                    if root.frozen && root.selected >= 0: frozen-note := Text {
                         text: @tr("Queued for export, shown as it will export. Edit it from its folder.");
                         color: Theme.text-muted;
                         font-size: Theme.font-xs;
@@ -5939,7 +5939,7 @@ export component App inherits Window {
                             }
                         }
                     }
-                    if root.import-status != "": Text {
+                    if root.import-status != "": import-status-line := Text {
                         text: root.import-status;
                         color: Theme.text-secondary;
                         font-size: Theme.font-xs;

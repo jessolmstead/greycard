@@ -2711,7 +2711,7 @@ fn ctrl_a_chooses_every_frame_shown_and_leaves_the_current_one() {
     let rows = crate::keys::rows("Ctrl+A", false);
     assert!(
         rows.iter()
-            .any(|r| !r.heading && r.does == "Select every frame shown"),
+            .any(|r| !r.heading && r.does == crate::i18n::text("Select every frame shown")),
         "{:?}",
         rows.iter().map(|r| r.does.to_string()).collect::<Vec<_>>()
     );

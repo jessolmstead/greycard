@@ -145,15 +145,20 @@ fn the_vectorscope_folds_the_shot_away_and_back() {
         (e.absolute_position(), e.size())
     };
     let choose = |name: &str| {
-        crate::testing::count_labeled(&app, name);
-        let option = ElementHandle::find_by_accessible_label(&app, name)
-            .next()
-            .unwrap_or_else(|| panic!("no {name} option"));
-        let (at, size) = (option.absolute_position(), option.size());
-        click(&app, at.x + size.width / 2.0, at.y + size.height / 2.0);
+        crate::testing::click_segment(&app, "PanelHead::scope-row", name);
         assert_eq!(app.get_scope(), name, "the click chose {name}");
     };
-    let shot = || crate::testing::count_labeled(&app, "1/250 s");
+    // The shot's exposure line, which says the test's "1/250 s".
+    let shot = || {
+        let n = crate::testing::count_id(&app, "PanelHead::shot-exposure-text");
+        if n > 0 {
+            assert_eq!(
+                crate::testing::label_of(&app, "PanelHead::shot-exposure-text"),
+                "1/250 s"
+            );
+        }
+        n
+    };
     for from in ["RGB", "Wave"] {
         choose(from);
         let (_, before) = bounds("PanelHead::scope-box");
@@ -2572,7 +2577,7 @@ fn autos_menu_holds_the_presets_on_a_raw_alone() {
     let shown = |app: &App| {
         names
             .iter()
-            .map(|n| crate::testing::count_labeled(app, n))
+            .map(|n| crate::testing::count_menu_entries(app, n))
             .collect::<Vec<_>>()
     };
     assert_eq!(shown(&app), [0; 6], "no menu yet");
@@ -2810,7 +2815,7 @@ fn the_masks_menus_hand_the_keys_back() {
     };
     let people = at("AdjustmentsSection::parts-button");
     let landscape = at("AdjustmentsSection::landscape-button");
-    let people_up = || crate::testing::count_labeled(&app, "Whole person");
+    let people_up = || crate::testing::count_menu_entries(&app, "Whole person");
 
     // People, from a click on its button: Whole person picked from
     // the keys; then Space presses no People and Right steps.
@@ -2846,9 +2851,16 @@ fn the_masks_menus_hand_the_keys_back() {
         slint::ModelRc::new(slint::VecModel::from(words))
     };
     app.set_landscape_offers(offers(&["Foliage 33%", "Water 17%"]));
+    // The menu's offer of water, as Rust words it: data here.
+    let water_offered = || {
+        crate::testing::menu_entries(&app)
+            .iter()
+            .filter(|e| e.accessible_label().as_deref() == Some("Water 17%"))
+            .count()
+    };
     app.set_landscape_kinds(offers(&["Foliage", "Water"]));
     app.set_landscape_menu_shown(true);
-    assert_eq!(crate::testing::count_labeled(&app, "Water 17%"), 1);
+    assert_eq!(water_offered(), 1);
     assert!(app.get_menu_up(), "the menu took the keys' focus");
     crate::testing::press(&app, Key::DownArrow);
     crate::testing::press(&app, Key::DownArrow);
@@ -2863,11 +2875,11 @@ fn the_masks_menus_hand_the_keys_back() {
 
     // Landscape put away with Escape: the same.
     app.set_landscape_menu_shown(true);
-    assert_eq!(crate::testing::count_labeled(&app, "Water 17%"), 1);
+    assert_eq!(water_offered(), 1);
     assert!(app.get_menu_up(), "the menu took the keys' focus");
     crate::testing::press(&app, Key::Escape);
     after_the_menu();
-    assert_eq!(crate::testing::count_labeled(&app, "Water 17%"), 0);
+    assert_eq!(water_offered(), 0);
     crate::testing::press(&app, Key::RightArrow);
     assert_eq!(steps.get(), 4, "Right is the window's");
     assert_eq!(kinds.borrow().len(), 1);
@@ -3232,7 +3244,13 @@ fn a_pictures_white_balance_is_an_offset_from_its_own_white() {
     };
     wait();
     assert!(app.get_picture_open());
-    assert_eq!(crate::testing::count_labeled(&app, "+0 mired"), 1);
+    let temperature_says = || {
+        crate::testing::all_by_id(&app, "WhiteBalanceSection::temperature-slider")
+            .first()
+            .and_then(|e| e.accessible_value())
+            .map(|v| v.to_string())
+    };
+    assert_eq!(temperature_says().as_deref(), Some("+0 mired"));
     let steps = state.borrow().sidecars[0].history.len();
     // The span reaches the panel's lights from D65: about -346 to
     // +70 mired.
@@ -3260,7 +3278,7 @@ fn a_pictures_white_balance_is_an_offset_from_its_own_white() {
     );
     assert_eq!(state.borrow().sidecars[0].history.len(), steps + 1);
     let shown = format!("+{} mired", mired.round());
-    assert_eq!(crate::testing::count_labeled(&app, &shown), 1, "{shown}");
+    assert_eq!(temperature_says(), Some(shown.clone()), "{shown}");
     // The preview: from the light developed at to the sliders'.
     let light = picture_light(
         &WhiteBalance::Offset {
@@ -4212,7 +4230,6 @@ fn help_has_the_keys_and_the_guide_and_a_test_opens_no_browser() {
 /// plain click on the button still fits.
 #[test]
 fn the_fit_buttons_menu_chooses_a_zoom_and_a_click_still_fits() {
-    use i_slint_backend_testing::ElementHandle;
     use slint::platform::{PointerEventButton, WindowEvent};
     let app = window(1);
     app.window()
@@ -4229,11 +4246,11 @@ fn the_fit_buttons_menu_chooses_a_zoom_and_a_click_still_fits() {
     };
     let fitted = zoom();
     assert!(fitted < 1.0, "{fitted}");
-    let found = |label: &str| -> Vec<(f32, f32)> {
-        app.window().dispatch_event(WindowEvent::PointerMoved {
-            position: slint::LogicalPosition::new(0.0, 0.0),
-        });
-        ElementHandle::find_by_accessible_label(&app, label)
+    // The open menu's entries titled `title`, data here.
+    let found = |title: &str| -> Vec<(f32, f32)> {
+        crate::testing::menu_entries(&app)
+            .into_iter()
+            .filter(|e| e.accessible_label().as_deref() == Some(title))
             .map(|e| {
                 let (at, size) = (e.absolute_position(), e.size());
                 (at.x + size.width / 2.0, at.y + size.height / 2.0)
@@ -4307,7 +4324,7 @@ fn the_fit_buttons_menu_chooses_a_zoom_and_a_click_still_fits() {
 /// down.
 #[test]
 fn the_edge_arrows_and_undo_say_their_words_after_a_rest() {
-    use crate::testing::rest_on;
+    use crate::testing::rest_on_id;
     let app = window(1);
     app.window()
         .set_size(slint::LogicalSize::new(1500.0, 950.0));
@@ -4320,15 +4337,16 @@ fn the_edge_arrows_and_undo_say_their_words_after_a_rest() {
             });
         slint::platform::update_timers_and_animations();
     };
+    // Each by its id, and the word it says, in the window's language.
     for (label, words) in [
-        ("Undo", "Undo"),
-        ("Redo", "Redo"),
-        ("Right panel", "Hide panel"),
-        ("Filmstrip", "Hide filmstrip"),
+        ("PanelHead::undo-button", "Undo"),
+        ("PanelHead::redo-button", "Redo"),
+        ("App::right-arrow", "Hide panel"),
+        ("App::strip-arrow", "Hide filmstrip"),
     ] {
         assert_eq!(app.get_tip_text(), "", "no word before a rest on {label}");
-        rest_on(&app, label);
-        assert_eq!(app.get_tip_text(), words, "{label}");
+        rest_on_id(&app, label);
+        assert_eq!(app.get_tip_text(), crate::i18n::text(words), "{label}");
         away();
         assert_eq!(app.get_tip_text(), "", "{label} leaves with the pointer");
     }

@@ -460,7 +460,7 @@ export component ExportSheet inherits Rectangle {
                         // The first frame's file as the pattern names it,
                         // in the warning's color when the pattern names
                         // none and the frame's own name stands in.
-                        Text {
+                        name-example-text := Text {
                             text: root.name-example != "" ? root.name-example : " ";
                             color: root.export-name-refused(root.export-name) ? Theme.warn-yellow : Theme.text-secondary;
                             font-size: Theme.font-sm;
@@ -672,7 +672,7 @@ export component ExportSheet inherits Rectangle {
                     HorizontalLayout {
                         spacing: Theme.space-2;
                         Text { text: @tr("Folder"); width: root.label-column; overflow: elide; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
-                        Text {
+                        folder-line-text := Text {
                             text: root.folder-line;
                             color: Theme.text-secondary;
                             font-size: Theme.font-sm;
@@ -698,7 +698,7 @@ export component ExportSheet inherits Rectangle {
                         }
                     }
                     // Into the folder the row shows, with no dialog.
-                    PanelButton {
+                    export-button := PanelButton {
                         text: @tr("Export");
                         icon: @image-url("../icons/image-down.svg");
                         primary: true;
@@ -805,7 +805,7 @@ export component ExportSheet inherits Rectangle {
                     }
                     if root.queue-sets > 0 && root.confirm-clear: HorizontalLayout {
                         spacing: Theme.space-2;
-                        Text {
+                        clear-question := Text {
                             text: @tr("Clear the queue of {n} set?" | "Clear the queue of {n} sets?" % root.queue-sets);
                             color: Theme.text-secondary;
                             font-size: Theme.font-sm;

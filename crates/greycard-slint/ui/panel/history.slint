@@ -119,6 +119,9 @@ export component SnapshotsSection inherits Section {
                         // snapshot; its press restores it as a click does.
                         accessible-role: button;
                         accessible-label: name;
+                        // Its key, for automation, and its icons':
+                        // the snapshot's place in the list.
+                        accessible-id: i;
                         accessible-enabled: self.enabled;
                         accessible-action-default => {
                             if (self.enabled) {
@@ -200,6 +203,7 @@ export component SnapshotsSection inherits Section {
                             // back to it, a new name, away. The rename
                             // icon names it without restoring it.
                             restore := SnapshotIcon {
+                                accessible-id: i;
                                 icon: @image-url("../icons/undo-2.svg");
                                 label: @tr("Restore {}", name);
                                 words: @tr("Restore");
@@ -209,6 +213,7 @@ export component SnapshotsSection inherits Section {
                                 }
                             }
                             rename := SnapshotIcon {
+                                accessible-id: i;
                                 icon: @image-url("../icons/pencil.svg");
                                 label: @tr("Rename {}", name);
                                 words: @tr("Rename");

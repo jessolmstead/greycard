@@ -7,7 +7,25 @@ thread_local! {
 }
 
 use crate::roots::{land_sent, open_view};
-use crate::testing::{click, labeled, state_for, window};
+use crate::testing::{click, state_for, window};
+
+/// A folder's row in the tree, keyed by the folder's path.
+const FOLDER_LINE: &str = "FoldersSection::folder-line";
+/// A folder's triangle in the tree, keyed by the folder's path.
+const FOLD: &str = "FoldersSection::fold";
+/// A folder's tile at the top of the grid, keyed by its name.
+const FOLDER_TILE: &str = "GridSheet::folder-tile";
+
+/// The key of the folder at `path`: the path as the tree has it.
+fn key(path: &Path) -> String {
+    path.to_string_lossy().into_owned()
+}
+
+/// The middle of the element `id` keyed `key`.
+fn middle_key(app: &App, id: &str, key: &str) -> (f32, f32) {
+    let (at, size) = crate::testing::by_key(app, id, key);
+    (at.x + size.width / 2.0, at.y + size.height / 2.0)
+}
 use greycard_library::fixture::{A7, R5, R6, write_frame};
 
 fn node(path: &str, name: &str, depth: usize, direct: usize, total: usize, children: bool) -> Node {
@@ -385,9 +403,8 @@ fn a_disk_folder_under_a_root_shows_the_roots_tree_marked_there() {
     // from the index, the root's row lit.
     app.set_grid_open(true);
     slint::platform::update_timers_and_animations();
-    assert_eq!(crate::testing::buttons(&app, "day").len(), 1);
-    let (at, size) = labeled(&app, "Unfold day");
-    click(&app, at.x + size.width / 2.0, at.y + size.height / 2.0);
+    assert_eq!(crate::testing::count_keyed(&app, FOLDER_LINE, key(&day)), 1);
+    crate::testing::click_key(&app, FOLD, key(&day));
     assert_eq!(rows(&app)[2], ("more".into(), 2, 1, false));
     // Chosen by its row: a click on a row the unfold has just
     // added lands past the box's old foot on the testing backend,
@@ -474,7 +491,7 @@ fn a_disk_folder_under_a_root_shows_the_roots_tree_marked_there() {
     land_sent(&state, &app, &worker);
     assert_eq!(listed(&state), ["e.tif"]);
     assert!(!app.get_folder_tree_shown());
-    assert!(crate::testing::buttons(&app, "day").is_empty());
+    assert_eq!(crate::testing::count_keyed(&app, FOLDER_LINE, key(&day)), 0);
     state.borrow_mut().views.index_reader = None;
     drop(state);
     crate::testing::remove_dir_retry(&dir);
@@ -502,9 +519,9 @@ fn a_click_on_a_folder_sends_the_title_typed_to_its_own_frame() {
     click(&app, at.x + size.width / 2.0, at.y + size.height / 2.0);
     crate::testing::type_text(&app, "Dusk");
     assert!(app.get_title_dirty());
-    let archive = crate::testing::buttons(&app, "archive");
-    let (at, size) = archive.first().expect("the root's row");
-    click(&app, at.x + size.width / 2.0, at.y + size.height / 2.0);
+    // The root's own row, at the head of its tree.
+    let root = dir.join("archive");
+    crate::testing::click_key(&app, FOLDER_LINE, key(&root));
     land_sent(&state, &app, &worker);
     slint::platform::update_timers_and_animations();
     land_sent(&state, &app, &worker);
@@ -527,8 +544,7 @@ fn a_click_on_a_folder_opens_its_frames_and_records_it() {
     let (app, state, worker) = archive(&dir, Some((1200.0, 800.0)));
     let day = dir.join("archive").join("day");
     slint::platform::update_timers_and_animations();
-    let (at, size) = labeled(&app, "day");
-    click(&app, at.x + size.width / 2.0, at.y + size.height / 2.0);
+    crate::testing::click_key(&app, FOLDER_LINE, key(&day));
     land_sent(&state, &app, &worker);
     assert_eq!(listed(&state), ["d1.tif", "d2.tif"]);
     assert_eq!(
@@ -549,9 +565,8 @@ fn a_click_on_a_folder_opens_its_frames_and_records_it() {
     assert_eq!(app.get_open_folder_root(), "archive");
     assert!(rows(&app)[1].3, "the day marked open");
 
-    // Its triangle, by its own label, unfolds it without opening it.
-    let (at, size) = labeled(&app, "Unfold day");
-    click(&app, at.x + size.width / 2.0, at.y + size.height / 2.0);
+    // Its triangle unfolds it without opening it.
+    crate::testing::click_key(&app, FOLD, key(&day));
     land_sent(&state, &app, &worker);
     assert_eq!(rows(&app).len(), 3);
     assert_eq!(rows(&app)[1], ("day".into(), 1, 2, true));
@@ -567,14 +582,13 @@ fn a_click_on_a_folder_opens_its_frames_and_records_it() {
 /// press, says so, and the press does nothing.
 #[test]
 fn a_screen_reader_presses_a_folders_fold() {
-    use i_slint_backend_testing::ElementHandle;
     let dir = scratch("press-fold");
     let (app, state, worker) = archive(&dir, Some((1200.0, 800.0)));
+    // The fold of the tree's row `i`, by that row's path, its key.
     let fold = |i: usize| {
         crate::testing::settle(&app);
-        ElementHandle::find_by_element_id(&app, "FoldersSection::fold")
-            .nth(i)
-            .unwrap_or_else(|| panic!("no fold {i}"))
+        let path = app.get_folder_tree().row_data(i).expect("the row").path;
+        crate::testing::keyed(&app, FOLD, &path).unwrap_or_else(|| panic!("no fold {path}"))
     };
     let expanded = || -> Vec<bool> { app.get_folder_tree().iter().map(|r| r.expanded).collect() };
     assert_eq!(expanded(), [true, false], "the root open, the day not");
@@ -759,9 +773,9 @@ fn a_tiles_menu_from_a_text_box_holds_the_folder_visit() {
     let visits = Rc::new(RefCell::new(Vec::new()));
     let seen = visits.clone();
     app.on_visit_folder(move |back| seen.borrow_mut().push(back));
-    let middle = |label: &str| {
-        let (at, size) = crate::testing::buttons(&app, label)[0];
-        slint::LogicalPosition::new(at.x + size.width / 2.0, at.y + size.height / 2.0)
+    let middle = |name: &str| {
+        let (x, y) = middle_key(&app, FOLDER_TILE, name);
+        slint::LogicalPosition::new(x, y)
     };
     let mut b = SideButtons::default();
     // A press as the window has it: its filter first, then Slint.
@@ -788,13 +802,13 @@ fn a_tiles_menu_from_a_text_box_holds_the_folder_visit() {
     update_timers_and_animations();
     let typing = app.global::<crate::Typing>();
     assert_eq!(typing.get_boxes(), 1, "the filter's words");
-    press_over(middle("Folder cedar"), PointerEventButton::Right);
+    press_over(middle("cedar"), PointerEventButton::Right);
     assert_eq!(typing.get_boxes(), 0, "the box let go");
     assert!(app.get_menu_up());
-    press_over(middle("Folder birch"), PointerEventButton::Back);
+    press_over(middle("birch"), PointerEventButton::Back);
     assert!(visits.borrow().is_empty(), "the press only closed the menu");
     assert!(!app.get_menu_up());
-    press_over(middle("Folder birch"), PointerEventButton::Back);
+    press_over(middle("birch"), PointerEventButton::Back);
     assert_eq!(*visits.borrow(), [true]);
     done(&dir, state);
 }
@@ -871,10 +885,13 @@ fn a_bare_folder_opens_to_its_tiles_and_a_tile_opens_as_the_row_does() {
 
     app.set_grid_open(true);
     slint::platform::update_timers_and_animations();
-    let found = crate::testing::buttons(&app, "Folder birch");
-    assert_eq!(found.len(), 1, "one tile; the tree's row is named birch");
-    let (at, size) = found[0];
-    click(&app, at.x + size.width / 2.0, at.y + size.height / 2.0);
+    assert_eq!(
+        crate::testing::count_keyed(&app, FOLDER_TILE, "birch"),
+        1,
+        "one tile; the tree's row is named birch"
+    );
+    let (x, y) = middle_key(&app, FOLDER_TILE, "birch");
+    click(&app, x, y);
     land_sent(&state, &app, &worker);
     let inner = birch.join("birch");
     let by_tile = state.borrow().views.view.clone();
@@ -1324,7 +1341,7 @@ fn the_tiles_shift_the_cells_and_the_keys_skip_them() {
     // the slack beside six cells in 1,260.
     let slack = crate::grid::slack(1260.0, 176.0, 6);
     let (x0, y0) = (240.0 + crate::grid::PAD + slack, 145.0 + crate::grid::PAD);
-    let (at, size) = crate::testing::buttons(&app, "Folder export")[0];
+    let (at, size) = crate::testing::by_key(&app, FOLDER_TILE, "export");
     assert_eq!((at.x, at.y), (x0, y0));
     assert_eq!((size.width, size.height), (176.0, 88.0));
     // A frame's cell, a tile row lower: a click on the third opens
@@ -1373,10 +1390,9 @@ fn an_offline_roots_tiles_come_from_the_index_with_no_reveal() {
     let (app, state, worker) = studio(&dir);
     app.set_grid_open(true);
     slint::platform::update_timers_and_animations();
-    let right = |app: &App, label: &str| {
-        let (at, size) = crate::testing::buttons(app, label)[0];
-        let position =
-            slint::LogicalPosition::new(at.x + size.width / 2.0, at.y + size.height / 2.0);
+    let right = |app: &App, name: &str| {
+        let (x, y) = middle_key(app, FOLDER_TILE, name);
+        let position = slint::LogicalPosition::new(x, y);
         for event in [
             WindowEvent::PointerMoved { position },
             WindowEvent::PointerPressed {
@@ -1391,17 +1407,17 @@ fn an_offline_roots_tiles_come_from_the_index_with_no_reveal() {
             app.window().dispatch_event(event);
         }
     };
-    right(&app, "Folder cedar");
+    right(&app, "cedar");
     assert!(app.get_menu_up(), "the tile's menu, online");
     assert_eq!(listed(&state).len(), 8, "the root's view: all under it");
     crate::testing::press(&app, slint::platform::Key::Escape);
     assert!(!app.get_menu_up());
     // The press that closes the menu is not a click on a tile: the
     // menu up again over cedar, and a left press on birch.
-    right(&app, "Folder cedar");
+    right(&app, "cedar");
     assert!(app.get_menu_up());
-    let (at, size) = crate::testing::buttons(&app, "Folder birch")[0];
-    click(&app, at.x + size.width / 2.0, at.y + size.height / 2.0);
+    let (x, y) = middle_key(&app, FOLDER_TILE, "birch");
+    click(&app, x, y);
     land_sent(&state, &app, &worker);
     assert!(!app.get_menu_up(), "the press closed the menu");
     assert!(
@@ -1435,7 +1451,7 @@ fn an_offline_roots_tiles_come_from_the_index_with_no_reveal() {
     assert!(state.borrow().views.library.offline.contains(&root));
     assert_eq!(tiles(&app), [("birch".into(), 2), ("export".into(), 1)]);
     assert!(app.get_grid_tiles().iter().all(|t| t.offline));
-    right(&app, "Folder export");
+    right(&app, "export");
     assert!(!app.get_menu_up(), "no reveal for an offline root");
     assert_eq!(
         tile_folder(&state.borrow(), 1),
@@ -1447,8 +1463,8 @@ fn an_offline_roots_tiles_come_from_the_index_with_no_reveal() {
         "offline: nothing to show"
     );
     // A click still opens it, from the index.
-    let (at, size) = crate::testing::buttons(&app, "Folder birch")[0];
-    click(&app, at.x + size.width / 2.0, at.y + size.height / 2.0);
+    let (x, y) = middle_key(&app, FOLDER_TILE, "birch");
+    click(&app, x, y);
     land_sent(&state, &app, &worker);
     assert_eq!(listed(&state), ["b1.tif", "b2.tif"]);
     done(&dir, state);
@@ -1667,12 +1683,7 @@ fn list_view(app: &App) -> (f32, f32) {
 /// when the list's scroll has it wholly out of sight, where the
 /// search does not look.
 fn row_bounds(app: &App, folder: &Path) -> Option<crate::testing::Bounds> {
-    use i_slint_backend_testing::ElementHandle;
-    let path = folder.to_string_lossy();
-    let name = folder.file_name().unwrap().to_string_lossy();
-    ElementHandle::find_by_accessible_label(app, &name)
-        .find(|e| e.accessible_description().as_deref() == Some(&*path))
-        .map(|row| crate::testing::bounds_of(&row))
+    crate::testing::keyed(app, FOLDER_LINE, key(folder)).map(|row| crate::testing::bounds_of(&row))
 }
 
 /// The top and foot in the window of the row for `folder`.

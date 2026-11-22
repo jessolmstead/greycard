@@ -133,7 +133,10 @@ fn the_switch_turns_the_fill_on_and_off_and_is_undone() {
         s.accessible_role(),
         Some(i_slint_backend_testing::AccessibleRole::Switch)
     );
-    assert_eq!(s.accessible_label().as_deref(), Some("Highlight fill"));
+    assert_eq!(
+        s.accessible_label().map(|l| l.to_string()),
+        Some(crate::tr!("Highlight fill"))
+    );
     assert_eq!(s.accessible_checked(), Some(false));
     assert!(takes_a_hand(&app));
 
@@ -603,9 +606,7 @@ fn hidden_the_switch_is_absent_and_a_carried_fill_stays_on() {
         "no switch by its id"
     );
     assert!(
-        ElementHandle::find_by_accessible_label(&app, "Highlight fill")
-            .next()
-            .is_none(),
+        crate::testing::spoken(&app, "Highlight fill").is_empty(),
         "nothing named for it"
     );
     assert!(app.get_highlight_fill(), "the edit's fill, shown on");

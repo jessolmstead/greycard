@@ -908,15 +908,15 @@ impl Rig {
 #[test]
 fn the_row_is_offered_on_a_merge_it_can_make_again() {
     let r = rig("merge-again-row");
-    let row = "Denoise the frames and merge again";
+    let row = "NoiseSection::merge-again-button";
     r.app.set_collapsed_noise(false);
     r.open(&r.out);
     assert!(r.app.get_merge_again_shown());
     // On the panel, below the learned tier's sliders.
     // In the panel's own terms: each lookup scrolls it its own way.
-    let (at, _) = crate::testing::labeled(&r.app, row);
+    let (at, _) = crate::testing::by_id(&r.app, row);
     let at = at.y - r.app.get_panel_scroll();
-    let (blend, _) = crate::testing::labeled(&r.app, greycard_edit::LEARNED_CHROMA);
+    let (blend, _) = crate::testing::by_id(&r.app, "NoiseSection::chroma-slider");
     let blend = blend.y - r.app.get_panel_scroll();
     assert!(at > blend, "{at} under {blend}");
 

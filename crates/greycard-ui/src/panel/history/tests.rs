@@ -882,18 +882,21 @@ fn a_saved_edit_shows_its_mark_and_a_reset_hides_it() {
     let (state, _worker) = crate::testing::state_for(&app, crate::testing::folder(2));
     app.invoke_select(0);
     assert_eq!(marks(&app, 0), (false, false));
-    assert_eq!(crate::testing::count_labeled(&app, "Edited"), 0);
+    assert_eq!(crate::testing::count_id(&app, "ThumbMarks::edited-mark"), 0);
 
     app.set_exposure(0.5);
     save(&app, &state);
     assert_eq!(marks(&app, 0), (true, false));
     assert_eq!(marks(&app, 1), (false, false), "the other frame is bare");
     assert_eq!(
-        crate::testing::count_labeled(&app, "Edited"),
+        crate::testing::count_id(&app, "ThumbMarks::edited-mark"),
         1,
         "drawn once, on the one cell"
     );
-    assert_eq!(crate::testing::count_labeled(&app, "Exported"), 0);
+    assert_eq!(
+        crate::testing::count_id(&app, "ThumbMarks::exported-mark"),
+        0
+    );
 
     // Reset: the panel back to the default is a state of its own,
     // and the frame is no longer edited.
@@ -901,7 +904,7 @@ fn a_saved_edit_shows_its_mark_and_a_reset_hides_it() {
     save(&app, &state);
     assert!(!state.borrow().sidecars[0].history.is_empty());
     assert_eq!(marks(&app, 0), (false, false));
-    assert_eq!(crate::testing::count_labeled(&app, "Edited"), 0);
+    assert_eq!(crate::testing::count_id(&app, "ThumbMarks::edited-mark"), 0);
 }
 
 /// An export landing puts its mark on the cell, beside the pencil
@@ -942,15 +945,21 @@ fn an_export_landing_shows_its_mark() {
     );
     assert_eq!(marks(&app, 0), (false, true));
     assert_eq!(marks(&app, 1), (false, false));
-    assert_eq!(crate::testing::count_labeled(&app, "Exported"), 1);
-    assert_eq!(crate::testing::count_labeled(&app, "Edited"), 0);
+    assert_eq!(
+        crate::testing::count_id(&app, "ThumbMarks::exported-mark"),
+        1
+    );
+    assert_eq!(crate::testing::count_id(&app, "ThumbMarks::edited-mark"), 0);
 
     // Edited as well: both, together.
     app.set_exposure(0.5);
     save(&app, &state);
     assert_eq!(marks(&app, 0), (true, true));
-    assert_eq!(crate::testing::count_labeled(&app, "Exported"), 1);
-    assert_eq!(crate::testing::count_labeled(&app, "Edited"), 1);
+    assert_eq!(
+        crate::testing::count_id(&app, "ThumbMarks::exported-mark"),
+        1
+    );
+    assert_eq!(crate::testing::count_id(&app, "ThumbMarks::edited-mark"), 1);
 }
 
 /// The export mark is a fact about the frame: an undo back past the
@@ -1786,7 +1795,7 @@ fn a_click_away_from_a_new_snapshot_s_name_ends_the_naming() {
 
     // The row is a button again: a click restores, once the
     // double-click's window has passed.
-    let (at, size) = testing::labeled(&app, "Keep");
+    let (at, size) = snapshot_part(&app, 0, "SnapshotsSection::snapshot-row");
     testing::click(&app, at.x + size.width / 2.0, at.y + size.height / 2.0);
     assert_eq!(
         app.get_snapshot_editing(),
@@ -1844,7 +1853,7 @@ fn a_snapshot_s_icons_restore_and_rename_and_a_double_click_only_renames() {
 
     // The pencil: its words on hover, then the name open for
     // typing, and nothing restored, then or later.
-    let (x, y) = middle(testing::labeled(&app, "Rename Base"));
+    let (x, y) = middle(snapshot_part(&app, 0, "SnapshotsSection::rename"));
     app.window()
         .dispatch_event(slint::platform::WindowEvent::PointerMoved {
             position: slint::LogicalPosition::new(x, y),
@@ -1864,7 +1873,7 @@ fn a_snapshot_s_icons_restore_and_rename_and_a_double_click_only_renames() {
     assert_eq!(app.get_snapshot_editing(), -1);
 
     // A double-click on the row: the name, and no restore.
-    let (x, y) = middle(testing::labeled(&app, "Base"));
+    let (x, y) = middle(snapshot_part(&app, 0, "SnapshotsSection::snapshot-row"));
     testing::click(&app, x, y);
     testing::click(&app, x, y);
     assert_eq!(app.get_snapshot_editing(), 0, "a double-click renames");
@@ -1876,7 +1885,7 @@ fn a_snapshot_s_icons_restore_and_rename_and_a_double_click_only_renames() {
     // The restore icon: back to the snapshot at once.
     // The pointer comes to it first, as a hand does, and its
     // words are up before the press.
-    let (x, y) = middle(testing::labeled(&app, "Restore Base"));
+    let (x, y) = middle(snapshot_part(&app, 0, "SnapshotsSection::restore"));
     app.window()
         .dispatch_event(slint::platform::WindowEvent::PointerMoved {
             position: slint::LogicalPosition::new(x, y),
@@ -1915,6 +1924,13 @@ fn a_snapshot_s_icons_restore_and_rename_and_a_double_click_only_renames() {
     );
 }
 
+/// The part `part` (its row, its restore or rename icon) of the
+/// snapshot `i` in the list, each keyed by the snapshot's place,
+/// scrolled into the panel's view.
+fn snapshot_part(app: &App, i: usize, part: &str) -> (slint::LogicalPosition, slint::LogicalSize) {
+    crate::testing::by_key(app, part, i)
+}
+
 /// A frame with a snapshot named `name`, the naming over.
 fn named_snapshot(app: &App, name: &str) {
     app.invoke_snapshot_taken();
@@ -1944,7 +1960,7 @@ fn a_waiting_restore_is_dropped_when_the_frame_changes() {
         let restores = restores.clone();
         app.on_snapshot_restored(move |_| restores.set(restores.get() + 1));
     }
-    let (at, size) = testing::labeled(&app, "Base");
+    let (at, size) = snapshot_part(&app, 0, "SnapshotsSection::snapshot-row");
     let (x, y) = (at.x + size.width / 2.0, at.y + size.height / 2.0);
 
     testing::click(&app, x, y);
@@ -1979,7 +1995,7 @@ fn the_pencil_leaves_a_name_being_typed_on_another_row() {
     assert_eq!(app.get_snapshot_editing(), 1);
     testing::type_text(&app, "Two");
 
-    let (at, size) = testing::labeled(&app, "Rename Base");
+    let (at, size) = snapshot_part(&app, 0, "SnapshotsSection::rename");
     testing::click(&app, at.x + size.width / 2.0, at.y + size.height / 2.0);
     assert_ne!(app.get_snapshot_editing(), 0, "the other name stays shut");
     if app.get_snapshot_editing() == 1 {

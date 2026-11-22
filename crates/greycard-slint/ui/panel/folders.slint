@@ -41,7 +41,7 @@ export component FoldersSection inherits Section {
     body-spacing: Theme.space-1;
     HorizontalLayout {
         padding-left: Theme.space-2 - 2px;
-        Toggle {
+        subfolders-toggle := Toggle {
             label: @tr("With subfolders");
             checked <=> root.subfolders;
             toggled => { root.subfolders-changed(); root.focus-keys(); }
@@ -118,6 +118,8 @@ export component FoldersSection inherits Section {
                     accessible-role: button;
                     accessible-label: row.name;
                     accessible-description: row.path;
+                    // Its key, for automation: the folder's path.
+                    accessible-id: row.path;
                     accessible-action-default => { root.picked(i); }
                     animate background { duration: root.still-marks ? 0ms : Theme.quick; }
                     folder-row := TouchArea {
@@ -153,6 +155,7 @@ export component FoldersSection inherits Section {
                                 mouse-cursor: row.children ? MouseCursor.pointer : MouseCursor.default;
                                 accessible-role: button;
                                 accessible-label: row.expanded ? @tr("Fold {}", row.name) : @tr("Unfold {}", row.name);
+                                accessible-id: row.path;
                                 accessible-enabled: row.children;
                                 accessible-action-default => {
                                     if (row.children) { root.folded(i); root.focus-keys(); }

@@ -170,14 +170,18 @@ fn the_strips_names_cut_short_come_up_whole() {
     // with the grid) leaves another control's word alone.
     app.set_can_undo(true);
     crate::testing::rest_on_id(&app, "PanelHead::undo-button");
-    assert_eq!(app.get_tip_text(), "Undo");
+    assert_eq!(app.get_tip_text(), crate::tr!("Undo"));
     assert!(crate::cells::note_aspect(&app, 2, 0.5));
     assert!(crate::cells::take_aspects(&app));
     slint::platform::update_timers_and_animations();
-    assert_eq!(app.get_tip_text(), "Undo", "a re-flow left the word up");
+    assert_eq!(
+        app.get_tip_text(),
+        crate::tr!("Undo"),
+        "a re-flow left the word up"
+    );
     away(&app);
     crate::testing::rest_on_id(&app, "PanelHead::undo-button");
-    assert_eq!(app.get_tip_text(), "Undo", "and it comes again");
+    assert_eq!(app.get_tip_text(), crate::tr!("Undo"), "and it comes again");
     away(&app);
     let long = *texts(&app, LONG)
         .last()
@@ -319,7 +323,7 @@ fn the_grid_holding_its_place_leaves_a_buttons_word_up() {
     slint::platform::update_timers_and_animations();
     let scroll = app.get_grid_scroll();
     assert!(scroll > 0.0, "the sheet scrolled");
-    crate::testing::rest_on(&app, "Sort: Capture time");
+    crate::testing::rest_on_id(&app, "SortButton::root");
     assert_eq!(app.get_tip_text(), "Sort: Capture time");
     // Every picture above the view comes in wide: the rows above get
     // shorter, and the sheet's scroll moves to hold what is on screen.
