@@ -900,3 +900,229 @@ fn a_roots_row_opens_the_root_as_the_switch_says() {
     assert!(!app.get_folder_tree_subfolders());
     crate::testing::remove_scratch(state, &dir);
 }
+
+/// A root's count changing at every word of a pass, as an archive's
+/// does for minutes while its files are found, moves nothing in the
+/// left pane: not its scroll, not ROOTS' rows, not FOLDERS or its
+/// list's scroll, and not COLLECTIONS under them. The pane and the
+/// tree's list are scrolled partway, and each place is read the way a
+/// frame drawn between two words reads it: from the handle found
+/// before, with no walk of the window's tree first, then at each frame
+/// of the next 160 ms. New folders found under the open root then
+/// lengthen its tree under the FOLDERS heading, which stays where it
+/// is, as does the row at the top of the list, folders coming in above
+/// it or under it.
+#[test]
+fn a_roots_count_changing_moves_nothing_in_the_left_pane() {
+    use i_slint_backend_testing::ElementHandle;
+    let dir = scratch("still");
+    let (a, archive) = (dir.join("a"), dir.join("Archive"));
+    for i in 0..4 {
+        let d = a.join(format!("d{i}"));
+        std::fs::create_dir_all(&d).unwrap();
+        frames(&d, &["x.tif"]);
+    }
+    for i in 0..12 {
+        let d = archive.join(format!("s{i:02}"));
+        std::fs::create_dir_all(&d).unwrap();
+        frames(&d, &["x.tif"]);
+    }
+    let db = dir.join("index").join("library.sqlite");
+    let mut writer = greycard_library::Library::open(&db).unwrap();
+    writer.index_tree(&a, &mut |_| {}).unwrap();
+    writer.index_tree(&archive, &mut |_| {}).unwrap();
+    let app = window(0);
+    app.window()
+        .set_size(slint::LogicalSize::new(1200.0, 640.0));
+    app.set_grid_open(true);
+    let (state, worker) = state_for(&app, Vec::new());
+    {
+        let mut st = state.borrow_mut();
+        st.views.index_reader = Some(greycard_library::Library::open_read_only(&db).unwrap());
+        st.views.sort = crate::sort::Kept::by_name();
+        st.views.library.roots.add(&a).unwrap();
+        st.views.library.roots.add(&archive).unwrap();
+        st.views.library.roots.set_archive(&archive, true);
+        for k in 0..3 {
+            st.views
+                .collections
+                .list
+                .push(crate::collections::Collection::new(&format!("c{k}")));
+        }
+        recount(&mut st);
+    }
+    open_view(&state, &app, &worker, View::Roots(Some(archive.clone())));
+    land_all(&state, &app, &worker);
+    crate::testing::settle(&app);
+
+    // The places watched, each by its id, found once.
+    let ids = [
+        "RootsSection::all-roots",
+        "RootsSection::add-root-link",
+        "App::folders-section",
+        "FoldersSection::folder-pane",
+        "App::collections-section",
+    ];
+    let held: Vec<ElementHandle> = ids
+        .iter()
+        .map(|id| {
+            ElementHandle::find_by_element_id(&app, id)
+                .next()
+                .unwrap_or_else(|| panic!("no {id}"))
+        })
+        .collect();
+    let places = || -> Vec<f32> {
+        held.iter()
+            .flat_map(|h| {
+                let (at, size) = crate::testing::bounds_of(h);
+                [at.y, size.height]
+            })
+            .collect()
+    };
+    let wheel = |x: f32, y: f32, by: f32| {
+        app.window()
+            .dispatch_event(slint::platform::WindowEvent::PointerScrolled {
+                position: slint::LogicalPosition::new(x, y),
+                delta_x: 0.0,
+                delta_y: -by,
+            });
+        crate::testing::settle(&app);
+    };
+    // Where each of the tree's rows is, as found afresh: its scroll.
+    let tree_rows = || -> Vec<f32> {
+        crate::testing::settle(&app);
+        ElementHandle::find_by_element_id(&app, "FoldersSection::folder-row")
+            .map(|r| r.absolute_position().y)
+            .collect()
+    };
+    // Scrolled partway, the pane and the tree's list in it: each holds
+    // more than it shows.
+    let top = places();
+    wheel(100.0, 300.0, 40.0);
+    let before = places();
+    assert!(
+        before[0] < top[0] - 10.0,
+        "the pane did not scroll: {top:?} then {before:?}"
+    );
+    let tree_top = tree_rows();
+    let pane = held[3].absolute_position();
+    wheel(pane.x + 40.0, pane.y + 10.0, 69.0);
+    let tree_before = tree_rows();
+    assert_eq!(places(), before, "the tree's wheel scrolled the pane");
+    assert_ne!(tree_before, tree_top, "the tree did not scroll");
+
+    // Every frame of a word's next 160 ms, and settled.
+    let frames_after = |what: &str| {
+        let mut seen = vec![places()];
+        for _ in 0..10 {
+            i_slint_backend_testing::mock_elapsed_time(Duration::from_millis(16));
+            slint::platform::update_timers_and_animations();
+            seen.push(places());
+        }
+        for (k, now) in seen.iter().enumerate() {
+            assert_eq!(
+                *now,
+                before,
+                "{what}: {ids:?} moved {} ms after the word",
+                k * 16
+            );
+        }
+    };
+    let reindex = |writer: &mut greycard_library::Library| {
+        state.borrow_mut().views.index_reader = None;
+        writer.index_tree(&archive, &mut |_| {}).unwrap();
+        state.borrow_mut().views.index_reader =
+            Some(greycard_library::Library::open_read_only(&db).unwrap());
+    };
+    let told = |path: &Path, added: usize| {
+        let report = greycard_library::Report {
+            added,
+            ..Default::default()
+        };
+        background_done(&state, &app, path, &report, false, false);
+    };
+
+    // Frames found in a folder the tree already has: only counts move,
+    // the root's and the folder's.
+    let day = archive.join("s05");
+    for i in 1..=6 {
+        let names: Vec<String> = (0..i * 4).map(|k| format!("w{i}-{k}.tif")).collect();
+        let names: Vec<&str> = names.iter().map(String::as_str).collect();
+        frames(&day, &names);
+        reindex(&mut writer);
+        told(&day, names.len());
+        frames_after(&format!("word {i}, before the reads land"));
+        land_all(&state, &app, &worker);
+        frames_after(&format!("word {i}, the reads landed"));
+        assert_eq!(tree_rows(), tree_before, "word {i}: the tree's list moved");
+    }
+    let archive_count = app
+        .get_library_roots()
+        .iter()
+        .find(|c| c.archive)
+        .map(|c| c.count);
+    assert_eq!(
+        archive_count,
+        Some(12 + (1..=6).map(|i| i * 4).sum::<i32>())
+    );
+    let day_count = app
+        .get_folder_tree()
+        .iter()
+        .find(|r| r.name == "s05")
+        .map(|r| r.count);
+    assert_eq!(day_count, Some(1 + (1..=6).map(|i| i * 4).sum::<i32>()));
+
+    // New folders under the open root, after those there and before
+    // them: the tree grows under its heading, which stays put, as do
+    // ROOTS' rows above it and the tree's own box; and the row at the
+    // top of the tree's list stays there, its folder and its place,
+    // whether the new folder comes under it or above it, out of sight.
+    let heading = |p: &[f32]| p[..8].to_vec();
+    let top_row = || -> (String, f32) {
+        crate::testing::settle(&app);
+        let pane_top = held[3].absolute_position().y;
+        ElementHandle::find_by_element_id(&app, "FoldersSection::folder-line")
+            .map(|r| {
+                let (at, size) = crate::testing::bounds_of(&r);
+                let path = r.accessible_description().unwrap_or_default().to_string();
+                (path, at.y, at.y + size.height)
+            })
+            .filter(|(_, _, foot)| *foot > pane_top + 0.5)
+            .min_by(|a, b| a.1.total_cmp(&b.1))
+            .map(|(path, y, _)| (path, y))
+            .expect("a row in the tree's list")
+    };
+    let first = top_row();
+    assert!(
+        first.0.ends_with("s02"),
+        "the list scrolled by three rows has s02 at its top: {first:?}"
+    );
+    for (i, name) in ["t01", "a01", "t02", "a02"].iter().enumerate() {
+        let d = archive.join(name);
+        std::fs::create_dir_all(&d).unwrap();
+        frames(&d, &["x.tif", "y.tif"]);
+        reindex(&mut writer);
+        told(&d, 2);
+        for _ in 0..10 {
+            i_slint_backend_testing::mock_elapsed_time(Duration::from_millis(16));
+            slint::platform::update_timers_and_animations();
+            assert_eq!(heading(&places()), heading(&before), "folder {i}: {name}");
+        }
+        land_all(&state, &app, &worker);
+        crate::testing::settle(&app);
+        assert_eq!(heading(&places()), heading(&before), "folder {i}: {name}");
+        assert_eq!(top_row(), first, "folder {i}: {name}");
+    }
+    assert_eq!(
+        app.get_folder_tree()
+            .iter()
+            .filter(|r| r.depth == 1)
+            .count(),
+        16,
+        "every folder in the tree"
+    );
+    drop(held);
+    drop(writer);
+    drop(worker);
+    crate::testing::remove_scratch(state, &dir);
+}

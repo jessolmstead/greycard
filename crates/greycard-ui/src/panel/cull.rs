@@ -7,7 +7,7 @@ use crate::tr;
 use greycard_edit::geometry::Geometry;
 use greycard_edit::{Edit, Sidecar, meta};
 use slint::wgpu_30::wgpu as gpu;
-use slint::{ComponentHandle, ModelRc, VecModel};
+use slint::{ComponentHandle, Model, ModelRc, VecModel};
 
 use crate::capture::{schedule_snapshot, write_screenshot};
 use crate::panel::browser::{
@@ -22,7 +22,10 @@ use crate::panel::startup::sync_rows;
 use crate::panel::viewport::{sync_display, zoom_label};
 use crate::render::{self, View};
 use crate::worker::Worker;
-use crate::{App, CompareTile, FilterChip, STATE, Shared, State, cull, filter, placeholder};
+use crate::{
+    App, CompareTile, FacetChip, FacetRow, FilterChip, STATE, Shared, State, cull, filter,
+    placeholder,
+};
 
 // The status line's words for a picture and its zoom, in the library
 // beside the placeholder's line that says them too.
@@ -3133,9 +3136,17 @@ pub(crate) fn show_filter(st: &State, app: &App) {
             code: l.code(),
         })
         .collect();
-    app.set_filter_stars(ModelRc::new(VecModel::from(stars)));
-    app.set_filter_flags(ModelRc::new(VecModel::from(flags)));
-    app.set_filter_labels(ModelRc::new(VecModel::from(labels)));
+    // Every list here in place, row by row: a pass over the folder puts
+    // the filter on the window again at each batch, and lists made
+    // again would make every chip and facet row again at each, a facet
+    // row scrolled sideways snapping back to its start.
+    keep_rows(app.get_filter_stars(), |m| app.set_filter_stars(m), stars);
+    keep_rows(app.get_filter_flags(), |m| app.set_filter_flags(m), flags);
+    keep_rows(
+        app.get_filter_labels(),
+        |m| app.set_filter_labels(m),
+        labels,
+    );
     app.set_filter_exact(exact);
     app.set_filter_shown(counts.shown as i32);
     app.set_filter_total(counts.total as i32);
@@ -3152,10 +3163,61 @@ pub(crate) fn show_filter(st: &State, app: &App) {
     let mut ranges = crate::library::facet_ranges(st).into_iter();
     app.set_filter_iso_range(ranges.next().unwrap_or_default());
     app.set_filter_focal_range(ranges.next().unwrap_or_default());
-    app.set_filter_facets(ModelRc::new(VecModel::from(rows)));
-    app.set_filter_facets_long(ModelRc::new(VecModel::from(long)));
-    app.set_filter_facets_short(ModelRc::new(VecModel::from(short)));
+    keep_facets(app.get_filter_facets(), |m| app.set_filter_facets(m), rows);
+    keep_facets(
+        app.get_filter_facets_long(),
+        |m| app.set_filter_facets_long(m),
+        long,
+    );
+    keep_facets(
+        app.get_filter_facets_short(),
+        |m| app.set_filter_facets_short(m),
+        short,
+    );
     app.set_filter_facet_note(note.into());
+}
+
+/// `rows` into the window's list `now`, in place when it is one this
+/// put there, else as a list of its own (`set`), the first time.
+fn keep_rows<T: Clone + PartialEq + 'static>(
+    now: ModelRc<T>,
+    set: impl FnOnce(ModelRc<T>),
+    rows: Vec<T>,
+) {
+    match now.as_any().downcast_ref::<VecModel<T>>() {
+        Some(model) => sync_rows(model, rows),
+        None => set(ModelRc::new(VecModel::from(rows))),
+    }
+}
+
+/// [`keep_rows`] for facet rows, each with its chips: a row that is
+/// still the same facet keeps its chips' list and has the chips put
+/// into it in place, so the row is not made again either.
+fn keep_facets(now: ModelRc<FacetRow>, set: impl FnOnce(ModelRc<FacetRow>), rows: Vec<FacetRow>) {
+    let Some(model) = now.as_any().downcast_ref::<VecModel<FacetRow>>() else {
+        set(ModelRc::new(VecModel::from(rows)));
+        return;
+    };
+    let rows: Vec<FacetRow> = rows
+        .into_iter()
+        .enumerate()
+        .map(|(i, row)| {
+            let Some(was) = model
+                .row_data(i)
+                .filter(|was| was.name == row.name && was.code == row.code)
+            else {
+                return row;
+            };
+            match was.chips.as_any().downcast_ref::<VecModel<FacetChip>>() {
+                Some(chips) => {
+                    sync_rows(chips, row.chips.iter().collect());
+                    was
+                }
+                None => row,
+            }
+        })
+        .collect();
+    sync_rows(model, rows);
 }
 
 /// The browser has nothing left to show and the filter is why, which

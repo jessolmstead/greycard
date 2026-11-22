@@ -1010,6 +1010,12 @@ export component App inherits Window {
     /// its row, which brings that row into the list's view.
     in property <int> folder-tree-open-row: -1;
     in property <int> folder-tree-reveal: 0;
+    /// Where each of the tree's rows went when folders came or went
+    /// above it, a count that goes up then, and the open mark held from
+    /// fading across the move (`FoldersSection`).
+    in property <[int]> folder-tree-moved;
+    in property <int> folder-tree-moves: 0;
+    in-out property <bool> folder-tree-still: false;
     /// The FOLDERS section's fold, kept for each view: the section
     /// folds as on screen, and the view off screen keeps its own for
     /// when it comes back (see `changed grid-open`). Whose the
@@ -6035,6 +6041,9 @@ export component App inherits Window {
                                 rows: root.folder-tree;
                                 open-row: root.folder-tree-open-row;
                                 reveal: root.folder-tree-reveal;
+                                moved: root.folder-tree-moved;
+                                moves: root.folder-tree-moves;
+                                still-marks <=> root.folder-tree-still;
                                 subfolders <=> root.folder-tree-subfolders;
                                 collapsed-folders <=> root.collapsed-folders;
                                 animated <=> root.folders-animated;

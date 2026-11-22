@@ -70,6 +70,8 @@ design note behind it.
 
 ### Fixes
 
+- The left pane holds still while a root's frame count climbs or a pass
+  finds folders, and the culling filter's chips keep their scroll.
 - Dragging the Level tool's ruler no longer lays a grid over the
   picture; the grid still shows while the Angle slider moves.
 - The import sheet's preset picker says "None" in the window's language,

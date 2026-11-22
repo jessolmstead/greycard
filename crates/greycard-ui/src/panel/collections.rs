@@ -140,10 +140,10 @@ pub(crate) fn show(st: &State, app: &App) {
             order: Default::default(),
         }))
         .collect();
+    // In place, as the roots' rows (`roots::show`): rows made again
+    // leave the list empty for a frame, and all under it jumps.
     let held = &st.views.collections_held;
-    if !held.rows.iter().eq(chips.iter().cloned()) {
-        held.rows.set_vec(chips);
-    }
+    crate::panel::startup::sync_rows(&held.rows, chips);
     let names: Vec<slint::SharedString> = store
         .list
         .iter()

@@ -8,7 +8,6 @@ use greycard_library::Roots;
 use greycard_library::roots::Added;
 #[cfg(not(test))]
 use slint::ComponentHandle;
-use slint::Model;
 
 #[cfg(test)]
 use super::tests;
@@ -54,10 +53,12 @@ pub(crate) fn show(st: &State, app: &App) {
             archive: st.views.library.roots.is_archive(r),
         })
         .collect();
-    let model = &st.views.library.rows;
-    if !model.iter().eq(chips.iter().cloned()) {
-        model.set_vec(chips);
-    }
+    // Row by row, in place: a root's count moves at every word of a
+    // pass over it (for minutes, over an archive on a share), and the
+    // rows made again would leave ROOTS without them until the next
+    // walk of the window, which a frame drawn between catches as the
+    // section folding a little and everything under it jumping.
+    crate::panel::startup::sync_rows(&st.views.library.rows, chips);
     app.set_library_all_on(on == Some(None));
     app.set_library_all_count(st.views.library.counts.iter().sum::<usize>() as i32);
     app.set_library_can_add_open(open_folder_to_add(st).is_some());

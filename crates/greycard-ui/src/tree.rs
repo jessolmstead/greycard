@@ -23,7 +23,7 @@
 //! the list already holds everything under the folder.
 
 use std::cell::RefCell;
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::ffi::OsString;
 use std::path::{Component, Path, PathBuf};
 use std::rc::Rc;
@@ -230,9 +230,10 @@ pub(crate) fn tiles_for(st: &State) -> Vec<&Node> {
     children(&st.views.tree.nodes, folder)
 }
 
-/// The grid's tiles as the state has them, replaced only when they
-/// change; a tile's name tip goes with them, since a tile destroyed
-/// never hears the pointer leave.
+/// The grid's tiles as the state has them, changed in place, tile by
+/// tile. A tile's name tip goes down when a tile now names another
+/// folder, or a tile goes, since a tile destroyed never hears the
+/// pointer leave; a count moving or a tile added at the end leaves it.
 fn show_tiles(st: &State, app: &App) {
     let nodes = tiles_for(st);
     let offline = shown_for(st).is_some_and(|(r, _)| st.views.library.offline.contains(r));
@@ -245,11 +246,28 @@ fn show_tiles(st: &State, app: &App) {
             offline,
         })
         .collect();
+    // In place, as the tree's rows: a count moving keeps every tile.
     let model = &st.views.tree.tiles;
-    if !model.iter().eq(tiles.iter().cloned()) {
-        model.set_vec(tiles);
+    let renamed = names_moved(model, &tiles, |t| t.name.clone());
+    crate::panel::startup::sync_rows(model, tiles);
+    if renamed {
         app.invoke_hide_tip();
     }
+}
+
+/// Whether a row of `model` will name something else once `rows` are
+/// in it, by `key` (the words a tip shows and what they stand for), or
+/// a row will go. Rows added at the end name nothing a tip is up over.
+fn names_moved<T: Clone + 'static, K: PartialEq>(
+    model: &VecModel<T>,
+    rows: &[T],
+    key: impl Fn(&T) -> K,
+) -> bool {
+    rows.len() < model.row_count()
+        || model
+            .iter()
+            .zip(rows)
+            .any(|(was, now)| key(&was) != key(now))
 }
 
 /// The view a folder of `root`'s tree opens: its own frames, or with
@@ -720,7 +738,8 @@ pub(crate) fn show(st: &State, app: &App) {
         }
         _ => Vec::new(),
     };
-    *st.views.tree.shown.borrow_mut() = nodes.iter().map(|n| n.path.clone()).collect();
+    let paths: Vec<PathBuf> = nodes.iter().map(|n| n.path.clone()).collect();
+    let was = std::mem::replace(&mut *st.views.tree.shown.borrow_mut(), paths);
     let rows: Vec<FolderRow> = nodes
         .into_iter()
         .map(|n| {
@@ -741,14 +760,52 @@ pub(crate) fn show(st: &State, app: &App) {
             }
         })
         .collect();
+    // Row by row, in place, as the roots' rows are (`roots::show`): made
+    // again, the list would be empty until the next walk of the window,
+    // the tree's box would shrink and its scroll go back to the top in
+    // a frame drawn between, and all under FOLDERS would jump. A row
+    // that now names another folder (one added or gone above it) takes
+    // its tip down: the pointer is over another name.
     let model = &st.views.tree.rows;
-    if !model.iter().eq(rows.iter().cloned()) {
-        // Every row made again: a name's tip goes with them.
-        model.set_vec(rows);
+    let renamed = names_moved(model, &rows, |r| (r.name.clone(), r.path.clone()));
+    crate::panel::startup::sync_rows(model, rows);
+    if renamed {
         app.invoke_hide_tip();
     }
+    keep_in_place(st, app, &was);
     bring_into_view(st, app, open);
     show_tiles(st, app);
+}
+
+/// Where each row of `was`, the list's folders before, is now: told to
+/// the list when a folder came or went above one, so the row in sight
+/// at its top stays there rather than slide by a row, and the open
+/// mark lands on its row's new place at once rather than fade across.
+/// Nothing is worked out when every row is where it was, as after a
+/// pass that only moved counts or added folders at the end.
+fn keep_in_place(st: &State, app: &App, was: &[PathBuf]) {
+    let now = st.views.tree.shown.borrow();
+    if now.starts_with(was) {
+        return;
+    }
+    let at: HashMap<&Path, usize> = now
+        .iter()
+        .enumerate()
+        .map(|(i, p)| (p.as_path(), i))
+        .collect();
+    let moved: Vec<i32> = was
+        .iter()
+        .map(|p| at.get(p.as_path()).map_or(-1, |&i| i as i32))
+        .collect();
+    if moved
+        .iter()
+        .enumerate()
+        .any(|(i, &j)| j >= 0 && j != i as i32)
+    {
+        app.set_folder_tree_moved(ModelRc::new(VecModel::from(moved)));
+        app.set_folder_tree_moves(app.get_folder_tree_moves().wrapping_add(1));
+        app.set_folder_tree_still(true);
+    }
 }
 
 /// The open folder's row brought into the list's view when the folder

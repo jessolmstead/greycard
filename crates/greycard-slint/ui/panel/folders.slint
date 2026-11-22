@@ -15,6 +15,15 @@ export component FoldersSection inherits Section {
     /// when that row is to be brought into the list's view.
     in property <int> open-row: -1;
     in property <int> reveal: 0;
+    /// Where each row of the list before went in the list now, by its
+    /// folder (-1 for one gone), and a count that goes up when a row
+    /// moved: folders found or gone above it.
+    in property <[int]> moved;
+    in property <int> moves: 0;
+    /// Set with `moves`: the rows' marks land where they now are at
+    /// once, not fade, since a row moving is no change of its own. Put
+    /// back here once the move has been drawn.
+    in-out property <bool> still-marks: false;
     in-out property <bool> subfolders;
     in-out property <bool> collapsed-folders;
     /// A folder chosen, by its row.
@@ -74,10 +83,34 @@ export component FoldersSection inherits Section {
             let to = top < at ? top - spare : top + h + spare - view;
             folder-pane.content-y = -clamp(to, 0px, max(0px, folder-pane.content-height - view));
         }
+        // Folders found or gone above the top row in sight (a pass over
+        // the root while the list is scrolled) move the list by as many
+        // rows, so that row stays where it is, as part of a row cut at
+        // the top stays cut; a list at its top stays at its top.
+        property <int> moves: root.moves;
+        changed moves => {
+            let pitch = Theme.control-height - 8px + folder-list.spacing;
+            let at = -folder-pane.content-y - folder-list.padding-top;
+            if (at <= 0px) { return; }
+            let top = Math.floor(at / pitch);
+            if (top >= root.moved.length) { return; }
+            let now = root.moved[top];
+            if (now < 0 || now == top) { return; }
+            let view = folder-pane.visible-height;
+            folder-pane.content-y = -clamp(-folder-pane.content-y + (now - top) * pitch,
+                0px, max(0px, folder-pane.content-height - view));
+        }
+        // Past the marks' fade, so a fade the move would have started
+        // has had its frames drawn at once.
+        Timer {
+            interval: 250ms;
+            running: root.still-marks;
+            triggered => { root.still-marks = false; }
+        }
         folder-pane := ScrollPane {
             folder-list := VerticalLayout {
                 spacing: 1px;
-                for row[i] in root.rows: Rectangle {
+                for row[i] in root.rows: folder-line := Rectangle {
                     height: Theme.control-height - 8px;
                     border-radius: Theme.radius-sm;
                     background: row.open ? Theme.selection
@@ -86,7 +119,7 @@ export component FoldersSection inherits Section {
                     accessible-label: row.name;
                     accessible-description: row.path;
                     accessible-action-default => { root.picked(i); }
-                    animate background { duration: Theme.quick; }
+                    animate background { duration: root.still-marks ? 0ms : Theme.quick; }
                     folder-row := TouchArea {
                         /// Presses of any button, for the name's tip.
                         property <int> downs;

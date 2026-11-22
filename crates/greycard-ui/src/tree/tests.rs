@@ -1772,3 +1772,140 @@ fn the_open_folders_row_is_brought_into_the_trees_view() {
     drop(worker);
     done(&dir, state);
 }
+
+/// The line of the tree's list for `folder`, by its id; none while it
+/// is out of the list's sight.
+fn line(app: &App, folder: &Path) -> Option<i_slint_backend_testing::ElementHandle> {
+    let path = folder.to_string_lossy().into_owned();
+    i_slint_backend_testing::ElementHandle::find_by_element_id(app, "FoldersSection::folder-line")
+        .find(|e| e.accessible_description().as_deref() == Some(path.as_str()))
+}
+
+/// `name` added under `root` with a frame, indexed, and the pass over
+/// it said and landed, as the watcher's pass and the indexer's word of
+/// it would.
+fn found(dir: &Path, root: &Path, name: &str, state: &Rc<Shared>, app: &App, worker: &Rc<Worker>) {
+    frames(&root.join(name), &["n.tif"]);
+    let report = greycard_library::Library::open(&dir.join("index").join("library.sqlite"))
+        .unwrap()
+        .index_tree(root, &mut |_| {})
+        .unwrap();
+    crate::roots::background_done(state, app, &root.join(name), &report, false, false);
+    land_sent(state, app, worker);
+}
+
+/// A folder found above the open one while the list is scrolled moves
+/// the open folder's row down one in the list, and the list with it,
+/// so it stays where it was; its mark moves with it at once, with no
+/// fade, the move being no change of the user's: the marks are held
+/// still across it, and fade again once it is drawn. A pass that only
+/// moves counts, or a folder opened by the user, holds nothing. (The
+/// testing backend has no reading of a line's fill, so the hold is
+/// what is checked, not the fill.)
+#[test]
+fn a_folder_found_above_moves_no_mark_across_the_rows() {
+    let dir = scratch("marks");
+    let root = dir.join("archive");
+    for i in 0..12 {
+        frames(&root.join(format!("s{i:02}")), &["x.tif"]);
+    }
+    let (app, state, worker) = open_root(&dir, &root, Some((1200.0, 700.0)));
+    pick(&app, "s05");
+    land_sent(&state, &app, &worker);
+    let (open, above) = (root.join("s05"), root.join("s04"));
+    crate::testing::settle(&app);
+    let pane = i_slint_backend_testing::ElementHandle::find_by_element_id(
+        &app,
+        "FoldersSection::folder-pane",
+    )
+    .next()
+    .expect("the tree's list");
+    let at = pane.absolute_position();
+    app.window()
+        .dispatch_event(slint::platform::WindowEvent::PointerScrolled {
+            position: slint::LogicalPosition::new(at.x + 40.0, at.y + 10.0),
+            delta_x: 0.0,
+            delta_y: -21.0,
+        });
+    crate::testing::settle(&app);
+    assert!(line(&app, &above).is_some(), "s04 in sight");
+    // Where a row is in the list's view: the pane above it may move as
+    // a frame's picture comes up in the Navigator.
+    let in_list = |folder: &Path| {
+        line(&app, folder).expect("in sight").absolute_position().y - pane.absolute_position().y
+    };
+    let was = in_list(&open);
+    assert!(!app.get_folder_tree_still());
+
+    // Counts only: nothing held.
+    frames(&open, &["more.tif"]);
+    let report = greycard_library::Library::open(&dir.join("index").join("library.sqlite"))
+        .unwrap()
+        .index_tree(&root, &mut |_| {})
+        .unwrap();
+    crate::roots::background_done(&state, &app, &root, &report, false, false);
+    land_sent(&state, &app, &worker);
+    assert!(!app.get_folder_tree_still(), "a count moved");
+
+    found(&dir, &root, "a01", &state, &app, &worker);
+    assert!(
+        app.get_folder_tree_still(),
+        "the marks held across the move"
+    );
+    assert!(rows(&app)[7].3, "s05 marked, a row down: {:?}", rows(&app));
+    crate::testing::settle(&app);
+    assert_eq!(in_list(&open), was, "s05 stays put in the list");
+    // The marks fade again once the move is drawn.
+    i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(300));
+    slint::platform::update_timers_and_animations();
+    assert!(!app.get_folder_tree_still());
+
+    // A folder the user opens: its mark fades in as ever.
+    pick(&app, "s06");
+    land_sent(&state, &app, &worker);
+    assert!(rows(&app)[8].3, "s06 marked: {:?}", rows(&app));
+    assert!(!app.get_folder_tree_still(), "a folder opened");
+    drop(worker);
+    done(&dir, state);
+}
+
+/// A folder's whole name up at the pointer stays up while a pass adds
+/// a folder at the list's end, and goes when one comes in above it,
+/// which puts another folder under the pointer.
+#[test]
+fn a_folder_added_at_the_end_leaves_a_names_tip_up() {
+    let dir = scratch("tip");
+    let root = dir.join("archive");
+    let long = "b folder named at length for the shoot it holds, day two";
+    frames(&root.join(long), &["x.tif"]);
+    frames(&root.join("c"), &["x.tif"]);
+    let (app, state, worker) = open_root(&dir, &root, Some((1200.0, 700.0)));
+    // A folder's own frames open, which a pass over a new folder beside
+    // it leaves as they are: a new list takes every tip down.
+    pick(&app, "c");
+    land_sent(&state, &app, &worker);
+    crate::testing::settle(&app);
+    let row = line(&app, &root.join(long)).expect("the long name's line");
+    let (at, size) = crate::testing::bounds_of(&row);
+    app.window()
+        .dispatch_event(slint::platform::WindowEvent::PointerMoved {
+            position: slint::LogicalPosition::new(
+                at.x + size.width / 2.0,
+                at.y + size.height / 2.0,
+            ),
+        });
+    i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(800));
+    slint::platform::update_timers_and_animations();
+    assert_eq!(app.get_tip_text(), long, "the whole name after a rest");
+
+    found(&dir, &root, "d", &state, &app, &worker);
+    slint::platform::update_timers_and_animations();
+    assert_eq!(rows(&app).last().map(|r| r.0.clone()).as_deref(), Some("d"));
+    assert_eq!(app.get_tip_text(), long, "a folder at the end");
+
+    found(&dir, &root, "a", &state, &app, &worker);
+    slint::platform::update_timers_and_animations();
+    assert_eq!(app.get_tip_text(), "", "a folder above it");
+    drop(worker);
+    done(&dir, state);
+}

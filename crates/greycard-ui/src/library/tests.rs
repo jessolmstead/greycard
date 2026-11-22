@@ -1924,3 +1924,128 @@ fn a_tick_waits_behind_the_launch_and_is_never_doubled() {
     assert!(queue_poll(&mut q, below.clone()));
     assert_eq!(Vec::from(q), vec![Background::Poll(below)]);
 }
+
+/// A pass over the window's own folder says how far it has got at
+/// every batch, and each word puts the filter on the window again:
+/// the CULLING section holds still through them. A facet row scrolled
+/// sideways stays scrolled, which a row made again at each word would
+/// not (it would snap back to its start), and nothing under the rows
+/// moves up or down, read from the handle found before with no walk
+/// first, then at each frame of the next 160 ms. The pass's note comes
+/// with its first word and stays while it runs: that line is the one
+/// move, and it is made before the rest are watched.
+#[test]
+fn a_pass_ticking_moves_nothing_in_the_culling_section() {
+    use crate::testing::{press, state_for, window};
+    use i_slint_backend_testing::ElementHandle;
+    let dir = scratch("cull-still");
+    let app = window(0);
+    app.window()
+        .set_size(slint::LogicalSize::new(1500.0, 950.0));
+    let (files, mut sidecars, reader) = folder(&dir);
+    // Keywords enough that their row runs past the panel and scrolls.
+    let words: Vec<String> = (0..10).map(|k| format!("a long keyword {k}")).collect();
+    sidecars[1].meta.set_keywords(words);
+    let (state, _worker) = state_for(&app, files);
+    {
+        let mut st = state.borrow_mut();
+        st.sidecars = sidecars;
+        st.views.index_reader = Some(reader);
+        refresh_ids(&mut st);
+        crate::panel::browser::rebuild_browser(&mut st, &app);
+    }
+    crate::STATE.with(|s| *s.borrow_mut() = Some(state.clone()));
+    app.set_filter_bar(true);
+    app.invoke_select(0);
+    press(&app, "c");
+    assert!(app.get_culling());
+    crate::testing::settle(&app);
+    assert!(
+        app.get_filter_facets().row_count() > 1,
+        "facet rows to keep"
+    );
+    // Under the chips and the facet rows, in the same section.
+    let below = ElementHandle::find_by_element_id(&app, "CullSection::compare-words")
+        .next()
+        .expect("the Compare row");
+    let generation = state.borrow().views.index_generation;
+    let word = |done: usize| {
+        told(
+            &app,
+            Told::Progress {
+                generation,
+                done,
+                total: 8,
+            },
+        )
+    };
+    word(1);
+    crate::testing::settle(&app);
+    assert_ne!(app.get_filter_facet_note(), "", "the pass's note");
+    // The facet rows in the panel, each its chips' left edge, top first:
+    // where its sideways scroll has it.
+    let panel_x = below.absolute_position().x;
+    let rows = || -> Vec<(f32, f32)> {
+        crate::testing::settle(&app);
+        let mut found: Vec<(f32, f32)> = ElementHandle::find_by_element_id(&app, "FacetChips::row")
+            .map(|r| (r.absolute_position().y, r.absolute_position().x))
+            .filter(|(_, x)| *x >= panel_x - 40.0)
+            .collect();
+        found.sort_by(|a, b| a.0.total_cmp(&b.0));
+        found
+    };
+    // The row that runs past the panel: wider than its scroller.
+    let flicks: Vec<ElementHandle> = ElementHandle::find_by_element_id(&app, "FacetChips::flick")
+        .filter(|f| f.absolute_position().x >= panel_x - 40.0)
+        .collect();
+    let long = flicks
+        .iter()
+        .find(|f| {
+            let y = f.absolute_position().y;
+            ElementHandle::find_by_element_id(&app, "FacetChips::row").any(|r| {
+                (r.absolute_position().y - y).abs() < 1.0 && r.size().width > f.size().width + 10.0
+            })
+        })
+        .expect("a facet row past the panel");
+    let unscrolled = rows();
+    // Turned sideways by a wheel short of its end.
+    let (at, size) = crate::testing::bounds_of(long);
+    app.window()
+        .dispatch_event(slint::platform::WindowEvent::PointerScrolled {
+            position: slint::LogicalPosition::new(
+                at.x + size.width / 2.0,
+                at.y + size.height / 2.0,
+            ),
+            delta_x: 0.0,
+            delta_y: -40.0,
+        });
+    let scrolled = rows();
+    assert!(
+        scrolled
+            .iter()
+            .zip(&unscrolled)
+            .any(|(now, was)| now.1 < was.1 - 1.0),
+        "no facet row scrolled sideways: {unscrolled:?} then {scrolled:?}"
+    );
+    // A row at its end hands the wheel on to the panel, which may have
+    // scrolled too: the section is watched from where it is now.
+    let before = below.absolute_position().y;
+    for done in 2..=6 {
+        word(done);
+        for tick in 0..=10 {
+            assert_eq!(
+                below.absolute_position().y,
+                before,
+                "word {done}: the Compare row moved {} ms after it",
+                tick * 16
+            );
+            i_slint_backend_testing::mock_elapsed_time(Duration::from_millis(16));
+            slint::platform::update_timers_and_animations();
+        }
+        assert_eq!(rows(), scrolled, "word {done}: a facet row's scroll");
+    }
+    crate::STATE.with(|s| *s.borrow_mut() = None);
+    drop(flicks);
+    drop(below);
+    crate::testing::remove_scratch(state, &dir);
+}
