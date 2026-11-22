@@ -647,8 +647,11 @@ pub(super) fn run(
         }
         // The frame is about to be left, or its picture replaced: a save
         // still waiting on it is made from what is in hand now, or let go.
-        if let Some(keep) = pending.take()
-            && matches!(job, Job::Open { .. } | Job::Develop { .. })
+        // Any other job leaves it waiting (the kind is asked first: a
+        // `take` ahead of it would drop the save on a fill's round or the
+        // masks' picture, which it does not wait on).
+        if matches!(job, Job::Open { .. } | Job::Develop { .. })
+            && let Some(keep) = pending.take()
         {
             let leaving = match &job {
                 Job::Open { .. } => true,

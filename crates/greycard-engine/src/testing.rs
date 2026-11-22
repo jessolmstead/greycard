@@ -196,6 +196,8 @@ pub mod edited {
     pub enum Heard {
         Developed,
         Kept(PathBuf),
+        /// The masks' picture answered.
+        MaskPicture,
         Thumb {
             size: u32,
             w: u32,
@@ -258,6 +260,7 @@ pub mod edited {
             let said = match o {
                 Outcome::Developed { .. } => Heard::Developed,
                 Outcome::EditedKept { frame } => Heard::Kept(frame.path),
+                Outcome::MaskPicture { .. } => Heard::MaskPicture,
                 Outcome::Thumbnail {
                     size,
                     width,
@@ -348,7 +351,7 @@ pub mod edited {
                         assert_eq!(path, self.png);
                         return;
                     }
-                    Heard::Thumb { .. } | Heard::Developed => {}
+                    Heard::Thumb { .. } | Heard::Developed | Heard::MaskPicture => {}
                 }
             }
         }

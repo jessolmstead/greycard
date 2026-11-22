@@ -43,7 +43,8 @@ struct Params {
 @group(0) @binding(7) var<storage, read_write> left: array<atomic<u32>>;
 
 // The widest kernel reaches six each side; a workgroup's 16x16 patch
-// of a tile is blurred from a region that much wider all round.
+// of a tile is blurred from a region that much wider all round, which
+// the arrays are sized for, and each kernel reads only its own reach.
 const REACH: u32 = 6u;
 const REGION: u32 = 28u;
 const BLOCK: u32 = 32u;
@@ -111,11 +112,14 @@ fn tile_active(t: u32, li: u32) -> bool {
 fn blurred(which: u32, tile: Tile, gx0: u32, gy0: u32, lid: vec2<u32>) -> f32 {
     let li = lid.y * 16u + lid.x;
     let last = i32(p.full) - 1;
-    for (var i = li; i < REGION * REGION; i += 256u) {
-        let r = i / REGION;
-        let c = i % REGION;
-        let sx = clamp(i32(gx0) - i32(REACH) + i32(c), 0, last);
-        let sy = clamp(i32(gy0) - i32(REACH) + i32(r), 0, last);
+    // The patch and this kernel's own reach each side, no wider: the
+    // same pixels in the same sums as at the widest reach, fewer read.
+    let side = 16u + 2u * p.half;
+    for (var i = li; i < side * side; i += 256u) {
+        let r = i / side;
+        let c = i % side;
+        let sx = clamp(i32(gx0) - i32(p.half) + i32(c), 0, last);
+        let sy = clamp(i32(gy0) - i32(p.half) + i32(r), 0, last);
         let at = vec2<i32>(i32(tile.ax) + sx, i32(tile.ay) + sy);
         var v: f32;
         if which == 0u {
@@ -126,19 +130,19 @@ fn blurred(which: u32, tile: Tile, gx0: u32, gy0: u32, lid: vec2<u32>) -> f32 {
         region[i] = v;
     }
     workgroupBarrier();
-    for (var i = li; i < REGION * 16u; i += 256u) {
+    for (var i = li; i < side * 16u; i += 256u) {
         let r = i / 16u;
         let c = i % 16u;
         var acc = 0.0;
         for (var k = 0u; k < p.taps; k++) {
-            acc += tap(k) * region[r * REGION + c + REACH + k - p.half];
+            acc += tap(k) * region[r * side + c + k];
         }
         rowblur[i] = acc;
     }
     workgroupBarrier();
     var acc = 0.0;
     for (var k = 0u; k < p.taps; k++) {
-        acc += tap(k) * rowblur[(lid.y + REACH + k - p.half) * 16u + lid.x];
+        acc += tap(k) * rowblur[(lid.y + k) * 16u + lid.x];
     }
     return acc;
 }

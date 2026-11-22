@@ -9183,3 +9183,39 @@ fn the_worker_reads_an_edited_neighbor_first_and_its_open_takes_the_base() {
     worker.stop();
     crate::testing::remove_dir_retry(&dir);
 }
+
+/// A save sent before the develop of its edit waits for it, whatever
+/// the worker does between: another job meanwhile (the masks' picture
+/// asked) does not let it go, and the develop's landing, on the device
+/// here, keeps the edit's pictures.
+#[test]
+fn a_save_waits_for_its_develop_past_another_job() {
+    let Some(ctx) = greycard_gpu::Context::own().ok() else {
+        skipped("a save waiting on the device");
+        return;
+    };
+    let rig = crate::testing::edited::rig("waits");
+    rig.worker.set_context(ctx);
+    let edited = rig.worker.edited();
+    // Clarity: a develop of its own, which the open's does not stand
+    // for.
+    let mut clearer = Edit::for_picture();
+    clearer.detail.clarity = 0.4;
+    let hash = greycard_library::hash_file(&rig.png).unwrap();
+    let key = edited.key_of(&rig.png, &clearer);
+    rig.save(&clearer, 0);
+    rig.worker.send(crate::worker::Job::MaskPicture {
+        edit: Box::new(clearer.clone()),
+        generation: 1,
+    });
+    while !matches!(rig.next(), crate::testing::edited::Heard::MaskPicture) {}
+    rig.worker.send(crate::worker::Job::Develop {
+        edit: clearer,
+        generation: 2,
+        turn: 0,
+        of: None,
+    });
+    rig.kept();
+    assert!(edited.all_kept_by(&hash, key, crate::edited_pictures::EDITED_RECIPE));
+    rig.quiet();
+}

@@ -78,6 +78,8 @@ design note behind it.
 
 ### Fixes
 
+- A frame's edited thumbnail and preview are kept when a mask's picture
+  or a Fill's round runs just ahead of its develop.
 - A Fill over a large, strongly colored object removes it; kept fills
   are made again once
   ([§729](https://github.com/jessolmstead/greycard/blob/master/docs/notes/729-a-large-object-removed-and-the-crop-in-a-fill.md)).
