@@ -155,6 +155,8 @@ the reasoning lives in `docs/notes.md`.
       monitor profile is the lead
 - [ ] "Finding people" ran forever and the masks broke after, on
       Windows (issue 44): waits on the reporter's log
+- [ ] A right-click while a menu is open does not close it, on
+      Windows (issue 179); unverified here
 - [ ] The native context menu on Windows opens away from the pointer
       at an interface scale other than 100%: muda places it by the
       system's scale, not ours, in Slint 1.19 as before (§715, issue
