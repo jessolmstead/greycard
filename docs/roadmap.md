@@ -803,7 +803,7 @@ clears or a tester asks for it.
       the noise model's choices; a new mask's default name. And the
       filter's flag chips share the frame menu's verbs ("Pick",
       "Reject"): a "flag" context of their own
-- [ ] The draft catalogs (de, es, it, nl, pl, pt_BR) read by native
+- [ ] The draft catalogs (de, es, it, nl, pl, pt_BR, zh_CN) read by native
       speakers; each has its glossary and the choices most in doubt
       listed for the reader
 - [ ] Failures as a dialog queue, not a status line: a failed outcome

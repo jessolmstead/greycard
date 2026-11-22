@@ -12,7 +12,8 @@ design note behind it.
 - ART's `.arp` profiles beside a raw are offered and imported as
   RawTherapee's `.pp3` are; with both, the `.arp` is read and the `.pp3`
   named.
-- Draft German, Spanish, Italian, Dutch, Polish, and Brazilian Portuguese translations,
+- Draft German, Spanish, Italian, Dutch, Polish, Brazilian Portuguese,
+  and Simplified Chinese translations,
   not yet read by native speakers, each with a glossary of its terms;
   corrections are welcome
   ([how to send one](https://github.com/jessolmstead/greycard/blob/master/docs/translating.md)).
