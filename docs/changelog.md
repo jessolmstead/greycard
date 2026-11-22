@@ -79,6 +79,12 @@ design note behind it.
   and the sensor's clip, up to 0.17 stops more highlight
   ([§716](https://github.com/jessolmstead/greycard/blob/master/docs/notes/716-light-between-canons-white-and-its-clip.md)).
 
+### Install
+
+- The Windows executables and the installer are signed, with SignPath
+  Foundation as the publisher
+  ([§732](https://github.com/jessolmstead/greycard/blob/master/docs/notes/732-the-windows-builds-signed-through-signpath.md)).
+
 ### Fixes
 
 - A frame's edited thumbnail and preview are kept when a mask's picture

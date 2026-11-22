@@ -28,9 +28,15 @@
 ;   Arch            x64compatible or arm64, the Windows the binaries
 ;                   are for
 ;
-; A sign tool named greycard, when the compiler is given one, signs
-; the setup and its uninstaller (scripts/windows-setup.ps1 passes it
-; when WINDOWS_SIGN_SCRIPT is set; see the release workflow).
+; And for a package signed through SignPath alone:
+;
+;   SignedUninstallerDir  the absolute path of the directory the
+;                         uninstaller is written to for signing, and
+;                         where the signed copy is found on the next
+;                         compile (scripts/signpath.sh)
+;
+; The setup itself is signed after it is compiled; see the release
+; workflow's Windows signing step.
 
 #ifndef Version
   #error Version is not defined; compile through scripts/windows-setup.ps1
@@ -90,8 +96,9 @@ WizardStyle=modern dynamic
 Compression=lzma2/max
 SolidCompression=yes
 
-#ifdef Sign
-SignTool=greycard
+#ifdef SignedUninstallerDir
+SignedUninstaller=yes
+SignedUninstallerDir={#SignedUninstallerDir}
 #endif
 
 [Files]

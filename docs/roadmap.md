@@ -1632,8 +1632,10 @@ Slint, a runtime exposing what it knows, a rawler release. It joins a
 release when the wait clears.
 
 #### Platform
-- [ ] The Windows installer signed (Authenticode): waits on a
-      signing service
+- [ ] The Windows signing's first runs (§732): a test run of the
+      package workflows, then the first release under SignPath
+      Foundation's certificate, which waits on its issue; the allowed
+      branch names tightened once a tag's request shows its ref
 - [ ] A GPU path for the models on Windows on ARM: pyke publishes an
       ARM64 Windows build of ONNX Runtime with DirectML, no WebGPU,
       and DirectML ships with Windows, so ort-dylib could make our

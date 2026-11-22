@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  SignPath artifact configuration "windows-setup": the second signing
+  request of each Windows leg, after the installer is compiled from
+  what windows-binaries.xml signed. This file is the copy kept with
+  the code; the one SignPath uses is pasted into the project's
+  artifact configuration of the same slug, and the two are changed
+  together.
+
+  The request is the one setup, greycard-<version>-<arch>-windows-setup.exe,
+  which actions/upload-artifact zips. SignPath cannot open an Inno
+  Setup installer to sign what is inside it, which is why the files
+  inside were signed in the first request and this one signs the
+  setup alone. Its name and version are Inno Setup's version resource
+  (packaging/windows/greycard.iss: AppName, AppVersion), checked as
+  SignPath Foundation's terms ask.
+-->
+<artifact-configuration xmlns="http://signpath.io/artifact-configuration/v1">
+  <parameters>
+    <parameter name="version" required="true" />
+  </parameters>
+  <zip-file>
+    <pe-file path="greycard-${version}-*-windows-setup.exe" product-name="greycard" product-version="${version}">
+      <authenticode-sign />
+    </pe-file>
+  </zip-file>
+</artifact-configuration>

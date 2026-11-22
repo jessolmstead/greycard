@@ -310,10 +310,10 @@ powershell -File scripts/windows-setup.ps1
 ```
 
 It finds `ISCC.exe` through `-Iscc`, `$env:ISCC`, the Path, or Inno
-Setup 7's own install directories. Both stay unsigned unless
-`WINDOWS_SIGN_SCRIPT` holds the Windows path of a PowerShell script
-that signs the files it is given, as the release's signing step will
-once it has a service.
+Setup 7's own install directories. Both stay unsigned: the release
+signs them through SignPath, which signs only what a GitHub workflow
+built (`scripts/signpath.sh` and the release workflow's Windows
+signing step).
 `scripts/windows-setup-check.ps1` installs the setup into your own
 profile, checks it, and uninstalls it, which is what the release runs
 on its runner.

@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  SignPath artifact configuration "windows-binaries": the first signing
+  request of each Windows leg (.github/actions/signpath, called from
+  release.yml, windows-package.yml, and arm-package.yml). This file is
+  the copy kept with the code; the one SignPath uses is pasted into
+  the project's artifact configuration of the same slug, and the two
+  are changed together.
+
+  The request is the directory scripts/signpath.sh fills, which
+  actions/upload-artifact zips: our two executables and Inno Setup's
+  uninstaller, renamed uninstaller.exe for the request, nothing else,
+  and each exactly once. The DLLs that ship beside the executables
+  never go to SignPath: they are Microsoft's, ONNX Runtime's, and
+  Dawn's, and SignPath Foundation signs a project's own builds alone.
+
+  SignPath Foundation's terms ask every signed file to carry the
+  project's name and the build's version, checked here: the
+  executables get theirs from their version resource
+  (crates/greycard-ui/build.rs and crates/greycard-cli/build.rs, the
+  version Cargo.toml's), the uninstaller from Inno Setup
+  (packaging/windows/greycard.iss: AppName, AppVersion). The workflow
+  passes the version as the parameter.
+-->
+<artifact-configuration xmlns="http://signpath.io/artifact-configuration/v1">
+  <parameters>
+    <parameter name="version" required="true" />
+  </parameters>
+  <zip-file>
+    <pe-file-set product-name="greycard" product-version="${version}">
+      <include path="greycard-ui.exe" />
+      <include path="greycard.exe" />
+      <include path="uninstaller.exe" />
+      <for-each>
+        <authenticode-sign />
+      </for-each>
+    </pe-file-set>
+  </zip-file>
+</artifact-configuration>

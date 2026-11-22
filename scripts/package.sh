@@ -394,16 +394,13 @@ else
             echo "Visual C++ runtime from $vcredist"
         fi
 
-        # Our two executables signed before they are zipped, when
-        # WINDOWS_SIGN_SCRIPT names a PowerShell script that signs the files
-        # it is given; the release workflow's signing step sets it.
-        # scripts/windows-setup.ps1 signs the installer with the same
-        # script. Unset, both go out unsigned.
-        if [ -n "${WINDOWS_SIGN_SCRIPT:-}" ]; then
-            powershell -NoProfile -ExecutionPolicy Bypass \
-                -File "$(cygpath -w "$WINDOWS_SIGN_SCRIPT")" \
-                "$(cygpath -w "$PWD/$stage/bin/greycard-ui.exe")" \
-                "$(cygpath -w "$PWD/$stage/bin/greycard.exe")"
+        # Our two executables as SignPath signed them, in place of the
+        # build's, when WINDOWS_SIGNED_DIR names the directory they came
+        # back to: scripts/signpath.sh rolls the package a second time
+        # that way. Unset, they go out unsigned.
+        if [ -n "${WINDOWS_SIGNED_DIR:-}" ]; then
+            cp "$WINDOWS_SIGNED_DIR/greycard-ui.exe" "$WINDOWS_SIGNED_DIR/greycard.exe" \
+                "$stage/bin/"
         fi
     fi
 fi

@@ -1,7 +1,13 @@
 # Install the setup windows-setup.ps1 made, check every thing it puts
 # on the machine, uninstall it, and check every thing is gone.
 #
-#     powershell -File scripts/windows-setup-check.ps1 -Setup <setup.exe> -Version <version>
+#     powershell -File scripts/windows-setup-check.ps1 -Setup <setup.exe> -Version <version> [-Signature <policy>]
+#
+# With -Signature, the SignPath signing policy the package went
+# through, the two executables and the uninstaller as installed are
+# checked for its signature (scripts/windows-signature.ps1): the
+# uninstaller is signed nowhere but inside the setup, so this is the
+# one place its signature can be seen.
 #
 # For a runner, which is thrown away after: it installs into the
 # running user's profile. The user's Path gets an entry holding an
@@ -14,7 +20,8 @@
 [CmdletBinding()]
 param(
     [Parameter(Mandatory)][string]$Setup,
-    [Parameter(Mandatory)][string]$Version
+    [Parameter(Mandatory)][string]$Version,
+    [ValidateSet('release-signing', 'test-signing')][string]$Signature
 )
 
 $ErrorActionPreference = 'Stop'
@@ -102,6 +109,11 @@ try {
         if (Test-Path (Join-Path $app $f)) { Fail "$app\$f was installed" }
     }
     Get-ChildItem $app -File | ForEach-Object { Write-Host "  $($_.Name)" }
+    if ($Signature) {
+        foreach ($f in 'greycard-ui.exe', 'greycard.exe', 'unins000.exe') {
+            & (Join-Path $PSScriptRoot 'windows-signature.ps1') -Policy $Signature -Signed (Join-Path $app $f)
+        }
+    }
 
     $said = & (Join-Path $app 'greycard.exe') --version
     if ($LASTEXITCODE -ne 0 -or "$said" -notmatch [regex]::Escape($Version)) {

@@ -59,7 +59,8 @@
 # of whatever version they were built with), installs and uninstalls
 # it on the runner, and attaches it beside the zip, which stays.
 # windows-package.yml and arm-package.yml build the same by hand.
-# Windows signing is one step, below, waiting on a signing service.
+# Both are signed through SignPath when its token is set; the
+# Windows signing step, below, says how.
 
 name: Release
 
@@ -166,6 +167,11 @@ jobs:
             tentative: true
     runs-on: ${{ matrix.os }}
     continue-on-error: ${{ matrix.tentative == true }}
+    # Still read-only: actions: read lets SignPath's step have GitHub
+    # hand over the run's unsigned artifact.
+    permissions:
+      contents: read
+      actions: read
     # package.sh is /bin/sh, and the Windows runner's default shell is
     # PowerShell; Git Bash is there under this name and brings the tar,
     # find and sort the script asks for.
@@ -385,32 +391,43 @@ jobs:
             echo "MACOS_NOTARY_KEYCHAIN=$keychain"
           } >> "$GITHUB_ENV"
 
-      # WINDOWS SIGNING: the one place a signing service goes. Without
-      # its secret the step does nothing, and the binaries and the
-      # installer go out unsigned. With one, it sets the service up and
-      # writes WINDOWS_SIGN_SCRIPT to $GITHUB_ENV: the path of a
-      # PowerShell script that signs, in place, the files given as its
-      # arguments. The path must be a Windows one (cygpath -w from this
-      # bash step), since windows-setup.ps1 resolves it in PowerShell,
-      # which cannot read /d/a/... The script runs
-      # signtool sign /fd SHA256 /tr <timestamp> /td SHA256 <the
-      # service's own flags> @args, for a service that works through
-      # signtool. package.sh signs greycard-ui.exe and greycard.exe
-      # with it before the zip, and scripts/windows-setup.ps1 hands it
-      # to Inno Setup, which signs the setup and its uninstaller. Until
-      # a service is chosen, a secret set here fails the run rather
-      # than ship unsigned.
+      # WINDOWS SIGNING, through SignPath, with SignPath Foundation's
+      # certificate for open source. Nothing is signed on the runner:
+      # each signing request is an artifact of this run, which SignPath
+      # fetches from GitHub, checks this repository's workflow made on
+      # a GitHub-hosted runner (its origin verification), signs as the
+      # request's artifact configuration says (packaging/signpath), and
+      # hands back (.github/actions/signpath). Two requests a leg, one
+      # after the other, since the installer has to carry what the
+      # first signs: the two executables and Inno Setup's uninstaller,
+      # which go back into the zip and into the installer's compile
+      # (scripts/signpath.sh), then the setup that compile makes. The
+      # DLLs beside the executables keep whatever signature their
+      # makers gave them; SignPath Foundation signs a project's own
+      # builds alone.
+      #
+      # A tag's run signs under release-signing, which a person
+      # approves on SignPath, request by request: four a release.
+      # windows-package.yml and arm-package.yml sign under
+      # test-signing, whose certificate no Windows trusts, to try the
+      # whole chain from a branch.
+      #
+      # Without the SIGNPATH_API_TOKEN secret this step says so, and
+      # the binaries and the installer go out unsigned. With it, every
+      # request has to come back signed and checked or the leg fails,
+      # so a release never ships unsigned in its place; on the ARM
+      # leg, which may fail, that leaves its packages out.
       - name: Windows signing
+        id: signing
         if: runner.os == 'Windows'
         env:
-          WINDOWS_SIGNING: ${{ secrets.WINDOWS_SIGNING }}
+          SIGNPATH_API_TOKEN: ${{ secrets.SIGNPATH_API_TOKEN }}
         run: |
-          if [ -z "$WINDOWS_SIGNING" ]; then
-            echo "no WINDOWS_SIGNING secret; the Windows binaries and installer are unsigned"
+          if [ -z "$SIGNPATH_API_TOKEN" ]; then
+            echo "::warning::no SIGNPATH_API_TOKEN secret; the Windows binaries and installer are unsigned"
             exit 0
           fi
-          echo "WINDOWS_SIGNING is set, but no signing service is wired into this step" >&2
-          exit 1
+          echo "policy=release-signing" >> "$GITHUB_OUTPUT"
 
       # package.sh writes THIRD-PARTY-NOTICES with cargo-about, through
       # scripts/notices.sh, which wants this version. It is built from
@@ -438,6 +455,41 @@ jobs:
           VERSION: ${{ needs.version.outputs.version }}
         run: scripts/package.sh "$VERSION"
 
+      # The compiler, pinned and checked; scripts/inno-setup.ps1 says
+      # which and why. Before signing, which compiles once for the
+      # uninstaller.
+      - name: Inno Setup
+        if: runner.os == 'Windows'
+        run: |
+          powershell -NoProfile -ExecutionPolicy Bypass \
+            -File scripts/inno-setup.ps1 -Destination "$RUNNER_TEMP\\innosetup"
+
+      - name: What SignPath signs first
+        if: steps.signing.outputs.policy
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
+        run: scripts/signpath.sh request "$VERSION"
+
+      - name: SignPath, the executables and the uninstaller
+        if: steps.signing.outputs.policy
+        uses: ./.github/actions/signpath
+        with:
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          signing-policy: ${{ steps.signing.outputs.policy }}
+          artifact-configuration: windows-binaries
+          version: ${{ needs.version.outputs.version }}
+          name: signpath-${{ matrix.package }}-binaries
+          path: target/signpath/request
+          output: target/signpath/signed
+
+      # The zip rolled again with the signed executables, and checked
+      # to differ from the unsigned one in those alone.
+      - name: The package, signed
+        if: steps.signing.outputs.policy
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
+        run: scripts/signpath.sh package "$VERSION"
+
       - name: What is in the package
         env:
           ARCHIVE: target/dist/greycard-${{ needs.version.outputs.version }}-${{ matrix.package }}.${{ matrix.ext }}
@@ -451,7 +503,10 @@ jobs:
           *) tar tzf "$ARCHIVE" ;;
           esac
 
+      # A Windows zip goes up with its setup, below, so that a leg
+      # whose installer fails or is never signed ships neither.
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: runner.os != 'Windows'
         with:
           name: package-${{ matrix.package }}
           path: target/dist/greycard-${{ needs.version.outputs.version }}-${{ matrix.package }}.${{ matrix.ext }}
@@ -460,34 +515,65 @@ jobs:
           # has to outlive the workflow run.
           retention-days: 7
 
-      # The compiler, pinned and checked; scripts/inno-setup.ps1 says
-      # which and why.
-      - name: Inno Setup
-        if: runner.os == 'Windows'
-        run: |
-          powershell -NoProfile -ExecutionPolicy Bypass \
-            -File scripts/inno-setup.ps1 -Destination "$RUNNER_TEMP\\innosetup"
-
+      # When signing, with the signed uninstaller the first request
+      # brought back.
       - name: Installer
         if: runner.os == 'Windows'
         env:
           VERSION: ${{ needs.version.outputs.version }}
+          SIGNING: ${{ steps.signing.outputs.policy }}
         run: |
+          signed=()
+          if [ -n "$SIGNING" ]; then
+            signed=(-SignedUninstallerDir target/signpath/uninstaller)
+          fi
           powershell -NoProfile -ExecutionPolicy Bypass \
-            -File scripts/windows-setup.ps1 -Version "$VERSION"
+            -File scripts/windows-setup.ps1 -Version "$VERSION" "${signed[@]}"
+
+      - name: SignPath, the installer
+        if: steps.signing.outputs.policy
+        uses: ./.github/actions/signpath
+        with:
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          signing-policy: ${{ steps.signing.outputs.policy }}
+          artifact-configuration: windows-setup
+          version: ${{ needs.version.outputs.version }}
+          name: signpath-${{ matrix.package }}-setup
+          path: target/dist/greycard-${{ needs.version.outputs.version }}-${{ matrix.package }}-setup.exe
+          output: target/signpath/setup
+
+      - name: The installer, signed
+        if: steps.signing.outputs.policy
+        env:
+          SETUP: greycard-${{ needs.version.outputs.version }}-${{ matrix.package }}-setup.exe
+        run: cp "target/signpath/setup/$SETUP" "target/dist/$SETUP"
 
       # Installed and uninstalled here, with every file, the Start menu
       # entry, the Path, the associations, and the Installed apps entry
       # checked both ways, so a broken installer fails the run rather
-      # than a tester.
+      # than a tester. When signed, the signatures on what it installed
+      # too, the uninstaller's among them.
       - name: The installer, installed and uninstalled
         if: runner.os == 'Windows'
         env:
           SETUP: target/dist/greycard-${{ needs.version.outputs.version }}-${{ matrix.package }}-setup.exe
           VERSION: ${{ needs.version.outputs.version }}
+          SIGNING: ${{ steps.signing.outputs.policy }}
         run: |
+          signed=()
+          if [ -n "$SIGNING" ]; then
+            signed=(-Signature "$SIGNING")
+          fi
           powershell -NoProfile -ExecutionPolicy Bypass \
-            -File scripts/windows-setup-check.ps1 -Setup "$SETUP" -Version "$VERSION"
+            -File scripts/windows-setup-check.ps1 -Setup "$SETUP" -Version "$VERSION" "${signed[@]}"
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: runner.os == 'Windows'
+        with:
+          name: package-${{ matrix.package }}
+          path: target/dist/greycard-${{ needs.version.outputs.version }}-${{ matrix.package }}.zip
+          if-no-files-found: error
+          retention-days: 7
 
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: runner.os == 'Windows'

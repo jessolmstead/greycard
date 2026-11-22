@@ -1,6 +1,6 @@
 # Compile the Windows installer from what scripts/package.sh staged.
 #
-#     powershell -File scripts/windows-setup.ps1 [-Version <version>] [-Iscc <path>]
+#     powershell -File scripts/windows-setup.ps1 [-Version <version>] [-Iscc <path>] [-SignedUninstallerDir <dir>]
 #
 # Run after package.sh on Windows. It compiles
 # packaging/windows/greycard.iss over the staging directory
@@ -13,17 +13,20 @@
 # is -Iscc, else $env:ISCC, else ISCC.exe on the Path, else Inno Setup
 # 7's default install directories.
 #
-# When $env:WINDOWS_SIGN_SCRIPT holds the Windows path (not a Git Bash
-# /d/a/... one) of a PowerShell script that signs the files
-# it is given, the compiler gets it as the sign tool named greycard and
-# signs the setup and its uninstaller with it. The release workflow's
-# signing step is what sets it; package.sh signs the binaries with the
-# same script before it zips them.
+# -SignedUninstallerDir, a directory relative to the tree, turns on
+# Inno's signed-uninstaller mode, for a package signed through SignPath
+# (scripts/signpath.sh): the first compile writes the uninstaller there
+# and stops, asking for it to be signed; once a signed copy is there
+# under the same name, the next compile puts its signature on the
+# uninstaller and on Setup's temporary copies of itself. The setup
+# comes out unsigned either way, for SignPath to sign after. Without
+# it, nothing is signed.
 
 [CmdletBinding()]
 param(
     [string]$Version,
-    [string]$Iscc
+    [string]$Iscc,
+    [string]$SignedUninstallerDir
 )
 
 $ErrorActionPreference = 'Stop'
@@ -77,11 +80,9 @@ $arguments = @(
     "--output-dir=$((Resolve-Path 'target/dist').Path)",
     "--output-filename=$name-setup"
 )
-if ($env:WINDOWS_SIGN_SCRIPT) {
-    $sign = (Resolve-Path $env:WINDOWS_SIGN_SCRIPT).Path
-    # $q and $f are the compiler's: a quote, and the quoted file to sign.
-    $arguments += '--define=Sign'
-    $arguments += '--signtool=greycard=powershell.exe -NoProfile -ExecutionPolicy Bypass -File $q' + $sign + '$q $f'
+if ($SignedUninstallerDir) {
+    $dir = [System.IO.Path]::GetFullPath((Join-Path (Get-Location).Path $SignedUninstallerDir))
+    $arguments += "--define=SignedUninstallerDir=$dir"
 }
 $arguments += 'packaging/windows/greycard.iss'
 

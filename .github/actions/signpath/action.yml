@@ -1,0 +1,84 @@
+# One SignPath signing request, for the Windows legs of release.yml and
+# for windows-package.yml and arm-package.yml: what is at `path` goes
+# up as an artifact of this run, SignPath signs it as the artifact
+# configuration says (packaging/signpath/ has both, which the project
+# on SignPath's side must hold under the same slugs), and the signed
+# files land in `output`. The step then checks every file that came
+# back (scripts/windows-signature.ps1): signed, under release-signing
+# valid and timestamped, and otherwise the bytes that went up.
+#
+# SignPath takes the file from GitHub rather than from us, and checks
+# with GitHub that this repository's workflow, on a GitHub-hosted
+# runner, made it: its origin verification, which is why the request
+# is an artifact and not an upload. The organization and the project
+# are fixed here; the token is a secret, SIGNPATH_API_TOKEN, of a CI
+# user that may submit to both signing policies and do nothing else.
+# Under release-signing every request waits on a person's approval, so
+# the wait is long: two hours, for two requests a leg one after the
+# other, inside the six a hosted job may run.
+
+name: SignPath
+description: Sign files through SignPath and check what comes back.
+
+inputs:
+  api-token:
+    description: The SignPath CI user's API token.
+    required: true
+  signing-policy:
+    description: release-signing or test-signing.
+    required: true
+  artifact-configuration:
+    description: windows-binaries or windows-setup (packaging/signpath).
+    required: true
+  version:
+    description: The version the files carry, which the configuration checks.
+    required: true
+  name:
+    description: The name of the unsigned artifact, unique in the run.
+    required: true
+  path:
+    description: The file, or the directory of files, to sign.
+    required: true
+  output:
+    description: The directory the signed files land in.
+    required: true
+
+runs:
+  using: composite
+  steps:
+    # Kept a day: SignPath fetches it within minutes, and the run's
+    # own packages are the copies that matter. Overwritten, so that
+    # re-running a job whose request timed out or was denied does not
+    # stop on the name the first attempt left.
+    - id: unsigned
+      uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+      with:
+        name: ${{ inputs.name }}
+        path: ${{ inputs.path }}
+        if-no-files-found: error
+        retention-days: 1
+        overwrite: true
+
+    - uses: signpath/github-action-submit-signing-request@4a84eb4ad763290f059275786f2deed97c2c672b # v3.1
+      with:
+        api-token: ${{ inputs.api-token }}
+        organization-id: 4ec71759-6b98-4820-889a-b9fce12190a7
+        project-slug: greycard
+        signing-policy-slug: ${{ inputs.signing-policy }}
+        artifact-configuration-slug: ${{ inputs.artifact-configuration }}
+        github-artifact-id: ${{ steps.unsigned.outputs.artifact-id }}
+        wait-for-completion: true
+        wait-for-completion-timeout-in-seconds: 7200
+        output-artifact-directory: ${{ inputs.output }}
+        parameters: |
+          version: "${{ inputs.version }}"
+
+    - name: What SignPath sent back
+      shell: bash
+      env:
+        POLICY: ${{ inputs.signing-policy }}
+        UNSIGNED: ${{ inputs.path }}
+        SIGNED: ${{ inputs.output }}
+      run: |
+        powershell -NoProfile -ExecutionPolicy Bypass -File scripts/windows-signature.ps1 \
+          -Policy "$POLICY" -Signed "$SIGNED" -Unsigned "$UNSIGNED"

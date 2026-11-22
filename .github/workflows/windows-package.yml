@@ -9,16 +9,21 @@
 # same runner, the same checks on the toolchain and on what was built,
 # our ONNX Runtime made by scripts/ort-dylib.sh, package.sh with no
 # argument, so the version is Cargo.toml's, and the installer,
-# installed and uninstalled on the runner. Unsigned: signing is
-# release.yml's one step.
+# installed and uninstalled on the runner. Signed as release.yml signs
+# when the SIGNPATH_API_TOKEN secret is set, but under SignPath's
+# test-signing policy, whose certificate no Windows trusts: a run here
+# is how the signing is tried before a tag; release.yml's Windows
+# signing step has the rest.
 
 name: Windows package
 
 on:
   workflow_dispatch:
 
+# actions: read, for SignPath's step, as in release.yml.
 permissions:
   contents: read
+  actions: read
 
 env:
   CARGO_TERM_COLOR: always
@@ -113,6 +118,25 @@ jobs:
             fi
           done
 
+      # As in release.yml, under test-signing.
+      - name: Windows signing
+        id: signing
+        env:
+          SIGNPATH_API_TOKEN: ${{ secrets.SIGNPATH_API_TOKEN }}
+        run: |
+          if [ -z "$SIGNPATH_API_TOKEN" ]; then
+            echo "::warning::no SIGNPATH_API_TOKEN secret; the Windows binaries and installer are unsigned"
+            exit 0
+          fi
+          # The CR a Windows checkout may leave on the line goes first.
+          version=$(tr -d '\r' < Cargo.toml | sed -n 's/^version = "\(.*\)"$/\1/p' | head -n 1)
+          if [ -z "$version" ]; then
+            echo "no version in Cargo.toml" >&2
+            exit 1
+          fi
+          echo "policy=test-signing" >> "$GITHUB_OUTPUT"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
       # For package.sh's THIRD-PARTY-NOTICES; see release.yml.
       - name: cargo-about from the cache
         id: cargo-about
@@ -132,6 +156,34 @@ jobs:
       - name: Package
         run: scripts/package.sh
 
+      # As in release.yml: the compiler, before signing, which compiles
+      # once for the uninstaller; then the executables and the
+      # uninstaller signed, and the zip rolled again with them.
+      - name: Inno Setup
+        run: |
+          powershell -NoProfile -ExecutionPolicy Bypass \
+            -File scripts/inno-setup.ps1 -Destination "$RUNNER_TEMP\\innosetup"
+
+      - name: What SignPath signs first
+        if: steps.signing.outputs.policy
+        run: scripts/signpath.sh request
+
+      - name: SignPath, the executables and the uninstaller
+        if: steps.signing.outputs.policy
+        uses: ./.github/actions/signpath
+        with:
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          signing-policy: ${{ steps.signing.outputs.policy }}
+          artifact-configuration: windows-binaries
+          version: ${{ steps.signing.outputs.version }}
+          name: signpath-x86_64-windows-binaries
+          path: target/signpath/request
+          output: target/signpath/signed
+
+      - name: The package, signed
+        if: steps.signing.outputs.policy
+        run: scripts/signpath.sh package
+
       - name: What is in the package
         run: |
           zip=$(ls target/dist/greycard-*-x86_64-windows.zip)
@@ -144,23 +196,50 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
-      # As in release.yml: the compiler, the installer from the zip's
-      # staging directory, and a round trip on the runner.
-      - name: Inno Setup
-        run: |
-          powershell -NoProfile -ExecutionPolicy Bypass \
-            -File scripts/inno-setup.ps1 -Destination "$RUNNER_TEMP\\innosetup"
-
+      # As in release.yml: the installer from the zip's staging
+      # directory, signed when the rest is, and a round trip on the
+      # runner.
       - name: Installer
-        run: powershell -NoProfile -ExecutionPolicy Bypass -File scripts/windows-setup.ps1
+        env:
+          SIGNING: ${{ steps.signing.outputs.policy }}
+        run: |
+          signed=()
+          if [ -n "$SIGNING" ]; then
+            signed=(-SignedUninstallerDir target/signpath/uninstaller)
+          fi
+          powershell -NoProfile -ExecutionPolicy Bypass -File scripts/windows-setup.ps1 "${signed[@]}"
+
+      - name: SignPath, the installer
+        if: steps.signing.outputs.policy
+        uses: ./.github/actions/signpath
+        with:
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          signing-policy: ${{ steps.signing.outputs.policy }}
+          artifact-configuration: windows-setup
+          version: ${{ steps.signing.outputs.version }}
+          name: signpath-x86_64-windows-setup
+          path: target/dist/greycard-${{ steps.signing.outputs.version }}-x86_64-windows-setup.exe
+          output: target/signpath/setup
+
+      - name: The installer, signed
+        if: steps.signing.outputs.policy
+        env:
+          SETUP: greycard-${{ steps.signing.outputs.version }}-x86_64-windows-setup.exe
+        run: cp "target/signpath/setup/$SETUP" "target/dist/$SETUP"
 
       - name: The installer, installed and uninstalled
+        env:
+          SIGNING: ${{ steps.signing.outputs.policy }}
         run: |
           setup=$(ls target/dist/greycard-*-x86_64-windows-setup.exe)
           version=${setup#target/dist/greycard-}
           version=${version%-x86_64-windows-setup.exe}
+          signed=()
+          if [ -n "$SIGNING" ]; then
+            signed=(-Signature "$SIGNING")
+          fi
           powershell -NoProfile -ExecutionPolicy Bypass \
-            -File scripts/windows-setup-check.ps1 -Setup "$setup" -Version "$version"
+            -File scripts/windows-setup-check.ps1 -Setup "$setup" -Version "$version" "${signed[@]}"
 
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
