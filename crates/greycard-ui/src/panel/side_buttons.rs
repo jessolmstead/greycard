@@ -17,7 +17,9 @@
 //! The same hook keeps the window's `menu-up` with Slint's own popups
 //! before each event goes on (`menu_up`), so a menu opened while a text
 //! box had the focus holds the step here and every surface's press.
-//! It also tells the stall watch (`stall`) what it hears.
+//! It also tells the stall watch (`stall`) what it hears. The hook is
+//! installed by `window_events`, which holds the window's frames while
+//! it is minimized as well.
 
 use slint::ComponentHandle;
 use slint::winit_030::EventResult;
@@ -126,19 +128,6 @@ fn heard(event: &WindowEvent) {
         WindowEvent::Occluded(on) => stall::occluded(*on, now()),
         _ => {}
     }
-}
-
-/// The side buttons heard on `app`'s window from now on, and its
-/// `menu-up` kept with its popups. Nothing on a backend other than
-/// winit's.
-pub(crate) fn install(app: &App) {
-    use slint::winit_030::WinitWindowAccessor;
-    let weak = app.as_weak();
-    let mut buttons = SideButtons::default();
-    app.window().on_winit_window_event(move |_, event| {
-        weak.upgrade()
-            .map_or(EventResult::Propagate, |app| buttons.event(&app, event))
-    });
 }
 
 #[cfg(test)]

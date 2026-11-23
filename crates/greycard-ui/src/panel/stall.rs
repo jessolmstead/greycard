@@ -9,8 +9,9 @@
 //! and nothing is drawn, until the callback comes. Nothing here can
 //! end it; this only says so in the log, with what the window knew.
 //!
-//! The winit hook (`side_buttons`) tells us of each press, each
-//! `RedrawRequested`, and each change of focus or occlusion; the
+//! The winit hook (`window_events`, through `side_buttons`) tells us
+//! of each press, each `RedrawRequested` (a minimized window's held
+//! ones too), and each change of focus or occlusion; the
 //! rendering notifier of each frame drawn. The 1 s choices timer asks
 //! [`tick`], which after a second asks for one redraw (a press on a
 //! spot that changes nothing draws none), and after three says which

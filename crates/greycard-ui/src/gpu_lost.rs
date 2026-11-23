@@ -12,7 +12,8 @@
 //! quit saves what any close saves (the open frame's edit among it),
 //! and the last thing it does is start greycard again with the same
 //! arguments and `--cpu-ops`, so the frame that lost the device opens
-//! with the ops on the CPU. The user sees the window close and come
+//! with the ops on the CPU, once this process has ended
+//! ([`wait_for_the_last_run`]). The user sees the window close and come
 //! back with the edit as it was, where a crash used to be followed by
 //! another at every start on the same file.
 //!
@@ -362,20 +363,80 @@ pub(crate) fn start_again(given: Option<&Path>, current: Option<&Path>, scripted
         return false;
     };
     let mut command = std::process::Command::new(&program);
-    command.args(&args);
+    command
+        .args(&args)
+        .env(STARTED_AGAIN, "1")
+        .stdin(std::process::Stdio::piped());
     match crate::adapter::scrub(&mut command).spawn() {
-        Ok(child) => tracing::info!(
-            "greycard started again as {} (pid {}) {}",
-            program.display(),
-            child.id(),
-            args.iter()
-                .map(|a| a.to_string_lossy())
-                .collect::<Vec<_>>()
-                .join(" ")
-        ),
+        Ok(mut child) => {
+            // Our end of its input, open until this process ends and
+            // the system closes it: the start's sign that we are gone.
+            std::mem::forget(child.stdin.take());
+            tracing::info!(
+                "greycard started again as {} (pid {}) {}",
+                program.display(),
+                child.id(),
+                args.iter()
+                    .map(|a| a.to_string_lossy())
+                    .collect::<Vec<_>>()
+                    .join(" ")
+            );
+        }
         Err(e) => tracing::warn!("greycard not started again: {e}"),
     }
     false
+}
+
+/// The variable a start again carries, so it waits for the run that
+/// started it to end ([`wait_for_the_last_run`]).
+const STARTED_AGAIN: &str = "GREYCARD_STARTED_AGAIN";
+
+/// The longest a start again waits for the run that started it.
+const LAST_RUN_WAIT: std::time::Duration = std::time::Duration::from_secs(20);
+
+/// The first thing a run does: when it is a start again, wait for the
+/// run that started it to end, its input closing as that process does,
+/// for no longer than [`LAST_RUN_WAIT`]. That run's quit still holds
+/// its GPU device, its models, and its memory as it starts us, and a
+/// device lost for want of memory (issue 195) could otherwise be lost
+/// again before the old one let go. Waiting here, before the claim of
+/// the single instance and before the log starts, the claim finds the
+/// old editor gone rather than closing, and the log is ours to turn
+/// over. How long it waited, and whether the run ended in that time;
+/// None for any other run. The variable goes from our environment, so
+/// nothing we start waits in turn.
+pub(crate) fn wait_for_the_last_run() -> Option<(std::time::Duration, bool)> {
+    std::env::var_os(STARTED_AGAIN)?;
+    // SAFETY: the process's first step, before any thread is started.
+    unsafe { std::env::remove_var(STARTED_AGAIN) };
+    Some(wait_for_end(std::io::stdin(), LAST_RUN_WAIT))
+}
+
+/// Read `input` to its end on a thread of its own, for no longer than
+/// `most`: how long that took, and whether the end came.
+fn wait_for_end(
+    mut input: impl std::io::Read + Send + 'static,
+    most: std::time::Duration,
+) -> (std::time::Duration, bool) {
+    let started = std::time::Instant::now();
+    let (ended, end) = std::sync::mpsc::channel();
+    let reader = std::thread::Builder::new()
+        .name("last run".into())
+        .spawn(move || {
+            let mut buf = [0; 64];
+            loop {
+                match input.read(&mut buf) {
+                    Ok(0) => break,
+                    Ok(_) => {}
+                    Err(e) if e.kind() == std::io::ErrorKind::Interrupted => {}
+                    // A pipe whose writer went: the end too.
+                    Err(_) => break,
+                }
+            }
+            let _ = ended.send(());
+        });
+    let came = reader.is_ok() && end.recv_timeout(most).is_ok();
+    (started.elapsed(), came)
 }
 
 #[cfg(test)]
@@ -411,6 +472,34 @@ mod tests {
             arguments(&os(&["--library", "x.sqlite"]), None, Some(now), false),
             os(&["--library", "x.sqlite", "--cpu-ops"])
         );
+    }
+
+    /// The start again goes on once the old run's end of its input
+    /// closes, and no later than its wait should it never close.
+    #[test]
+    fn the_start_again_waits_for_the_last_run_to_end() {
+        use std::time::Duration;
+        let (input, old) = std::io::pipe().expect("a pipe");
+        let closer = std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(50));
+            drop(old);
+        });
+        let (took, came) = wait_for_end(input, Duration::from_secs(60));
+        closer.join().unwrap();
+        assert!(came);
+        assert!(took >= Duration::from_millis(50), "{took:?}");
+        assert!(took < Duration::from_secs(30), "{took:?}");
+        // A run that never ends: the wait gives up.
+        let (input, old) = std::io::pipe().expect("a pipe");
+        let (took, came) = wait_for_end(input, Duration::from_millis(50));
+        assert!(!came);
+        assert!(took >= Duration::from_millis(50), "{took:?}");
+        drop(old);
+        // Anything written meanwhile is not the end.
+        let (input, mut old) = std::io::pipe().expect("a pipe");
+        std::io::Write::write_all(&mut old, b"not yet").unwrap();
+        let (_, came) = wait_for_end(input, Duration::from_millis(50));
+        assert!(!came);
     }
 
     #[test]

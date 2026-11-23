@@ -294,6 +294,8 @@ trait Surface {
     /// surface at that size.
     fn resized(&self, size: slint::LogicalSize);
     fn request_redraw(&self);
+    /// Whether the platform says the window is minimized.
+    fn minimized(&self) -> bool;
 }
 
 impl Surface for slint::Window {
@@ -311,6 +313,11 @@ impl Surface for slint::Window {
 
     fn request_redraw(&self) {
         slint::Window::request_redraw(self)
+    }
+
+    fn minimized(&self) -> bool {
+        use crate::panel::window_events::{draws, minimized};
+        !draws(minimized(self))
     }
 }
 
@@ -330,10 +337,19 @@ impl Surface for slint::Window {
 /// take a maximized or tiled window out of its place. The event moves
 /// nothing (the size is the one the window has); like any resize it
 /// scrolls the focused item into view.
+///
+/// Not while the window is minimized. Slint keeps the last size the
+/// window had, not the zero a minimize on Windows reports, and a
+/// configure at that size on a minimized window is a swapchain the
+/// driver may not let go; nothing is drawn meanwhile
+/// (`window_events`), and the window's own resize as it comes back
+/// configures the surface.
 fn configure_again(surface: &impl Surface) {
+    if surface.minimized() {
+        return;
+    }
     let size = surface.size();
-    // Minimized on Windows: Slint keeps a zero size from its renderer,
-    // and so do we, until the window comes back with its own resize.
+    // A window no size has come to yet: nothing to configure at.
     if size.width > 0 && size.height > 0 {
         surface.resized(size.to_logical(surface.scale_factor()));
     }
@@ -557,7 +573,18 @@ mod tests {
     /// A window that writes down what it is asked.
     struct Fake {
         size: slint::PhysicalSize,
+        minimized: bool,
         asked: RefCell<Vec<String>>,
+    }
+
+    impl Fake {
+        fn new(width: u32, height: u32) -> Self {
+            Self {
+                size: slint::PhysicalSize::new(width, height),
+                minimized: false,
+                asked: RefCell::new(Vec::new()),
+            }
+        }
     }
 
     impl Surface for Fake {
@@ -575,26 +602,36 @@ mod tests {
         fn request_redraw(&self) {
             self.asked.borrow_mut().push("redraw".into());
         }
+        fn minimized(&self) -> bool {
+            self.minimized
+        }
     }
 
     #[test]
     fn a_configure_again_resizes_to_the_same_size_then_draws() {
-        let fake = Fake {
-            size: slint::PhysicalSize::new(1500, 900),
-            asked: RefCell::new(Vec::new()),
-        };
+        let fake = Fake::new(1500, 900);
         configure_again(&fake);
         assert_eq!(*fake.asked.borrow(), ["resized 1000x600", "redraw"]);
     }
 
     #[test]
-    fn a_minimized_window_is_only_asked_for_a_frame() {
-        let fake = Fake {
-            size: slint::PhysicalSize::new(0, 0),
-            asked: RefCell::new(Vec::new()),
-        };
+    fn a_window_with_no_size_yet_is_only_asked_for_a_frame() {
+        let fake = Fake::new(0, 0);
         configure_again(&fake);
         assert_eq!(*fake.asked.borrow(), ["redraw"]);
+    }
+
+    /// Minimized, the window keeps its last size, and a configure at it
+    /// would make a swapchain for a window with none: nothing is asked;
+    /// its resize as it comes back configures.
+    #[test]
+    fn a_minimized_window_is_asked_nothing() {
+        let fake = Fake {
+            minimized: true,
+            ..Fake::new(1500, 900)
+        };
+        configure_again(&fake);
+        assert!(fake.asked.borrow().is_empty(), "{:?}", fake.asked.borrow());
     }
 
     /// On a real window, as far as one goes here: the testing

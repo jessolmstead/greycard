@@ -59,10 +59,10 @@ the reasoning lives in `docs/notes.md`.
       learned models on the CPU, for a tester's timing
 - [ ] On unified memory the models' guards see no free figure and let
       every model run; count a capped share (issue 181)
-- [ ] On Windows, card memory spills into system RAM while the window
-      is minimized beside other GPU programs, until a crash (issue
-      195); unverified, waits on the reporter's logs and a run with
-      the denoiser off
+- [ ] No frame is drawn while minimized (issue 195): tried on X11
+      only; waits on a Windows run, on an AMD card if one is at hand,
+      with `wgpu_core=debug` showing no `configuring surface` lines.
+      A Mac's display-link frames pass the guard by
 - [ ] On Windows the models' memory guard reads Vulkan's budget while
       the models run on D3D12 (§431); read DXGI's (issue 195)
 - [ ] The learned denoiser's buffers stay on the card for the session
@@ -1361,6 +1361,8 @@ clears or a tester asks for it.
       the empty corners kept for a pixel editor, and a scale beside
       the perspective sliders to bring back what was pushed out, as
       darktable has (discussion 149, 2026-11-14)
+- [ ] Perspective fit automatically from the picture's own lines,
+      as darktable's rotate and perspective does (pixls, 2026-11-23)
 - [ ] An aspect adjust beside the perspective sliders, stretching or
       squashing one axis so a tower a strong vertical correction
       stretched is its own height again, and a shear, as darktable's

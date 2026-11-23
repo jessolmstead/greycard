@@ -119,6 +119,10 @@ design note behind it.
 
 ### Fixes
 
+- greycard draws nothing while minimized, which on Windows had filled
+  memory until the GPU device was lost (issue 195).
+- A restart after a lost GPU device waits for the old run to end before
+  it takes the card.
 - A DNG written by CHDK develops through its color matrices again, so a
   PowerShot's frame is no longer faded (issue 201).
 - A keyword or caption holding a carriage return now reads back

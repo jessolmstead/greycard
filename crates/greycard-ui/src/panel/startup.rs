@@ -42,6 +42,9 @@ pub(crate) use crate::preset_fit::preset_at_start;
 pub(crate) use greycard_engine::headless::Overrides;
 
 pub(crate) fn main() -> Result<std::process::ExitCode> {
+    // A start again after a lost device waits for the run before it to
+    // end, first of all: before any thread, the claim, or the log.
+    let waited = crate::gpu_lost::wait_for_the_last_run();
     let cli = Cli::parse();
     // A launch with a path alone, or with nothing, hands it to the
     // editor this user has running, and ends. Before the log starts,
@@ -70,6 +73,18 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
     // terminal, not the log, which knows where it is.
     if let Some(log) = log::start(cli.verbose, greycard_version::LABEL) {
         eprintln!("log: {}", log.display());
+    }
+    match waited {
+        Some((took, true)) => tracing::info!(
+            "started again after a lost device; the last run ended {:.1} s into its wait",
+            took.as_secs_f64()
+        ),
+        Some((took, false)) => tracing::warn!(
+            "started again after a lost device; the last run had not ended after {:.0} s, \
+             going on",
+            took.as_secs_f64()
+        ),
+        None => {}
     }
     // Whether the models can run here, asked of the processor and the
     // disk and said once; nothing of ONNX Runtime is loaded to find
@@ -399,8 +414,9 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
         crate::panel::handed::serve(&app, instance);
     }
     // A mouse's back and forward buttons, heard before Slint routes
-    // them, so they step Cull's frames wherever the pointer is.
-    crate::panel::side_buttons::install(&app);
+    // them, so they step Cull's frames wherever the pointer is; and no
+    // frame drawn while the window is minimized.
+    crate::panel::window_events::install(&app);
     // A slider turns the wheel back under natural scrolling: a
     // wheel's way here, a touchpad's set per event where they differ.
     // Read on a thread nothing waits for: on GNOME it is two
