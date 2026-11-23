@@ -465,6 +465,10 @@ ask for first.
       tone mapping, most of the gap left to its own picture;
       `WarpFisheye` and `FixVignetteRadial`. Test set: three Pixel 9
       DNGs
+- [ ] A DNG's forward matrix dropped when it contradicts its color
+      matrix and the file has no profile tables, in place of naming
+      CHDK (issue 201); waits on Adobe-converted DNGs to calibrate
+      the distance, since a profile's pair sits 14 to 20 ΔE apart
 - [ ] A DNG's warp on the GPU (§513): 0.4 s a develop at four threads
       on the CPU today, once per base
 - [ ] A margin past the default crop demosaiced for a DNG's warp

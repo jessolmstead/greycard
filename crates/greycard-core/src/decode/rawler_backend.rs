@@ -1166,15 +1166,30 @@ fn dng_tags(decoder: &dyn ::rawler::decoders::Decoder) -> DngTags {
 /// are found as rawler finds the color matrices (IFD 0 first, then its
 /// sub-IFDs) and an illuminant is read as it reads one (D65 when
 /// missing or unknown), so a forward matrix lands on the calibration
-/// its color matrix did. None for another format, or for a matrix that
-/// is not three by three.
+/// its color matrix did. None for another format, for a matrix that
+/// is not three by three, or for a file whose writer
+/// [`reads_forward_matrices`] passes over.
 fn forward_matrices(decoder: &dyn ::rawler::decoders::Decoder) -> Vec<(u16, Vec<f32>)> {
     use ::rawler::decoders::WellKnownIFD;
     use ::rawler::imgop::xyz::Illuminant;
-    use ::rawler::tags::DngTag;
+    use ::rawler::tags::{DngTag, TiffCommonTag};
     let Some(root) = decoder.ifd(WellKnownIFD::Root).ok().flatten() else {
         return Vec::new();
     };
+    let software = root
+        .get_entry(TiffCommonTag::Software)
+        .and_then(|e| e.value.as_string().cloned())
+        .unwrap_or_default();
+    let has_forward = [DngTag::ForwardMatrix1, DngTag::ForwardMatrix2]
+        .into_iter()
+        .any(|tag| root.get_entry_recursive(tag).is_some());
+    if has_forward && !reads_forward_matrices(&software) {
+        log::info!(
+            "DNG forward matrices of {:?} left; its color matrices are used",
+            software.trim()
+        );
+        return Vec::new();
+    }
     [
         (DngTag::CalibrationIlluminant1, DngTag::ForwardMatrix1),
         (DngTag::CalibrationIlluminant2, DngTag::ForwardMatrix2),
@@ -1199,6 +1214,20 @@ fn forward_matrices(decoder: &dyn ::rawler::decoders::Decoder) -> Vec<(u16, Vec<
         Some((code, m))
     })
     .collect()
+}
+
+/// Whether we read the forward matrices of a DNG whose `Software` tag
+/// is `software`. Not CHDK's: on a PowerShot's file they contradict its
+/// own color matrices, putting a ColorChecker's colors at 0.4 (under
+/// illuminant A) to 0.6 (D65) of the chroma the color matrices give, a
+/// mean ΔE of 28 and 19, where a Pixel's agree to within 5; the picture
+/// through them is faded, and through the color matrices it is the
+/// scene's. No threshold on that distance tells the two apart, as an
+/// Adobe profile's pair, meant for the tables after it, sits 14 to 15
+/// apart; so we name the writer, and its file develops through the
+/// color matrices, as every DNG did before we read forward matrices.
+fn reads_forward_matrices(software: &str) -> bool {
+    !software.trim_start().starts_with("CHDK")
 }
 
 /// The as-shot gains of a DNG that gives its white as `AsShotWhiteXY`
@@ -3760,6 +3789,68 @@ mod tests {
         let mut none = vec![cal(21)];
         with_forward_matrices(&mut none, &[]);
         assert_eq!(none[0].forward_matrix, None);
+    }
+
+    /// A DNG's forward matrices land on its calibrations, except in a
+    /// file CHDK wrote, which develops through its color matrices alone.
+    #[test]
+    fn a_chdk_dngs_forward_matrices_are_left() {
+        use ::rawler::camera_profile::CameraProfile;
+        use ::rawler::imgop::xyz::Illuminant;
+        use ::rawler::rawimage::BlackLevel;
+        use ::rawler::tags::TiffCommonTag;
+
+        let color = |d: f32| vec![1.0 + d, -0.4, -0.1, -0.3, 1.3, 0.05, -0.03, 0.2, 0.6];
+        let forward = |d: f32| vec![0.6 + d, 0.2, 0.1643 - d, 0.25, 0.7, 0.05, 0.03, 0.0, 0.7949];
+        let mut raw = a_mosaic(BlackLevel::new(&[100u16], 1, 1, 1));
+        raw.camera_profiles = vec![CameraProfile {
+            calibration_illuminant: [Some(Illuminant::A), Some(Illuminant::D65), None],
+            color_matrix: [Some(color(0.1)), Some(color(0.0)), None],
+            forward_matrix: [Some(forward(0.05)), Some(forward(0.0)), None],
+            ..Default::default()
+        }];
+        let decoded = |software: Option<&str>| {
+            let bytes = dng_bytes(&raw, |root| {
+                if let Some(s) = software {
+                    root.add_tag(TiffCommonTag::Software, s);
+                }
+            });
+            RawlerDecoder.decode_bytes(&bytes).unwrap()
+        };
+        let forwards = |frame: &RawFrame| {
+            let mut f: Vec<_> = frame
+                .calibrations
+                .iter()
+                .map(|c| (c.illuminant, c.forward_matrix.clone()))
+                .collect();
+            f.sort_by_key(|(illuminant, _)| *illuminant);
+            f
+        };
+        let near = |got: &Option<Vec<f32>>, want: Vec<f32>| {
+            let got = got.as_ref().expect("a forward matrix");
+            got.iter().zip(&want).all(|(g, w)| (g - w).abs() < 1e-3)
+        };
+        for software in [None, Some("Adobe DNG Converter 17.0"), Some("HDR+ 1.0")] {
+            let f = forwards(&decoded(software));
+            assert_eq!(f.len(), 2, "{software:?}");
+            assert!(near(&f[0].1, forward(0.05)), "{software:?}: {f:?}");
+            assert!(near(&f[1].1, forward(0.0)), "{software:?}: {f:?}");
+        }
+        for software in ["CHDK ver. 1.6.1", "CHDK_DE ver. 1.6.1"] {
+            let frame = decoded(Some(software));
+            assert_eq!(frame.calibrations.len(), 2, "{software}");
+            assert!(
+                frame
+                    .calibrations
+                    .iter()
+                    .all(|c| c.forward_matrix.is_none()),
+                "{software}: {:?}",
+                forwards(&frame)
+            );
+        }
+        assert!(reads_forward_matrices("Adobe DNG Converter 17.0"));
+        assert!(reads_forward_matrices(""));
+        assert!(!reads_forward_matrices(" CHDK 1.5.1"));
     }
 
     #[test]

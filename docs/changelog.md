@@ -119,6 +119,8 @@ design note behind it.
 
 ### Fixes
 
+- A DNG written by CHDK develops through its color matrices again, so a
+  PowerShot's frame is no longer faded (issue 201).
 - A keyword or caption holding a carriage return now reads back
   unchanged from the XMP greycard writes.
 - Pentax bodies lensfun files under Ricoh, such as the K-1 and K-3
