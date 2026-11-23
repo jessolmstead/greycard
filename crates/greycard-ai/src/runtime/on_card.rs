@@ -105,9 +105,11 @@ fn write_off(store_root: &Path, entries: &[Off]) {
 /// set once by the editor and the CLI as they start.
 static BUILD_LABEL: OnceLock<String> = OnceLock::new();
 
-/// The binary's version label (`greycard_version::LABEL`), so a source
-/// build at another commit tries the card again. Unset, or a build with
-/// no commit (a release, a tarball), the key falls back to the version.
+/// The binary's version and commit (`greycard_version::KEY`, the label
+/// without its count of commits since the tag), so a source build at
+/// another commit tries the card again, and a tag fetched later does
+/// not. Unset, or a build with no commit (a release, a tarball), the
+/// key falls back to the version.
 pub fn set_build_label(label: &str) {
     let _ = BUILD_LABEL.set(label.to_string());
 }

@@ -220,7 +220,7 @@ enum Command {
 /// script). An error is said as `main` returning it would say it.
 fn main() -> std::process::ExitCode {
     // The off-card record keys on the build, its commit too.
-    greycard_ai::runtime::set_build_label(greycard_version::LABEL);
+    greycard_ai::runtime::set_build_label(greycard_version::KEY);
     let code = match run() {
         Ok(code) => code,
         Err(e) => {

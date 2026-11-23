@@ -106,6 +106,8 @@ design note behind it.
 
 ### Install
 
+- A build from source says how many commits it is past the release,
+  as `0.12.0+135 (8bab17c)` (issue 199).
 - The Windows executables and the installer are signed, with SignPath
   Foundation as the publisher
   ([§732](https://github.com/jessolmstead/greycard/blob/master/docs/notes/732-the-windows-builds-signed-through-signpath.md)).

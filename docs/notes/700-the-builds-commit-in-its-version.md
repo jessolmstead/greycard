@@ -58,3 +58,15 @@ later uncommitted edit does not add it, nor does reverting one remove
 it. That suits its use: testers and CI build clean checkouts. Tags are
 not watched either, so a build made before HEAD was tagged keeps its
 hash until HEAD next moves.
+
+**The commits since the release (2026-11-22).** A tester who built
+master and went back to the release could not see which was newer
+(issue 199). In a full clone with the tag `v<version>` among HEAD's
+ancestors, the label now counts the commits past it:
+`0.12.0+135 (8bab17c)`. A release, a packager's commit, a shallow
+clone, or no tag gives the label as above. The count is shown and
+never compared or written: the off-card record's key is the label
+without it (`KEY`). The stamp now also reruns when the tags move
+(`refs/tags`, `packed-refs`, and `shallow` are watched), so tagging
+HEAD gives the plain version at once, and a repack rebuilds the stamp
+once.
