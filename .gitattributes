@@ -13,3 +13,6 @@ crates/greycard-core/tests/fixtures/highlight_fill/**/*.txt text eol=lf
 # test compares against.
 crates/greycard-ai/src/highlight/**/*.bin binary
 crates/greycard-ai/src/highlight/**/*.txt text eol=lf
+# Schema 10's golden files: the tests hold what a state writes to these
+# bytes, so they are the same bytes on every platform.
+crates/greycard-edit/fixtures/* text eol=lf

@@ -756,7 +756,10 @@ fn shapes_now() -> String {
     };
     let mut out = Vec::new();
     for name in names {
-        let text = std::fs::read_to_string(src.join(&name)).unwrap();
+        // A Windows checkout may end its lines with CRLF.
+        let text = std::fs::read_to_string(src.join(&name))
+            .unwrap()
+            .replace("\r\n", "\n");
         let text = text.split("\n#[cfg(test)]\nmod ").next().unwrap();
         let lines: Vec<&str> = text.lines().map(str::trim).collect();
         let mut in_enum: Option<String> = None;
