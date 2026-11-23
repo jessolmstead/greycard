@@ -207,8 +207,9 @@ the reasoning lives in `docs/notes.md`.
       (issue 199). Say it in the window, or list the roots from disk
 - [ ] A build from master calls itself by the last release's number
       with a commit beside it, so a tester going back to the release
-      did not see it as older (issue 199). Decide: the next version's
-      number with a dev mark from the first commit after a release
+      did not see it as older (issue 199). Decided: the label gains
+      the commits since the release's tag, `0.12.0+135 (8bab17c)`,
+      display only; a release's stays as it is
 - [ ] A left-click that closes the picture's context menu moves the
       picture toward the click, on Windows at 1:1 (issue 179); the
       right press's release may never reach the viewport. Unverified
