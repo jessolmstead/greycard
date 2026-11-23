@@ -1705,10 +1705,9 @@ release when the wait clears.
 - [ ] SignPath's padded version check changed for a version that is
       not six characters long (1.0.0), in `packaging/signpath` and in
       SignPath's copies (§732)
-- [ ] The Windows signing's first runs (§732): a test run of the
-      package workflows, then the first release under SignPath
-      Foundation's certificate, which waits on its issue; the allowed
-      branch names tightened once a tag's request shows its ref
+- [ ] The first release under SignPath Foundation's certificate
+      (§732), which waits on its issue; the allowed branch names
+      tightened once a tag's request shows its ref
 - [ ] A GPU path for the models on Windows on ARM: pyke publishes an
       ARM64 Windows build of ONNX Runtime with DirectML, no WebGPU,
       and DirectML ships with Windows, so ort-dylib could make our
