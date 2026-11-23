@@ -1599,7 +1599,9 @@ clears or a tester asks for it.
       shortcuts a pen can reach (discussion 59, 2026-11-06)
 - [ ] A luminance curve beside the channels', bending the tone and
       leaving the color; kin to the master curve on a norm
-      (discussion 59, 2026-11-09)
+      (discussion 59, 2026-11-09). Asked for again as the stand-in
+      for darktable's tone equalizer, with more bands than Light's
+      three (reddit, 2026-11-23)
 - [ ] An export batch timed end to end on a few hundred edited
       frames, masks and fills included, and the slow stage found; a
       tester's job took days against hours in Lightroom, the switching
@@ -1661,6 +1663,22 @@ clears or a tester asks for it.
       whatever is open, without the filter bar showing; today a smart
       collection opens the place it was saved from. Covers "raws
       only" (discussion 59, 2026-11-15)
+- [ ] Collection sets that fold and unfold under COLLECTIONS: today a
+      slash in a name only sorts and mutes the set's name, and a big
+      catalog import brings hundreds (discussion 59, 2026-11-23)
+- [ ] Redo among the keys that can be changed: it is fixed because it
+      has two defaults; one key to move and Ctrl+Y kept as a second,
+      or more than one key an action (discussion 204)
+- [ ] A stitch for a sheet copied in parts: the film shifted under a
+      fixed camera wants a flat, shift-only fit and no projection
+      (discussion 59, 2026-11-23)
+- [ ] A panorama's alignment adjusted by hand where the fit is
+      slightly off (discussion 59, 2026-11-23)
+- [ ] Printing: layout, margins, and the printer's ICC profile
+      (discussion 59, 2026-11-23)
+- [ ] A large generative fill beside film grain: scaled into the
+      1024 window and back, it comes out softer than the scan around
+      it (discussion 59, 2026-11-23)
 - [ ] A favorite: a shortcut in the left pane to a folder inside a
       root, where adding it as a root is refused (discussion 59,
       2026-11-15)
