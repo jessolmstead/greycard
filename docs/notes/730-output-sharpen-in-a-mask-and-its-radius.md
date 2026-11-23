@@ -11,7 +11,8 @@ before this exports the same at full size and sharper when made
 smaller.
 
 **In a mask.** A mask's Detail carries an Output sharpen, −100 to
-+100, at the picture's Radius and Threshold. The amount at a pixel is
++100, at the picture's Radius and Threshold (since §736 to +200, and
+at the mask's own Radius and Threshold where it has them). The amount at a pixel is
 
     clamp(base · Π(1 + w·s⁻) + Σ w·s⁺, 0, 2)
 

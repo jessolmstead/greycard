@@ -581,13 +581,13 @@ impl Renderer {
                     count: None,
                 },
                 // The output sharpen's luminance blurred across, full
-                // floats read by load.
+                // floats read by load, a layer a radius.
                 gpu::BindGroupLayoutEntry {
                     binding: 16,
                     visibility: gpu::ShaderStages::FRAGMENT,
                     ty: gpu::BindingType::Texture {
                         sample_type: gpu::TextureSampleType::Float { filterable: false },
-                        view_dimension: gpu::TextureViewDimension::D2,
+                        view_dimension: gpu::TextureViewDimension::D2Array,
                         multisampled: false,
                     },
                     count: None,

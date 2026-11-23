@@ -1445,6 +1445,10 @@ clears or a tester asks for it.
 - [ ] A mask's Detail with its own sharpen radius and threshold, and a
       denoise in a mask (a pixls tester, 2026-11-22)
 - [ ] SHARPEN's Radius past 2, to 3 (discussion 194)
+- [ ] A mask's own Output sharpen radii, their cost in the window
+      measured on a card (`the_cost_of_own_radii_in_the_window`), and
+      a fourth distinct setting said in the window, not only the log
+      (§736)
 - [ ] A crop held to a longest side in pixels, to judge what
       resolution a tight crop leaves, as RawTherapee has (discussion
       194)

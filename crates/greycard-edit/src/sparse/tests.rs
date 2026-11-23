@@ -354,6 +354,19 @@ fn golden_edits_now() -> Vec<(&'static str, Edit)> {
         ..retouch::Patch::default()
     });
     out.push(("local whites, the other shapes, a clone", e));
+    // A mask's Output sharpen at its own Radius and Threshold, past the
+    // old top of +100; and one with its Radius alone.
+    let mut e = exposed(0.1);
+    let mut own = local(LocalWhite::Off, Shape::Background {});
+    own.look.detail.output_sharpen = 1.5;
+    own.look.detail.output_sharpen_radius = Some(2.5);
+    own.look.detail.output_sharpen_threshold = Some(0.0);
+    let mut radius_alone = local(LocalWhite::Off, Shape::Sky { picks: vec![] });
+    radius_alone.id = 2;
+    radius_alone.look.detail.output_sharpen = 0.4;
+    radius_alone.look.detail.output_sharpen_radius = Some(3.0);
+    e.adjustments = vec![own, radius_alone];
+    out.push(("a mask's own output sharpen", e));
     out
 }
 
@@ -554,7 +567,10 @@ fn every_rule_names_a_path_a_state_has() {
 /// the daylight a missing temperature reads as, a part with no person.
 #[test]
 fn a_variant_s_defaults_are_left_out_too() {
-    let (_, e) = golden_edits().pop().unwrap();
+    let (_, e) = golden_edits()
+        .into_iter()
+        .find(|(name, _)| *name == "local whites, the other shapes, a clone")
+        .unwrap();
     let v = written_value(&e);
     let adj = |i: usize| &v["adjustments"][i];
     assert_eq!(

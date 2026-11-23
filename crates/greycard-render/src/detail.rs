@@ -1075,6 +1075,8 @@ mod tests {
                     dehaze,
                     sharpen: 0.0,
                     output_sharpen: 0.0,
+                    output_sharpen_radius: None,
+                    output_sharpen_threshold: None,
                 };
                 let (worst, _) = whole_against_global(&image, d, white);
                 assert!(worst <= 10, "{white:?} {d:?}: {worst} of 65535");
@@ -1226,6 +1228,8 @@ mod tests {
                 dehaze,
                 sharpen: 0.0,
                 output_sharpen: 0.0,
+                output_sharpen_radius: None,
+                output_sharpen_threshold: None,
             };
             let half = Detail {
                 enabled: true,
@@ -1235,6 +1239,8 @@ mod tests {
                 dehaze: dehaze / 2.0,
                 sharpen: 0.0,
                 output_sharpen: 0.0,
+                output_sharpen_radius: None,
+                output_sharpen_threshold: None,
             };
             let want = global(&image, &half);
             let planes = DetailPlanes::make(&image, None, CLIP, wants(&d)).unwrap();

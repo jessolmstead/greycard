@@ -950,7 +950,7 @@ fn the_shaders_refined_masks_are_the_cpus() {
         l.refine(&picture, aspect, -0.3, 0.5);
         assert!(l.refined.is_some(), "local {k} refined");
     }
-    let packed = super::locals::locals_gpu(&locals, 8192);
+    let packed = super::locals::locals_gpu(&locals, 8192, None);
     assert_eq!(packed.shapes.len(), locals.len(), "one raster a mask");
     assert_eq!(packed.rasters.len(), locals.len());
     let Some((device, queue)) = device("the refined masks' GPU check") else {
@@ -1012,7 +1012,7 @@ fn wide_rasters_beside_narrow_ones_are_the_cpus() {
         with(Shape::Subject {}, &subject),
         with(Shape::Sky { picks: Vec::new() }, &other_sky),
     ];
-    let gpu_locals = super::locals::locals_gpu(&locals, 8192);
+    let gpu_locals = super::locals::locals_gpu(&locals, 8192, None);
     assert_eq!(gpu_locals.rasters.len(), 2);
     assert_eq!(gpu_locals.wide.len(), 2);
     assert_eq!(
@@ -1070,7 +1070,7 @@ fn a_brushs_cut_is_the_cpus() {
         l
     };
     let locals = vec![with(Mode::Add), with(Mode::Intersect)];
-    let packed = super::locals::locals_gpu(&locals, 8192);
+    let packed = super::locals::locals_gpu(&locals, 8192, None);
     assert_eq!(packed.rasters.len(), 3, "two layers and one");
     assert!(packed.rasters[1].cut && !packed.rasters[2].cut);
     // The cut takes the mask away where the gradient gave it.
@@ -1908,24 +1908,32 @@ fn the_output_sharpen_on_the_gpu_is_the_cpus() {
 /// luminance blurred by the output sharpen's taps a picture's pixel
 /// apart, its blur held only at the picture's own edges (the margin
 /// past the window drawn as the window is), and on to the output.
-/// `None` where the target shows the canvas.
+/// `whole`: masks whole over the frame, whose shares (at radii of their
+/// own or the picture's) set every pixel's terms alike; each term's
+/// blur is its own radius's, the margin the widest's. `None` where the
+/// target shows the canvas.
 fn osharp_view_on_the_cpu(
     seen: &WorkingImage,
     global: &Baked,
+    whole: &[greycard_render::finish::Local],
     zoom: usize,
     center: (f32, f32),
     (vw, vh): (usize, usize),
     to_out: &[[f32; 3]; 3],
 ) -> Vec<Option<[f32; 3]>> {
     use greycard_render::finish::{finish_pixel_display, finish_pixel_output};
-    use greycard_render::output_sharpen::{Params, apply, luminance};
-    let p = Params::of(&global.output_sharpen)
+    use greycard_render::output_sharpen::{Plan, half_width, luminance, moved, soft};
+    let plan = Plan::finishing(&global.output_sharpen, whole)
         .unwrap()
         .holding(global.agx_railed());
+    let on: Vec<(&Baked, f32)> = whole.iter().map(|l| (&l.baked, 1.0)).collect();
+    let mut amounts = vec![0.0; plan.terms()];
+    plan.amounts_at(&on, &mut amounts);
+    let (radii, reads) = plan.blurs();
+    let thresholds: Vec<f32> = plan.thresholds().collect();
     let z = zoom as f32;
-    let sigma = p.sigma * z;
-    let n = ((3.0 * sigma / z).ceil() as usize).clamp(1, 9);
-    let m = n * zoom;
+    let taps: Vec<(f32, usize)> = radii.iter().map(|&r| (r * z, half_width(r))).collect();
+    let m = taps.iter().map(|t| t.1).max().unwrap() * zoom;
     let (lw, lh) = (vw + 2 * m, vh + 2 * m);
     let (w, h) = (seen.width, seen.height);
     // The frame position under a pixel of the margined texture.
@@ -1978,7 +1986,7 @@ fn osharp_view_on_the_cpu(
                 finish_pixel_display(
                     bilinear(read_at(at)),
                     global,
-                    &[],
+                    &on,
                     0.0,
                     None,
                     None,
@@ -2001,8 +2009,12 @@ fn osharp_view_on_the_cpu(
         .collect();
     let (x0, x1) = (xs[0], *xs.last().unwrap());
     let (y0, y1) = (ys[0], *ys.last().unwrap());
-    let s = sigma.max(1e-3);
-    let blur_line = |len_lo: usize, len_hi: usize, at: &dyn Fn(usize) -> f32, c: usize| {
+    let blur_line = |(sigma, n): (f32, usize),
+                     len_lo: usize,
+                     len_hi: usize,
+                     at: &dyn Fn(usize) -> f32,
+                     c: usize| {
+        let s = sigma.max(1e-3);
         let (mut acc, mut sum) = (0.0f32, 0.0f32);
         for i in -(n as i64)..=n as i64 {
             let d = i as f32 * z;
@@ -2013,20 +2025,34 @@ fn osharp_view_on_the_cpu(
         }
         acc / sum
     };
-    let mut across = vec![f32::NAN; lw * lh];
-    for y in y0..=y1 {
-        for x in x0..=x1 {
-            across[y * lw + x] = blur_line(x0, x1, &|j| l[y * lw + j], x);
-        }
-    }
+    let across: Vec<Vec<f32>> = taps
+        .iter()
+        .map(|&t| {
+            let mut across = vec![f32::NAN; lw * lh];
+            for y in y0..=y1 {
+                for x in x0..=x1 {
+                    across[y * lw + x] = blur_line(t, x0, x1, &|j| l[y * lw + j], x);
+                }
+            }
+            across
+        })
+        .collect();
     (0..vw * vh)
         .map(|i| {
             let (x, y) = (i % vw + m, i / vw + m);
             let c = colors[y * lw + x]?;
             let (bx, by) = blur_at(x, y);
-            let b = blur_line(y0, y1, &|j| across[j * lw + bx], by);
+            let here = l[y * lw + x];
+            let (mut amount, mut delta) = (0.0f32, 0.0f32);
+            for (k, (&a, read)) in amounts.iter().zip(&reads).enumerate() {
+                if let (true, Some(b)) = (a > 0.0, read) {
+                    let blurred = blur_line(taps[*b], y0, y1, &|j| across[*b][j * lw + bx], by);
+                    amount += a;
+                    delta += a * soft(here - blurred, thresholds[k]);
+                }
+            }
             Some(finish_pixel_output(
-                apply(c, l[y * lw + x], b, &p),
+                moved(c, here, amount, delta, plan.picture.hold),
                 global,
                 None,
                 to_out,
@@ -2069,16 +2095,49 @@ fn the_output_sharpen_holds_at_the_windows_edge_at_any_zoom() {
     renderer.upload(&Halves::from_image(&image, None));
     let to_out = greycard_render::export::Space::Srgb.matrix();
     let (vw, vh) = (40usize, 30usize);
-    for (zoom, radius, shift) in [
-        (1usize, 3.0f32, 0.0f32),
-        (2, 1.5, 0.0),
-        (4, 3.0, 0.0),
-        (4, 0.5, 0.0),
-        (1, 3.0, 0.25),
-        (1, 1.0, 0.5),
-        (2, 3.0, 0.375),
-        (4, 2.0, 0.375),
-        (4, 1.0, 0.125),
+    // Two masks whole over the frame at radii of their own, beside the
+    // picture's: three blurs, the margin the widest's.
+    let own = |radii: [(f32, Option<f32>); 2]| -> Vec<greycard_render::finish::Local> {
+        radii
+            .iter()
+            .enumerate()
+            .map(|(i, &(r, t))| {
+                let mut look = Look::default();
+                look.detail.output_sharpen = 0.7;
+                look.detail.output_sharpen_radius = Some(r);
+                look.detail.output_sharpen_threshold = t;
+                let a = greycard_edit::Adjustment {
+                    id: i as u64 + 1,
+                    mask: Mask {
+                        components: vec![Component {
+                            shape: Shape::Linear {
+                                from: [-1.0, 0.0],
+                                to: [-2.0, 0.0],
+                            },
+                            ..Default::default()
+                        }],
+                        ..Default::default()
+                    },
+                    look,
+                    ..Default::default()
+                };
+                greycard_render::finish::Local::of(&a, vec![None], None)
+            })
+            .collect()
+    };
+    for (zoom, radius, shift, masks) in [
+        (1usize, 3.0f32, 0.0f32, Vec::new()),
+        (2, 1.5, 0.0, Vec::new()),
+        (4, 3.0, 0.0, Vec::new()),
+        (4, 0.5, 0.0, Vec::new()),
+        (1, 3.0, 0.25, Vec::new()),
+        (1, 1.0, 0.5, Vec::new()),
+        (2, 3.0, 0.375, Vec::new()),
+        (4, 2.0, 0.375, Vec::new()),
+        (4, 1.0, 0.125, Vec::new()),
+        (1, 1.0, 0.25, own([(3.0, Some(0.0)), (0.6, None)])),
+        (2, 0.8, 0.375, own([(2.5, None), (1.3, Some(0.03))])),
+        (4, 1.5, 0.125, own([(0.5, Some(0.0)), (3.0, None)])),
     ] {
         // The picture's left edge in the window, the rest past it, the
         // edge off the pixel grid by `shift` of a picture's pixel.
@@ -2096,13 +2155,14 @@ fn the_output_sharpen_holds_at_the_windows_edge_at_any_zoom() {
             center,
             plane: (w as f32, h as f32),
             frame_size: (w as f32, h as f32),
+            locals: masks.clone(),
             ..View::with_look(&edit)
         };
         let shown = {
             let target = renderer.render(vw as u32, vh as u32, &view).0;
             renderer.read_back(&target).expect("read back")
         };
-        let cpu = osharp_view_on_the_cpu(&seen, &global, zoom, center, (vw, vh), &to_out);
+        let cpu = osharp_view_on_the_cpu(&seen, &global, &masks, zoom, center, (vw, vh), &to_out);
         let (mut border, mut interior, mut picture) = (0.0f32, 0.0f32, 0usize);
         for y in 0..vh {
             for x in 0..vw {
@@ -2120,8 +2180,9 @@ fn the_output_sharpen_holds_at_the_windows_edge_at_any_zoom() {
             }
         }
         eprintln!(
-            "zoom {zoom}, radius {radius}, shift {shift}: border worst {:.2} levels, \
-             interior worst {:.2} levels, {picture} pixels of picture",
+            "zoom {zoom}, radius {radius}, shift {shift}, {} masks at own radii: border \
+             worst {:.2} levels, interior worst {:.2} levels, {picture} pixels of picture",
+            masks.len(),
             border * 255.0,
             interior * 255.0
         );
@@ -2412,6 +2473,311 @@ fn a_masks_output_sharpen_on_the_gpu_is_the_cpus() {
     }
 }
 
+/// Masks' Output sharpen at Radii and Thresholds of their own on the
+/// GPU is the CPU's, at 1:1 and at half as
+/// `a_masks_output_sharpen_on_the_gpu_is_the_cpus` measures it: one mask
+/// at radius 3 and threshold 0 over the picture's off (the case the
+/// setting is for); +200 at its own radius beside a take with a radius
+/// the take does not read and a threshold alone, over the picture's
+/// own; three own settings on two radii under opacities, the picture's
+/// on; a fourth own setting past the three, at the picture's; and under
+/// AgX's rail. Every pixel within a level, and with the picture's off
+/// not a pixel the masks do not reach moves.
+#[test]
+fn masks_own_output_sharpen_on_the_gpu_is_the_cpus() {
+    use greycard_render::finish::{Local, finish_reaching};
+    let Some((device, queue)) = device("masks' own output sharpen") else {
+        return;
+    };
+    let image = parity_frame();
+    let (w, h) = (image.width, image.height);
+    let seen: Vec<f32> = image
+        .data
+        .iter()
+        .map(|v| half::f16::from_f32(*v).to_f32())
+        .collect();
+    let full = WorkingImage {
+        width: w,
+        height: h,
+        data: seen.clone(),
+    };
+    let (hw, hh) = (w / 2, h / 2);
+    let mut half_image = WorkingImage::new(hw, hh);
+    for y in 0..hh {
+        for x in 0..hw {
+            for k in 0..3 {
+                let at = |xx: usize, yy: usize| seen[(yy * w + xx) * 3 + k];
+                half_image.data[(y * hw + x) * 3 + k] = (at(2 * x, 2 * y)
+                    + at(2 * x + 1, 2 * y)
+                    + at(2 * x, 2 * y + 1)
+                    + at(2 * x + 1, 2 * y + 1))
+                    / 4.0;
+            }
+        }
+    }
+    let mut renderer = Renderer::new(&device, &queue);
+    renderer.upload(&Halves::from_image(&image, None));
+    let to_out = greycard_render::export::Space::Srgb.matrix();
+    let shift = greycard_render::testing::white_shift();
+    let ramp = |from: f32, to: f32| Mask {
+        components: vec![Component {
+            shape: Shape::Linear {
+                from: [from, 0.0],
+                to: [to, 0.0],
+            },
+            ..Default::default()
+        }],
+        ..Default::default()
+    };
+    // (share, own radius, own threshold, the ramp's ends, opacity)
+    type M = (f32, Option<f32>, Option<f32>, (f32, f32), f32);
+    // (the picture's amount, its masks, AgX)
+    let cases: Vec<(f32, Vec<M>, bool)> = vec![
+        (
+            0.0,
+            vec![(1.0, Some(3.0), Some(0.0), (0.45, 0.55), 1.0)],
+            false,
+        ),
+        (
+            1.0,
+            vec![
+                (2.0, Some(0.5), None, (0.3, 0.6), 1.0),
+                (-0.5, Some(3.0), Some(0.0), (0.7, 0.4), 1.0),
+                (0.8, None, Some(0.05), (0.6, 0.9), 0.7),
+            ],
+            false,
+        ),
+        (
+            0.6,
+            vec![
+                (0.6, Some(2.5), None, (0.2, 0.5), 0.8),
+                (0.4, Some(0.7), Some(0.0), (0.8, 0.5), 1.0),
+                (1.0, Some(2.5), Some(0.03), (0.4, 0.7), 0.5),
+            ],
+            false,
+        ),
+        (
+            0.0,
+            vec![
+                (0.5, Some(0.6), None, (0.3, 0.5), 1.0),
+                (0.5, Some(1.1), None, (0.4, 0.6), 1.0),
+                (0.5, Some(2.0), None, (0.5, 0.7), 1.0),
+                (0.9, Some(2.9), None, (0.6, 0.8), 1.0),
+            ],
+            false,
+        ),
+        (
+            1.5,
+            vec![(1.6, Some(2.6), Some(0.0), (0.4, 0.6), 0.9)],
+            true,
+        ),
+        // The sum held: three own terms at +200 overlapping over the
+        // picture's 200%, and +200 just off the picture's radius over
+        // its 100%.
+        (
+            2.0,
+            vec![
+                (2.0, Some(0.6), None, (0.3, 0.7), 1.0),
+                (2.0, Some(1.5), Some(0.0), (0.4, 0.8), 1.0),
+                (2.0, Some(3.0), Some(0.05), (0.2, 0.6), 1.0),
+            ],
+            false,
+        ),
+        (1.0, vec![(2.0, Some(1.41), None, (0.3, 0.7), 1.0)], false),
+    ];
+    for (amount, masks, agx) in cases {
+        let mut edit = greycard_edit::Edit::default();
+        edit.light.exposure = 0.3;
+        if agx {
+            edit.display_curve = greycard_edit::DisplayCurve::Agx;
+            edit.curves.red_green = vec![[0.0, 0.85], [1.0, 0.85]];
+            edit.curves.blue_yellow = vec![[0.0, 0.2], [1.0, 0.2]];
+        }
+        edit.output_sharpen.amount = amount;
+        edit.output_sharpen.radius = 1.4;
+        for (i, &(share, radius, threshold, (from, to), opacity)) in masks.iter().enumerate() {
+            let mut look = Look::default();
+            look.detail.output_sharpen = share;
+            look.detail.output_sharpen_radius = radius;
+            look.detail.output_sharpen_threshold = threshold;
+            edit.adjustments.push(greycard_edit::Adjustment {
+                id: i as u64 + 1,
+                mask: ramp(from, to),
+                look,
+                opacity,
+                ..Default::default()
+            });
+        }
+        let locals_of = |e: &greycard_edit::Edit| -> Vec<Local> {
+            e.adjustments
+                .iter()
+                .map(|a| Local::of(a, vec![None; a.mask.components.len()], Some(&shift)))
+                .collect()
+        };
+        let locals = locals_of(&edit);
+        let plan = greycard_render::output_sharpen::Plan::finishing(&edit.output_sharpen, &locals)
+            .expect("a sharpen");
+        let global = Baked::global(&edit, Source::SCENE);
+        let mut plain = edit.clone();
+        plain.output_sharpen.amount = 0.0;
+        for a in &mut plain.adjustments {
+            a.look.detail.output_sharpen = 0.0;
+        }
+        let plain_locals = locals_of(&plain);
+        for zoom in [1.0f32, 0.5] {
+            let (vw, vh, picture) = if zoom == 1.0 {
+                (w, h, &full)
+            } else {
+                (hw, hh, &half_image)
+            };
+            let draw = |renderer: &mut Renderer, edit: &greycard_edit::Edit, locals: &[Local]| {
+                let view = View {
+                    zoom,
+                    center: (w as f32 / 2.0, h as f32 / 2.0),
+                    plane: (w as f32, h as f32),
+                    frame_size: (w as f32, h as f32),
+                    source: Source::SCENE,
+                    locals: locals.to_vec(),
+                    ..View::with_look(edit)
+                };
+                let target = renderer.render(vw as u32, vh as u32, &view).0;
+                renderer.read_back(&target).expect("read back")
+            };
+            let shown = draw(&mut renderer, &edit, &locals);
+            let before = draw(&mut renderer, &plain, &plain_locals);
+            let cpu = finish_reaching(
+                picture,
+                zoom,
+                None,
+                &global,
+                &locals,
+                |x, y| ((x as f32 + 0.5) / vw as f32, (y as f32 + 0.5) / vw as f32),
+                |_, _| (0.0, None),
+                None,
+                None,
+                None,
+                &to_out,
+                |v: f32| v,
+            );
+            let (mut worst, mut sum, mut moved, mut outside) = (0.0f32, 0.0f64, 0usize, 0u8);
+            for y in 0..vh {
+                for x in 0..vw {
+                    let g = shown.get_pixel(x as u32, y as u32);
+                    let b = before.get_pixel(x as u32, y as u32);
+                    if g != b {
+                        moved += 1;
+                    }
+                    let (u, v) = ((x as f32 + 0.5) / vw as f32, (y as f32 + 0.5) / vw as f32);
+                    if amount == 0.0 && locals.iter().all(|l| l.weight_sampled(u, v, None) == 0.0) {
+                        for k in 0..3 {
+                            outside = outside.max(g[k].abs_diff(b[k]));
+                        }
+                    }
+                    for k in 0..3 {
+                        let d = (cpu[(y * vw + x) * 3 + k] - f32::from(g[k]) / 255.0).abs();
+                        sum += f64::from(d);
+                        worst = worst.max(d);
+                    }
+                }
+            }
+            eprintln!(
+                "amount {amount}, {} masks, own {:?}, agx {agx}, zoom {zoom}: {moved} moved, \
+                 worst {:.2} levels, mean {:.3}, outside the masks {outside}",
+                masks.len(),
+                plan.own,
+                worst * 255.0,
+                sum / (vw * vh * 3) as f64 * 255.0
+            );
+            assert!(
+                worst < 1.0 / 255.0 && sum / ((vw * vh * 3) as f64) < 0.2 / 255.0,
+                "amount {amount}, {masks:?}, zoom {zoom}: {}",
+                worst * 255.0
+            );
+            assert_eq!(outside, 0, "amount {amount}, {masks:?}, zoom {zoom}");
+            assert!(moved > vw * vh / 20, "the case moves the picture");
+        }
+    }
+}
+
+/// What masks' own Output sharpen radii cost a window's draw: a 1600 by
+/// 1000 view of a frame that size at 1:1, the least of ten draws read
+/// back, with the sharpen off, the picture's alone (radius 3), and one,
+/// two, and three masks whole over the frame at radii of their own.
+/// Ignored: a measurement, run by hand on the card in question,
+/// `cargo test -p greycard-viewport --release --lib
+/// the_cost_of_own_radii_in_the_window -- --ignored --nocapture`.
+#[test]
+#[ignore]
+fn the_cost_of_own_radii_in_the_window() {
+    use greycard_render::finish::Local;
+    let Some((device, queue)) = device("the cost of own radii") else {
+        return;
+    };
+    let (w, h) = (1600usize, 1000usize);
+    let mut image = WorkingImage::new(w, h);
+    for (i, v) in image.data.iter_mut().enumerate() {
+        let p = i / 3;
+        let (x, y) = (p % w, p / w);
+        *v = 0.05 + 0.4 * (((x / 7) ^ (y / 5)) & 1) as f32 + 0.01 * (i % 3) as f32;
+    }
+    let mut renderer = Renderer::new(&device, &queue);
+    renderer.upload(&Halves::from_image(&image, None));
+    let whole = Mask {
+        components: vec![Component {
+            shape: Shape::Linear {
+                from: [-1.0, 0.0],
+                to: [-2.0, 0.0],
+            },
+            ..Default::default()
+        }],
+        ..Default::default()
+    };
+    let radii = [2.0f32, 0.8, 2.5];
+    let mut least = Vec::new();
+    for (amount, masks) in [(0.0, 0usize), (1.0, 0), (1.0, 1), (1.0, 2), (1.0, 3)] {
+        let mut edit = greycard_edit::Edit::default();
+        edit.output_sharpen.amount = amount;
+        edit.output_sharpen.radius = 3.0;
+        for (i, r) in radii.iter().take(masks).enumerate() {
+            let mut look = Look::default();
+            look.detail.output_sharpen = 0.5;
+            look.detail.output_sharpen_radius = Some(*r);
+            edit.adjustments.push(greycard_edit::Adjustment {
+                id: i as u64 + 1,
+                mask: whole.clone(),
+                look,
+                ..Default::default()
+            });
+        }
+        let locals: Vec<Local> = edit
+            .adjustments
+            .iter()
+            .map(|a| Local::of(a, vec![None], None))
+            .collect();
+        let view = View {
+            zoom: 1.0,
+            center: (w as f32 / 2.0, h as f32 / 2.0),
+            plane: (w as f32, h as f32),
+            frame_size: (w as f32, h as f32),
+            source: Source::SCENE,
+            locals,
+            ..View::with_look(&edit)
+        };
+        let mut best = f64::INFINITY;
+        for _ in 0..10 {
+            // A guide set again asks for a draw, as a change would.
+            renderer.set_guide(&greycard_render::finish::Guide::NONE);
+            let started = std::time::Instant::now();
+            let t = renderer.render(w as u32, h as u32, &view).0;
+            renderer.read_back(&t).expect("read back");
+            best = best.min(started.elapsed().as_secs_f64() * 1e3);
+        }
+        least.push(best);
+        eprintln!("amount {amount}, {masks} masks at own radii: {best:.1} ms a draw");
+    }
+    assert!(least.iter().all(|t| t.is_finite()));
+}
+
 /// A mask's output sharpen holds past 1:1, turned, and panned, where
 /// the CPU twin is the picture's own sharpen at the amount the masks
 /// make: two masks whole over the frame at any shares draw what the
@@ -2542,6 +2908,68 @@ fn a_masks_output_sharpen_holds_past_one_turned_and_panned() {
         assert!(
             worst(&own, &plain, &inside) > 1,
             "{at}: the picture's moves"
+        );
+        // Two radii of the masks' own, two layers: a mask whole over the
+        // frame at radius 2 and the ramp at radius 0.5, the picture's
+        // off. Where the ramp weighs nothing the first alone is the
+        // picture's own at radius 2, within a level; under it the second
+        // moves the picture further. There is no CPU twin of a turned
+        // view; this holds the layers to the single blur the test holds.
+        let draw_own = |renderer: &mut Renderer,
+                        picture: f32,
+                        radius: f32,
+                        masks: &[(&Mask, f32, Option<f32>)]| {
+            let mut edit = greycard_edit::Edit::default();
+            edit.light.exposure = 0.3;
+            edit.output_sharpen.amount = picture;
+            edit.output_sharpen.radius = radius;
+            edit.output_sharpen.threshold = 0.005;
+            for (i, (mask, share, own)) in masks.iter().enumerate() {
+                let mut look = Look::default();
+                look.detail.output_sharpen = *share;
+                look.detail.output_sharpen_radius = *own;
+                edit.adjustments.push(greycard_edit::Adjustment {
+                    id: i as u64 + 1,
+                    mask: (*mask).clone(),
+                    look,
+                    ..Default::default()
+                });
+            }
+            let locals: Vec<Local> = edit
+                .adjustments
+                .iter()
+                .map(|a| Local::of(a, vec![None; a.mask.components.len()], Some(&shift)))
+                .collect();
+            let view = View {
+                zoom,
+                center: (bw * cx, bh * cy),
+                plane: (bw, bh),
+                frame_size: (bw, bh),
+                matrix: [[c, -s], [s, c]],
+                source: Source::SCENE,
+                locals,
+                ..View::with_look(&edit)
+            };
+            let target = renderer.render(vw, vh, &view).0;
+            renderer.read_back(&target).expect("read back")
+        };
+        let layered = draw_own(
+            &mut renderer,
+            0.0,
+            1.2,
+            &[(&whole, 1.0, Some(2.0)), (&ramp, 1.0, Some(0.5))],
+        );
+        let at_two = draw_own(
+            &mut renderer,
+            1.0,
+            2.0,
+            &[(&whole, 0.0, None), (&ramp, 0.0, None)],
+        );
+        let off = worst(&layered, &at_two, &outside);
+        assert!(off <= 1, "{at}: two radii, outside the ramp, {off} levels");
+        assert!(
+            worst(&layered, &at_two, &inside) > 1,
+            "{at}: the second radius moves under the ramp"
         );
         eprintln!("{at}: {none} pixels outside the ramp, {all} under it");
     }
@@ -2863,6 +3291,53 @@ fn the_output_sharpens_targets_are_kept_by_size_and_let_go_of() {
     renderer.render(w as u32, h as u32, &view(&edit));
     let kept = renderer.osharp.kept();
     assert_eq!(kept.len(), 2, "{kept:?}");
+    // Masks at radii of their own deepen the viewport's size in place,
+    // a layer a radius, and leave the scopes' size kept; fewer radii
+    // after read the deeper target and make none.
+    let (w32, h32) = (w as u32, h as u32);
+    let mut own = edit.clone();
+    for (i, r) in [2.0f32, 0.6].into_iter().enumerate() {
+        let mut look = Look::default();
+        look.detail.output_sharpen = 0.5;
+        look.detail.output_sharpen_radius = Some(r);
+        own.adjustments.push(greycard_edit::Adjustment {
+            id: i as u64 + 1,
+            look,
+            mask: Mask {
+                components: vec![Component::default()],
+                ..Default::default()
+            },
+            ..Default::default()
+        });
+    }
+    let with_locals = |edit: &greycard_edit::Edit| View {
+        locals: edit
+            .adjustments
+            .iter()
+            .map(|a| greycard_render::finish::Local::of(a, vec![None], None))
+            .collect(),
+        ..view(edit)
+    };
+    renderer.render(w32, h32, &with_locals(&own));
+    // The margin is the widest blur's: six at radius 2.
+    let deep = renderer.osharp.kept_layers();
+    assert!(deep.contains(&(w32 + 12, h32 + 12, 3)), "{deep:?}");
+    assert!(
+        deep.contains(&(26, 20, 1)),
+        "the scopes' size kept: {deep:?}"
+    );
+    own.adjustments.pop();
+    renderer.render(w32, h32, &with_locals(&own));
+    renderer.render(w32, h32, &view(&edit));
+    let sorted = |mut v: Vec<(u32, u32, u32)>| {
+        v.sort_unstable();
+        v
+    };
+    assert_eq!(
+        sorted(renderer.osharp.kept_layers()),
+        sorted(deep),
+        "the deeper one serves, and nothing is made"
+    );
     edit.output_sharpen.amount = 0.0;
     renderer.render(w as u32, h as u32, &view(&edit));
     assert!(renderer.osharp.kept().is_empty());
@@ -3874,7 +4349,7 @@ impl Rng {
 /// The parts of an edit the parity test draws, a bit each, so a
 /// failing edit can be drawn again with one part left at its
 /// default to see which part the difference is in.
-const PARTS: [&str; 26] = [
+const PARTS: [&str; 27] = [
     "light",
     "light switch",
     "point curves",
@@ -3901,6 +4376,7 @@ const PARTS: [&str; 26] = [
     "profile curve",
     "baseline",
     "local output sharpen",
+    "local output sharpen own",
 ];
 
 fn part(name: &str) -> u32 {
@@ -4444,6 +4920,9 @@ fn random_case(
             structure: rng.slider(0.5, -1.0, 1.0, 0.0),
             sharpen: rng.slider(0.4, -1.0, 1.0, 0.0),
             output_sharpen: rng.slider(0.4, -1.0, 1.0, 0.0),
+            // Drawn last, below.
+            output_sharpen_radius: None,
+            output_sharpen_threshold: None,
         };
         if has("local detail") {
             a.look.detail = detail;
@@ -4523,6 +5002,26 @@ fn random_case(
         baseline = baseline
             .with_headroom(headroom.unwrap_or(0.0))
             .with_dng(dng);
+    }
+    // Each mask's Output sharpen at a Radius and a Threshold of its
+    // own now and then, and past +100 to +200 a fifth of the times it
+    // adds: drawn last, for the reason the rest after the first are.
+    for a in &mut edit.adjustments {
+        use greycard_edit::output_sharpen::{RADIUS_MAX, RADIUS_MIN, SHARE_MAX, THRESHOLD_MAX};
+        let own_radius = rng.chance(0.35);
+        let radius = rng.moved(RADIUS_MIN, RADIUS_MAX);
+        let own_threshold = rng.chance(0.25);
+        let threshold = rng.moved(0.0, THRESHOLD_MAX);
+        let past = rng.chance(0.2);
+        let more = rng.moved(1.0, SHARE_MAX);
+        if has("local output sharpen own") && has("local output sharpen") {
+            let d = &mut a.look.detail;
+            d.output_sharpen_radius = own_radius.then_some(radius);
+            d.output_sharpen_threshold = own_threshold.then_some(threshold);
+            if past && d.output_sharpen > 0.0 {
+                d.output_sharpen = more;
+            }
+        }
     }
     Case {
         edit,
@@ -4939,6 +5438,8 @@ fn a_masks_detail_timed_on_the_gpu() {
                 dehaze: 0.3,
                 sharpen: -0.6,
                 output_sharpen: 0.0,
+                output_sharpen_radius: None,
+                output_sharpen_threshold: None,
             },
             ..Default::default()
         };
@@ -5021,6 +5522,8 @@ fn a_masks_detail_on_both_sides() {
             dehaze: 0.7,
             sharpen: 0.0,
             output_sharpen: 0.0,
+            output_sharpen_radius: None,
+            output_sharpen_threshold: None,
         },
         ..Default::default()
     };
@@ -5146,6 +5649,8 @@ fn a_masks_opacity_on_both_sides() {
         dehaze: 0.3,
         sharpen: 0.0,
         output_sharpen: 0.0,
+        output_sharpen_radius: None,
+        output_sharpen_threshold: None,
     };
     let mut edit = greycard_edit::Edit::default();
     edit.adjustments.push(greycard_edit::Adjustment {
@@ -5835,10 +6340,9 @@ fn the_shader_is_the_cpu_over_random_edits() {
             .collect();
         // The sharpen's blur runs for the picture's or a mask's share.
         let lit: &[bool] =
-            match greycard_render::output_sharpen::Params::finishing(&edit.output_sharpen, &locals)
-            {
+            match greycard_render::output_sharpen::Plan::finishing(&edit.output_sharpen, &locals) {
                 None => &lit,
-                Some((p, _)) => lit_by_reach
+                Some(p) => lit_by_reach
                     .entry(p.reach())
                     .or_insert_with(|| lit_within(p.reach())),
             };
@@ -5910,7 +6414,7 @@ fn the_shader_is_the_cpu_over_random_edits() {
                 .map(|l| (&l.baked, l.weight_sampled(u, v, None) * l.opacity))
                 .collect();
             let finishing =
-                greycard_render::output_sharpen::Params::finishing(&edit.output_sharpen, &locals);
+                greycard_render::output_sharpen::Plan::finishing(&edit.output_sharpen, &locals);
             // Each mask's weight there: the CPU's with the range masks'
             // sample as the finish takes it, and the GPU's read back
             // from the same view drawing that mask alone.
@@ -5974,7 +6478,11 @@ fn the_shader_is_the_cpu_over_random_edits() {
                 on.iter()
                     .map(|(b, w)| (b.output_share, *w))
                     .collect::<Vec<_>>(),
-                finishing.map(|(p, _)| greycard_render::output_sharpen::amount_at(p.amount, &on)),
+                finishing.as_ref().map(|p| {
+                    let mut out = vec![0.0; p.terms()];
+                    p.amounts_at(&on, &mut out);
+                    out
+                }),
             );
         }
         let around: Vec<Vec<f32>> = nudged.iter().map(|n| finish(n, &global)).collect();
@@ -6486,6 +6994,8 @@ fn case_fields(case: &Case, seen: &mut Moved) {
             dehaze,
             sharpen,
             output_sharpen,
+            output_sharpen_radius,
+            output_sharpen_threshold,
         } = detail;
         mark_off!(
             seen,
@@ -6497,7 +7007,9 @@ fn case_fields(case: &Case, seen: &mut Moved) {
             structure,
             dehaze,
             sharpen,
-            output_sharpen
+            output_sharpen,
+            output_sharpen_radius,
+            output_sharpen_threshold
         );
     }
 

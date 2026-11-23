@@ -357,7 +357,7 @@ fn a_tall_frames_raster_goes_up_within_every_devices_textures() {
         opacity: 1.0,
     };
     local.baked.light.exposure = 1.0;
-    let packed = super::locals::locals_gpu(std::slice::from_ref(&local), 8192);
+    let packed = super::locals::locals_gpu(std::slice::from_ref(&local), 8192, None);
     let (aw, ah) = super::locals::Brushes::size(&packed.rasters);
     assert!(aw as usize <= MOST_SIDE && ah as usize <= MOST_SIDE);
     let Some((device, queue)) = device("a tall frame's raster") else {

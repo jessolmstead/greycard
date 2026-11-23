@@ -451,8 +451,8 @@ impl Edit {
 
     /// Whether the output sharpen acts, whose radius
     /// [`crate::key::OUTPUT_SHARPEN`] versions: the picture's own, or a
-    /// mask's share of it, which sharpens at the picture's radius with
-    /// the picture's off.
+    /// mask's positive share of it, which sharpens with the picture's
+    /// off, at the mask's own radius or the picture's.
     pub fn output_sharpens(&self) -> bool {
         self.output_sharpen.acting().is_some()
             || self.adjustments.iter().any(|a| {

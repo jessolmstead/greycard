@@ -12,8 +12,14 @@
 //! canvas in the luminance (`OSHARP_PAST`), and the taps stop at the
 //! last texel it drew as picture, so no edge reckoned apart can
 //! disagree with it where the edge falls on a texel's center.
+//!
+//! A mask's own Radius is a blur of its own: the blur's target holds a
+//! layer a radius ([`MOST_BLURS`] at most), each blurred across by a
+//! pass of its own, and the last draw blurs each down and sums the
+//! terms as `Plan` has them.
 
 use super::*;
+use greycard_render::output_sharpen::{MOST_OWN, Plan, half_width};
 
 /// The luminance and its blur: one channel of full floats, so the blur
 /// is the CPU's to its rounding. Renderable on every WebGPU device; not
@@ -32,48 +38,95 @@ struct AcrossParams {
     k: [f32; 4],
 }
 
-/// The sharpen as one draw of the viewport takes it: what the shader's
-/// `osharp` and `osharp_taps` hold.
+/// The blurs a draw holds at most, a layer of the blur's target each:
+/// the picture's radius and the masks' own (`Plan`'s, [`MOST_OWN`]
+/// beyond it).
+pub(super) const MOST_BLURS: usize = 1 + MOST_OWN;
+
+/// One blur of a draw: its standard deviation in target pixels and
+/// taps a side.
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub(super) struct Taps {
-    pub amount: f32,
-    /// The blur's standard deviation in target pixels.
+pub(super) struct Blur {
     pub sigma: f32,
-    pub threshold: f32,
-    /// The taps' spacing in target pixels and taps a side.
-    pub step: f32,
     pub n: f32,
+}
+
+/// The sharpen as one draw of the viewport takes it: what the shader's
+/// `osharp`, `osharp_taps`, and the blurs' and terms' lanes hold.
+#[derive(Debug, Clone, PartialEq)]
+pub(super) struct Taps {
+    /// The picture's amount (term 0's before the masks' shares).
+    pub amount: f32,
+    /// The taps' spacing in target pixels, the same for every blur.
+    pub step: f32,
+    /// The blurs, a layer each, by radius as `Plan::blurs` has them.
+    pub blurs: Vec<Blur>,
+    /// Each term's blur (none for the picture's where it does not act)
+    /// and threshold: the picture's first, then the masks' own.
+    pub terms: Vec<(Option<usize>, f32)>,
     /// The target pixels drawn past each side of the target for the
-    /// blur to read: its reach.
+    /// blurs to read: the widest's reach.
     pub margin: u32,
+    /// The plan, for the locals' terms (`locals_gpu`).
+    pub plan: Plan,
 }
 
 impl Taps {
     /// The sharpen of `v`, or none when it does nothing: the picture's
-    /// own, or its blur for a mask's share of it with the picture's off
-    /// (`Params::finishing`), the amount then none. The radius is
-    /// in the pixels of the picture made, as an export's is in its own:
-    /// under 1:1 the window's, which is what an export the size the
-    /// window shows would be sharpened at; past 1:1 the full-size
-    /// picture's, `zoom` target pixels each, the full-size export seen
-    /// closer. Above 1:1 the taps are a picture's pixel apart and as
-    /// many as the export takes; below it a target pixel apart.
+    /// own, and its masks' shares of it at its radius and at their own
+    /// (`Plan::finishing`). A radius is in the pixels of the picture
+    /// made, as an export's is in its own: under 1:1 the window's, which
+    /// is what an export the size the window shows would be sharpened
+    /// at; past 1:1 the full-size picture's, `zoom` target pixels each,
+    /// the full-size export seen closer. Above 1:1 the taps are a
+    /// picture's pixel apart and as many as the export takes; below it
+    /// a target pixel apart.
     pub(super) fn of(v: &View) -> Option<Self> {
-        let (p, _) =
-            greycard_render::output_sharpen::Params::finishing(&v.output_sharpen, &v.locals)?;
+        let plan = Plan::finishing(&v.output_sharpen, &v.locals)?;
         let step = v.zoom.max(1.0);
-        let sigma = p.sigma * step;
-        let n = ((3.0 * sigma / step).ceil() as usize)
-            .clamp(1, greycard_render::output_sharpen::MOST_TAPS);
-        let margin = (n as f32 * step).ceil() as u32;
+        let (radii, reads) = plan.blurs();
+        let blurs: Vec<Blur> = radii
+            .iter()
+            .map(|&r| Blur {
+                sigma: r * step,
+                n: half_width(r) as f32,
+            })
+            .collect();
+        let margin = blurs
+            .iter()
+            .map(|b| (b.n * step).ceil() as u32)
+            .max()
+            .unwrap_or(1);
         Some(Taps {
-            amount: p.amount,
-            sigma,
-            threshold: p.threshold,
+            amount: plan.picture.amount,
             step,
-            n: n as f32,
+            blurs,
+            terms: reads.into_iter().zip(plan.thresholds()).collect(),
             margin,
+            plan,
         })
+    }
+
+    /// The blurs' lanes as the shader reads them: each layer's standard
+    /// deviation, and its taps a side.
+    pub(super) fn blur_lanes(&self) -> ([f32; MOST_BLURS], [f32; MOST_BLURS]) {
+        let (mut sigma, mut n) = ([0.0; MOST_BLURS], [0.0; MOST_BLURS]);
+        for (i, b) in self.blurs.iter().enumerate() {
+            sigma[i] = b.sigma;
+            n[i] = b.n;
+        }
+        (sigma, n)
+    }
+
+    /// The terms' lanes: each term's threshold, and the layer it reads,
+    /// -1 for none.
+    pub(super) fn term_lanes(&self) -> ([f32; MOST_BLURS], [f32; MOST_BLURS]) {
+        let (mut threshold, mut reads) = ([0.0; MOST_BLURS], [-1.0; MOST_BLURS]);
+        for (i, (r, t)) in self.terms.iter().enumerate() {
+            threshold[i] = *t;
+            reads[i] = r.map_or(-1.0, |r| r as f32);
+        }
+        (threshold, reads)
     }
 }
 
@@ -178,17 +231,23 @@ impl OutputSharpen {
             across_pipeline,
             across_layout,
             targets: std::sync::Mutex::new(Vec::new()),
-            none: Self::texture(device, "output sharpen none", 1, 1),
+            none: Self::texture(device, "output sharpen none", 1, 1, 1),
         }
     }
 
-    fn texture(device: &gpu::Device, label: &str, width: u32, height: u32) -> gpu::Texture {
+    fn texture(
+        device: &gpu::Device,
+        label: &str,
+        width: u32,
+        height: u32,
+        layers: u32,
+    ) -> gpu::Texture {
         device.create_texture(&gpu::TextureDescriptor {
             label: Some(label),
             size: gpu::Extent3d {
                 width,
                 height,
-                depth_or_array_layers: 1,
+                depth_or_array_layers: layers,
             },
             mip_level_count: 1,
             sample_count: 1,
@@ -199,24 +258,41 @@ impl OutputSharpen {
         })
     }
 
-    /// The luminance's target and its blur's, `width` by `height`:
-    /// one kept of that size, or made and kept, the least lately used
-    /// past [`KEPT`] let go of.
+    /// The blurs' target as the shader binds it: every layer, an array
+    /// however many it has.
+    pub(super) fn layers_view(across: &gpu::Texture) -> gpu::TextureView {
+        across.create_view(&gpu::TextureViewDescriptor {
+            dimension: Some(gpu::TextureViewDimension::D2Array),
+            ..Default::default()
+        })
+    }
+
+    /// The luminance's target and its blurs', `width` by `height`, the
+    /// blurs' at least `layers` deep: one kept of that size, or made and
+    /// kept, the least lately used past [`KEPT`] let go of. A size is
+    /// kept once: one with layers enough serves fewer (a draw reads only
+    /// its own), and one made deeper takes the shallower one's place, so
+    /// a mask's own radius never pushes another size's targets out (the
+    /// scopes').
     pub(super) fn targets(
         &self,
         device: &gpu::Device,
         width: u32,
         height: u32,
+        layers: u32,
     ) -> (gpu::Texture, gpu::Texture) {
         let mut held = self.targets.lock().unwrap_or_else(|e| e.into_inner());
-        let pair = match held
+        let sized = held
             .iter()
-            .position(|(l, _)| l.width() == width && l.height() == height)
-        {
-            Some(i) => held.remove(i),
-            None => (
-                Self::texture(device, "output sharpen luminance", width, height),
-                Self::texture(device, "output sharpen across", width, height),
+            .position(|(l, _)| l.width() == width && l.height() == height);
+        let pair = match sized.map(|i| held.remove(i)) {
+            Some(pair) if pair.1.depth_or_array_layers() >= layers => pair,
+            shallower => (
+                shallower.map_or_else(
+                    || Self::texture(device, "output sharpen luminance", width, height, 1),
+                    |(lum, _)| lum,
+                ),
+                Self::texture(device, "output sharpen across", width, height, layers),
             ),
         };
         held.insert(0, pair.clone());
@@ -232,18 +308,27 @@ impl OutputSharpen {
             .clear();
     }
 
-    /// How many sizes of targets are kept, for the tests.
+    /// The sizes of targets kept, and their blurs' layers, for the
+    /// tests.
     #[cfg(test)]
     pub(super) fn kept(&self) -> Vec<(u32, u32)> {
+        self.kept_layers()
+            .into_iter()
+            .map(|(w, h, _)| (w, h))
+            .collect()
+    }
+
+    #[cfg(test)]
+    pub(super) fn kept_layers(&self) -> Vec<(u32, u32, u32)> {
         self.targets
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .iter()
-            .map(|(l, _)| (l.width(), l.height()))
+            .map(|(l, a)| (l.width(), l.height(), a.depth_or_array_layers()))
             .collect()
     }
 
-    /// The blur across of `lum` into `across`.
+    /// The blurs across of `lum` into `across`, a layer each.
     pub(super) fn across(
         &self,
         device: &gpu::Device,
@@ -252,48 +337,55 @@ impl OutputSharpen {
         (lum, across): (&gpu::Texture, &gpu::Texture),
         taps: &Taps,
     ) {
-        let params = AcrossParams {
-            k: [taps.sigma, taps.step, taps.n, taps.margin as f32],
-        };
-        let buffer = device.create_buffer(&gpu::BufferDescriptor {
-            label: Some("output sharpen across"),
-            size: std::mem::size_of::<AcrossParams>() as u64,
-            usage: gpu::BufferUsages::UNIFORM | gpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-        queue.write_buffer(&buffer, 0, bytemuck::bytes_of(&params));
         let lum_view = lum.create_view(&Default::default());
-        let bind_group = device.create_bind_group(&gpu::BindGroupDescriptor {
-            label: Some("output sharpen across"),
-            layout: &self.across_layout,
-            entries: &[
-                gpu::BindGroupEntry {
-                    binding: 0,
-                    resource: buffer.as_entire_binding(),
-                },
-                gpu::BindGroupEntry {
-                    binding: 1,
-                    resource: gpu::BindingResource::TextureView(&lum_view),
-                },
-            ],
-        });
-        let view = across.create_view(&Default::default());
-        let mut pass = encoder.begin_render_pass(&gpu::RenderPassDescriptor {
-            label: Some("output sharpen across"),
-            color_attachments: &[Some(gpu::RenderPassColorAttachment {
-                view: &view,
-                resolve_target: None,
-                ops: gpu::Operations {
-                    load: gpu::LoadOp::Clear(gpu::Color::BLACK),
-                    store: gpu::StoreOp::Store,
-                },
-                depth_slice: None,
-            })],
-            ..Default::default()
-        });
-        pass.set_pipeline(&self.across_pipeline);
-        pass.set_bind_group(0, &bind_group, &[]);
-        pass.draw(0..3, 0..1);
+        for (layer, blur) in taps.blurs.iter().enumerate() {
+            let params = AcrossParams {
+                k: [blur.sigma, taps.step, blur.n, taps.margin as f32],
+            };
+            let buffer = device.create_buffer(&gpu::BufferDescriptor {
+                label: Some("output sharpen across"),
+                size: std::mem::size_of::<AcrossParams>() as u64,
+                usage: gpu::BufferUsages::UNIFORM | gpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            });
+            queue.write_buffer(&buffer, 0, bytemuck::bytes_of(&params));
+            let bind_group = device.create_bind_group(&gpu::BindGroupDescriptor {
+                label: Some("output sharpen across"),
+                layout: &self.across_layout,
+                entries: &[
+                    gpu::BindGroupEntry {
+                        binding: 0,
+                        resource: buffer.as_entire_binding(),
+                    },
+                    gpu::BindGroupEntry {
+                        binding: 1,
+                        resource: gpu::BindingResource::TextureView(&lum_view),
+                    },
+                ],
+            });
+            let view = across.create_view(&gpu::TextureViewDescriptor {
+                dimension: Some(gpu::TextureViewDimension::D2),
+                base_array_layer: layer as u32,
+                array_layer_count: Some(1),
+                ..Default::default()
+            });
+            let mut pass = encoder.begin_render_pass(&gpu::RenderPassDescriptor {
+                label: Some("output sharpen across"),
+                color_attachments: &[Some(gpu::RenderPassColorAttachment {
+                    view: &view,
+                    resolve_target: None,
+                    ops: gpu::Operations {
+                        load: gpu::LoadOp::Clear(gpu::Color::BLACK),
+                        store: gpu::StoreOp::Store,
+                    },
+                    depth_slice: None,
+                })],
+                ..Default::default()
+            });
+            pass.set_pipeline(&self.across_pipeline);
+            pass.set_bind_group(0, &bind_group, &[]);
+            pass.draw(0..3, 0..1);
+        }
     }
 }
 
@@ -326,18 +418,75 @@ mod tests {
         // margin of six, the radius whole.
         for zoom in [0.5, 0.25] {
             let fit = Taps::of(&view(zoom, 1.0, 2.0)).unwrap();
-            assert_eq!((fit.sigma, fit.step, fit.n, fit.margin), (2.0, 1.0, 6.0, 6));
+            assert_eq!(
+                (fit.blurs[0].sigma, fit.step, fit.blurs[0].n, fit.margin),
+                (2.0, 1.0, 6.0, 6)
+            );
         }
         // At 1:1, the full-size export's.
         let one = Taps::of(&view(1.0, 1.0, 2.0)).unwrap();
-        assert_eq!((one.sigma, one.step, one.n, one.margin), (2.0, 1.0, 6.0, 6));
+        assert_eq!(
+            (one.blurs[0].sigma, one.step, one.blurs[0].n, one.margin),
+            (2.0, 1.0, 6.0, 6)
+        );
         // At four: six taps four target pixels apart, a margin of 24.
         let close = Taps::of(&view(4.0, 1.0, 2.0)).unwrap();
         assert_eq!(
-            (close.sigma, close.step, close.n, close.margin),
+            (
+                close.blurs[0].sigma,
+                close.step,
+                close.blurs[0].n,
+                close.margin
+            ),
             (8.0, 4.0, 6.0, 24)
         );
         let small = Taps::of(&view(0.25, 1.0, 0.5)).unwrap();
         assert_eq!(small.margin, 2);
+    }
+
+    /// A mask's own Radius is a layer of its own, and the margin the
+    /// widest blur's: the picture's radius and two own ones at 2:1, one
+    /// of them shared by two thresholds, are three layers and four
+    /// terms; with the picture's off and one own radius, one layer and
+    /// the picture's term reading none.
+    #[test]
+    fn a_masks_own_radius_is_a_layer_of_its_own() {
+        let local = |share: f32, radius: Option<f32>, threshold: Option<f32>| {
+            let mut a = greycard_edit::Adjustment::default();
+            a.mask.components.push(Default::default());
+            a.look.detail.output_sharpen = share;
+            a.look.detail.output_sharpen_radius = radius;
+            a.look.detail.output_sharpen_threshold = threshold;
+            Local::of(&a, vec![None], None)
+        };
+        let mut v = view(2.0, 1.0, 1.0);
+        v.locals = vec![
+            local(0.5, Some(3.0), None),
+            local(0.5, Some(0.5), Some(0.0)),
+            local(0.5, Some(3.0), Some(0.05)),
+        ];
+        let t = Taps::of(&v).unwrap();
+        assert_eq!(
+            t.blurs,
+            vec![
+                Blur { sigma: 2.0, n: 3.0 },
+                Blur { sigma: 1.0, n: 2.0 },
+                Blur { sigma: 6.0, n: 9.0 },
+            ]
+        );
+        assert_eq!(t.margin, 18);
+        assert_eq!(
+            t.term_lanes(),
+            ([0.01, 0.0, 0.01, 0.05], [0.0, 1.0, 2.0, 2.0])
+        );
+        v.output_sharpen.amount = 0.0;
+        v.locals = vec![local(1.0, Some(0.5), None)];
+        let t = Taps::of(&v).unwrap();
+        assert_eq!(t.blurs, vec![Blur { sigma: 1.0, n: 2.0 }]);
+        assert_eq!(
+            t.term_lanes(),
+            ([0.01, 0.01, 0.0, 0.0], [-1.0, 0.0, -1.0, -1.0])
+        );
+        assert_eq!(t.margin, 4);
     }
 }

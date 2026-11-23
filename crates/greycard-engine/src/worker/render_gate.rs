@@ -232,6 +232,11 @@ const CASES: &[Case] = &[
     full("mask-refine"),
     full("mask-detail"),
     smaller("mask-detail-smaller", Sharpen::Standard),
+    // A mask's Output sharpen at a Radius and a Threshold of its own:
+    // +200 at radius 3, a radius alone, and a take whose own radius
+    // does nothing; smaller, the sheet's Sharpen giving way to it.
+    full("mask-output-sharpen-own"),
+    smaller("mask-output-sharpen-own-smaller", Sharpen::Standard),
     full("retouch"),
     smaller("smaller", Sharpen::Off),
     smaller("smaller-sheet-sharpen", Sharpen::Standard),

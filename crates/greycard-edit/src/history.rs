@@ -310,7 +310,9 @@ fn detail(x: &crate::Detail, y: &crate::Detail) -> String {
         x.dehaze != y.dehaze,
         x.structure != y.structure,
         x.sharpen != y.sharpen,
-        x.output_sharpen != y.output_sharpen,
+        x.output_sharpen != y.output_sharpen
+            || x.output_sharpen_radius != y.output_sharpen_radius
+            || x.output_sharpen_threshold != y.output_sharpen_threshold,
     ];
     if moved.iter().filter(|&&m| m).count() != 1 {
         return "Detail".to_string();
@@ -325,8 +327,11 @@ fn detail(x: &crate::Detail, y: &crate::Detail) -> String {
         format!("{} {:+.0}", crate::STRUCTURE, y.structure * 100.0)
     } else if moved[5] {
         format!("Sharpen {:+.0}", y.sharpen * 100.0)
-    } else if moved[6] {
+    } else if moved[6] && x.output_sharpen != y.output_sharpen {
         format!("Output sharpen {:+.0}", y.output_sharpen * 100.0)
+    } else if moved[6] {
+        // Its Radius or Threshold, as the picture's own row says them.
+        "Output sharpen".to_string()
     } else {
         format!("Dehaze {:+.0}", y.dehaze * 100.0)
     }
@@ -1088,6 +1093,15 @@ mod tests {
         let mut crisp = soft.clone();
         crisp.adjustments[0].look.detail.output_sharpen = 0.4;
         assert_eq!(describe(&soft, &crisp, &[]), "Sky: Output sharpen +40");
+        let mut wide_radius = crisp.clone();
+        wide_radius.adjustments[0].look.detail.output_sharpen_radius = Some(3.0);
+        assert_eq!(describe(&crisp, &wide_radius, &[]), "Sky: Output sharpen");
+        let mut kneed = wide_radius.clone();
+        kneed.adjustments[0].look.detail.output_sharpen_threshold = Some(0.0);
+        assert_eq!(describe(&wide_radius, &kneed, &[]), "Sky: Output sharpen");
+        let mut more = kneed.clone();
+        more.adjustments[0].look.detail.output_sharpen = 1.8;
+        assert_eq!(describe(&kneed, &more, &[]), "Sky: Output sharpen +180");
         let mut hazed = clear.clone();
         hazed.adjustments[0].look.detail.dehaze = 0.25;
         assert_eq!(describe(&clear, &hazed, &[]), "Sky: Dehaze +25");

@@ -2100,6 +2100,12 @@ export component App inherits Window {
     in-out property <float> local-structure: 0;
     in-out property <float> local-sharpen: 0;
     in-out property <float> local-output-sharpen: 0;
+    // Its own Radius and Threshold, and whether each is its own or the
+    // picture's (`Detail::output_sharpen_radius`).
+    in-out property <float> local-output-sharpen-radius: 1;
+    in-out property <bool> local-output-sharpen-radius-own: false;
+    in-out property <float> local-output-sharpen-threshold: 0.01;
+    in-out property <bool> local-output-sharpen-threshold-own: false;
     in-out property <float> local-dehaze: 0;
     in-out property <bool> sharpen: true;
     // The lens: what the database found for the file, whether it
@@ -4926,6 +4932,12 @@ export component App inherits Window {
                                     local: true;
                                     detail-sharpen <=> root.local-sharpen;
                                     detail-output-sharpen <=> root.local-output-sharpen;
+                                    picture-output-radius: root.output-sharpen-radius;
+                                    picture-output-threshold: root.output-sharpen-threshold;
+                                    detail-output-radius <=> root.local-output-sharpen-radius;
+                                    detail-output-radius-own <=> root.local-output-sharpen-radius-own;
+                                    detail-output-threshold <=> root.local-output-sharpen-threshold;
+                                    detail-output-threshold-own <=> root.local-output-sharpen-threshold-own;
                                     develop-changed => { root.view-changed(); }
                                 }
                                 if section == "noise" && root.shown-tab == "Develop": NoiseSection {

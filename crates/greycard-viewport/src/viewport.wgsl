@@ -205,17 +205,26 @@ struct Params {
     // where it acts.
     tone: vec4<f32>,
     // The output sharpen (`output_sharpen.rs`): the picture's amount
-    // (none while its section is off and a mask's share runs it), the
-    // blur's standard deviation in target pixels (the radius, times the
-    // zoom past 1:1), its threshold, and in w the draw's part in it: 0 none, 1 the
-    // first pass, which writes the encoded luminance and stops, 2 the
-    // last, which reads its blur across (`osharp_across`) and sharpens.
+    // (none while its section is off and a mask's share runs it) in x,
+    // and in w the draw's part in it: 0 none, 1 the first pass, which
+    // writes the encoded luminance and stops, 2 the last, which reads
+    // its blurs across (`osharp_across`) and sharpens.
     osharp: vec4<f32>,
-    // The blur's taps: their spacing in target pixels (a source pixel
-    // apart above 1:1, one target pixel below) in x, taps a side in y,
-    // and in z the margin the luminance is drawn with past each side
-    // of the target.
+    // The blurs' taps: their spacing in target pixels (a source pixel
+    // apart above 1:1, one target pixel below) in x, the blurs' count
+    // in y, in z the margin the luminance is drawn with past each side
+    // of the target (the widest blur's reach), and the terms' count in
+    // w (`output_sharpen::Plan`).
     osharp_taps: vec4<f32>,
+    // Each blur's standard deviation in target pixels (the radius,
+    // times the zoom past 1:1) and its taps a side, a layer of
+    // `osharp_across` a lane.
+    osharp_sigma: vec4<f32>,
+    osharp_n: vec4<f32>,
+    // Each term's threshold and the layer it reads, -1 for none: term
+    // 0 the picture's, then the masks' own settings.
+    osharp_threshold: vec4<f32>,
+    osharp_reads: vec4<f32>,
     // The camera profile's tone curve when it renders (curve 3): the
     // gain its offset puts on before it in x, and the working space to
     // linear ProPhoto and back, rows (`profile_tone.rs`).
@@ -423,9 +432,9 @@ const LUMA: vec3<f32> = vec3<f32>(0.2627, 0.6780, 0.0593);
 // (`DetailPlanes::sample`). A texel of nothing when there is none.
 @group(0) @binding(15) var range_src: texture_2d<f32>;
 // The output sharpen's luminance blurred across, at the target's size
-// and a margin past each side, from the first pass (`osharp.w`). A
-// texel of nothing otherwise.
-@group(0) @binding(16) var osharp_across: texture_2d<f32>;
+// and a margin past each side, from the first pass (`osharp.w`): a
+// layer a blur's radius. A texel of nothing otherwise.
+@group(0) @binding(16) var osharp_across: texture_2d_array<f32>;
 // The camera profile's tone curve, as `ToneCurve::table`: 4096 steps
 // over 0..1, a sample at each end.
 @group(0) @binding(17) var<storage, read> profile_curve: array<f32>;
@@ -617,11 +626,11 @@ fn fs_main(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
     // `detail::amounts` sums them.
     var detail_k = vec4<f32>(0.0);
     var detail_s = 0.0;
-    // The output sharpen's amount here, as `output_sharpen::amount_at`
-    // makes it: the masks' takes scale the picture's, their additions
-    // sum on top.
+    // The output sharpen's amounts here, as `Plan::amounts_at` makes
+    // them: the masks' takes scale the picture's, their additions sum
+    // on top, each into its term (the local's `tone.w`).
     var osharp_scale = 1.0;
-    var osharp_add = 0.0;
+    var osharp_add = array<f32, 4>(0.0, 0.0, 0.0, 0.0);
     for (var k = 0u; k < count; k = k + 1u) {
         let l = locals[k];
         let m = mask_at(l, uv, sample);
@@ -636,7 +645,8 @@ fn fs_main(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
         if (osharp_share < 0.0) {
             osharp_scale = osharp_scale * max(1.0 + osharp_share, 0.0);
         } else {
-            osharp_add = osharp_add + osharp_share;
+            let term = clamp(i32(l.tone.w + 0.5), 0, 3);
+            osharp_add[term] = osharp_add[term] + osharp_share;
         }
         if (l.white0.w > 0.5) {
             wm0 = wm0 + w * (l.white0.xyz - p.w0.xyz);
@@ -833,10 +843,51 @@ fn fs_main(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
         if (p.osharp.w < 1.5) {
             return vec4<f32>(l, l, l, 1.0);
         }
-        let blurred = osharp_down(here);
-        let amount = clamp(p.osharp.x * osharp_scale + osharp_add, 0.0, OSHARP_AMOUNT_MAX);
-        if (!osharp_past(blurred) && amount > 0.0) {
-            c = osharp_apply(c, l, blurred, amount);
+        // Each blur down, the picture's edge found once for all of
+        // them (every layer marks the canvas alike); then each term's
+        // amount and delta, summed as `sharpen_plan_rows` sums them.
+        let pt = here + vec2<f32>(p.osharp_taps.z);
+        let centre = vec2<i32>(floor(pt));
+        if (!osharp_past(osharp_load(centre, 0))) {
+            let reach = i32(p.osharp_taps.z + 0.5);
+            let lo = pt.y - osharp_edge(centre, vec2<i32>(0, -1), reach);
+            let hi = pt.y + osharp_edge(centre, vec2<i32>(0, 1), reach);
+            var blurred = array<f32, 4>(0.0, 0.0, 0.0, 0.0);
+            let blurs = i32(p.osharp_taps.y + 0.5);
+            for (var b = 0; b < blurs; b = b + 1) {
+                blurred[b] = osharp_down(pt, lo, hi, b);
+            }
+            // Each term's amount, as `Plan::amounts_at` makes them: the
+            // picture's scaled by the takes, each held at the top, and
+            // with terms of the masks' own their sum held there too,
+            // every term scaled alike.
+            let terms = i32(p.osharp_taps.w + 0.5);
+            var amounts = array<f32, 4>(0.0, 0.0, 0.0, 0.0);
+            amounts[0] = clamp(p.osharp.x * osharp_scale + osharp_add[0], 0.0, OSHARP_AMOUNT_MAX);
+            var sum = amounts[0];
+            for (var t = 1; t < terms; t = t + 1) {
+                amounts[t] = clamp(osharp_add[t], 0.0, OSHARP_AMOUNT_MAX);
+                sum = sum + amounts[t];
+            }
+            if (terms > 1 && sum > OSHARP_AMOUNT_MAX) {
+                let held = OSHARP_AMOUNT_MAX / sum;
+                for (var t = 0; t < terms; t = t + 1) {
+                    amounts[t] = amounts[t] * held;
+                }
+            }
+            var amount = 0.0;
+            var delta = 0.0;
+            for (var t = 0; t < terms; t = t + 1) {
+                let a = amounts[t];
+                let reads = i32(p.osharp_reads[t] + 0.5);
+                if (a > 0.0 && p.osharp_reads[t] > -0.5) {
+                    amount = amount + a;
+                    delta = delta + a * osharp_soft(l - blurred[reads], p.osharp_threshold[t]);
+                }
+            }
+            if (amount > 0.0) {
+                c = osharp_apply(c, l, delta, amount);
+            }
         }
     }
     // The proof's gamut mark is looked up at the working-space color,
@@ -1799,10 +1850,11 @@ fn sample_cubic(tex: texture_2d<f32>, s: vec2<f32>) -> vec4<f32> {
     return out;
 }
 
-// The output sharpen's weight of a tap `d` target pixels out, as
-// `output_sharpen::kernel` has it before it is summed to one.
-fn osharp_weight(d: f32) -> f32 {
-    let s = max(p.osharp.y, 1e-3);
+// The output sharpen's weight of a tap `d` target pixels out in a blur
+// of standard deviation `sigma`, as `output_sharpen::kernel` has it
+// before it is summed to one.
+fn osharp_weight(d: f32, sigma: f32) -> f32 {
+    let s = max(sigma, 1e-3);
     return exp(-(d * d) / (2.0 * s * s));
 }
 
@@ -1821,64 +1873,59 @@ fn osharp_past(v: f32) -> bool {
     return v < -0.5;
 }
 
-fn osharp_load(i: vec2<i32>) -> f32 {
+fn osharp_load(i: vec2<i32>, layer: i32) -> f32 {
     let limit = vec2<i32>(textureDimensions(osharp_across)) - vec2<i32>(1, 1);
-    return textureLoad(osharp_across, clamp(i, vec2<i32>(0), limit), 0).r;
+    return textureLoad(osharp_across, clamp(i, vec2<i32>(0), limit), layer, 0).r;
 }
 
-// `osharp_across` at a position in pixels, bilinear between the texel
-// centers about it, its edges clamped, read by load: as `tap` in
-// `osharp.wgsl`.
-fn osharp_tap(at: vec2<f32>) -> f32 {
+// `osharp_across`'s `layer` at a position in pixels, bilinear between
+// the texel centers about it, its edges clamped, read by load: as
+// `tap` in `osharp.wgsl`.
+fn osharp_tap(at: vec2<f32>, layer: i32) -> f32 {
     let u = at - vec2<f32>(0.5);
     let base = floor(u);
     let f = u - base;
     let i = vec2<i32>(base);
     var acc = 0.0;
-    if (f.x < 1.0 && f.y < 1.0) { acc = acc + (1.0 - f.x) * (1.0 - f.y) * osharp_load(i); }
-    if (f.x > 0.0 && f.y < 1.0) { acc = acc + f.x * (1.0 - f.y) * osharp_load(i + vec2<i32>(1, 0)); }
-    if (f.x < 1.0 && f.y > 0.0) { acc = acc + (1.0 - f.x) * f.y * osharp_load(i + vec2<i32>(0, 1)); }
-    if (f.x > 0.0 && f.y > 0.0) { acc = acc + f.x * f.y * osharp_load(i + vec2<i32>(1, 1)); }
+    if (f.x < 1.0 && f.y < 1.0) { acc = acc + (1.0 - f.x) * (1.0 - f.y) * osharp_load(i, layer); }
+    if (f.x > 0.0 && f.y < 1.0) { acc = acc + f.x * (1.0 - f.y) * osharp_load(i + vec2<i32>(1, 0), layer); }
+    if (f.x < 1.0 && f.y > 0.0) { acc = acc + (1.0 - f.x) * f.y * osharp_load(i + vec2<i32>(0, 1), layer); }
+    if (f.x > 0.0 && f.y > 0.0) { acc = acc + f.x * f.y * osharp_load(i + vec2<i32>(1, 1), layer); }
     return acc;
 }
 
 // Texels of picture from `c` toward `dir` before the first past the
-// edge, `reach` at most: as `edge` in `osharp.wgsl`.
+// edge, `reach` at most: as `edge` in `osharp.wgsl`. Every layer marks
+// the canvas alike, so the first is read.
 fn osharp_edge(c: vec2<i32>, dir: vec2<i32>, reach: i32) -> f32 {
-    if (!osharp_past(osharp_load(c + dir * reach))) {
+    if (!osharp_past(osharp_load(c + dir * reach, 0))) {
         return f32(reach);
     }
     var k = 0;
-    while (k < reach && !osharp_past(osharp_load(c + dir * (k + 1)))) {
+    while (k < reach && !osharp_past(osharp_load(c + dir * (k + 1), 0))) {
         k = k + 1;
     }
     return f32(k);
 }
 
-// The first pass's blur across, blurred down about target pixel `pt`:
-// the taps held at the last texel the first pass drew as picture, edge
+// The first pass's blur across in `layer`, blurred down about `pt` (a
+// point of the margined target) by that layer's blur: the taps held to
+// `lo` and `hi`, the last texels the first pass drew as picture, edge
 // pixels standing in for what is past it, as `output_sharpen::blur`
-// clamps. `OSHARP_PAST` where the pixel itself is past the edge.
-fn osharp_down(target_pt: vec2<f32>) -> f32 {
-    let pt = target_pt + vec2<f32>(p.osharp_taps.z);
-    let c = vec2<i32>(floor(pt));
-    if (osharp_past(osharp_load(c))) {
-        return OSHARP_PAST;
-    }
-    let n = i32(p.osharp_taps.y + 0.5);
+// clamps.
+fn osharp_down(pt: vec2<f32>, lo: f32, hi: f32, layer: i32) -> f32 {
+    let n = i32(p.osharp_n[layer] + 0.5);
+    let sigma = p.osharp_sigma[layer];
     let step = p.osharp_taps.x;
-    let reach = i32(p.osharp_taps.z + 0.5);
-    let lo = pt.y - osharp_edge(c, vec2<i32>(0, -1), reach);
-    let hi = pt.y + osharp_edge(c, vec2<i32>(0, 1), reach);
     var acc = 0.0;
     var sum = 0.0;
     for (var i = -n; i <= n; i = i + 1) {
         let d = f32(i) * step;
-        let v = osharp_tap(vec2<f32>(pt.x, clamp(pt.y + d, lo, hi)));
+        let v = osharp_tap(vec2<f32>(pt.x, clamp(pt.y + d, lo, hi)), layer);
         // A tap that is not a number gives nothing, as
         // `output_sharpen::blur` leaves it out.
         if (abs(v) <= 1e30) {
-            let w = osharp_weight(d);
+            let w = osharp_weight(d, sigma);
             acc = acc + w * v;
             sum = sum + w;
         }
@@ -1890,8 +1937,9 @@ fn osharp_down(target_pt: vec2<f32>) -> f32 {
 // `output_sharpen::BLACK`.
 const OSHARP_BLACK: f32 = 1e-6;
 
-// The amount's top, which the picture's and the masks' shares summed
-// are held to, as `output_sharpen::AMOUNT_MAX`.
+// The top of a term's amount, which the picture's and the masks'
+// shares summed into it are held to, and the terms' sum too, as
+// `output_sharpen::AMOUNT_MAX`.
 const OSHARP_AMOUNT_MAX: f32 = 2.0;
 
 // The amount over which the channels under zero are held at zero
@@ -1899,15 +1947,24 @@ const OSHARP_AMOUNT_MAX: f32 = 2.0;
 // `output_sharpen::HOLD_RAMP` (`output_sharpen::held`).
 const OSHARP_HOLD_RAMP: f32 = 0.01;
 
-// `c` sharpened against its luminance's blur at `amount` (over none;
-// at none the pixel is not sharpened and stays as it came), as
-// `output_sharpen::apply`: the soft knee on the difference, the
-// encoded luminance moved by it, and the linear color scaled by what
-// that does to the linear luminance; black stays black, a channel
-// under zero is scaled as any other for the gamut op (held at zero
-// under AgX's rail, as `output_sharpen::Params::hold`), and a
-// brightening stops where the largest channel reaches white.
-fn osharp_apply(c_in: vec3<f32>, l: f32, blurred: f32, amount: f32) -> vec3<f32> {
+// The share of a difference `d` from the blur that is sharpened under
+// threshold `t`: the soft knee, as `output_sharpen::soft`.
+fn osharp_soft(d: f32, t: f32) -> f32 {
+    if (t > 0.0 && d != 0.0) {
+        return d * d * d / (d * d + t * t);
+    }
+    return d;
+}
+
+// `c` with encoded luminance `l` moved by `delta`, the terms' deltas
+// summed, at `amount`, their amounts summed (over none; at none the
+// pixel is not sharpened and stays as it came), as
+// `output_sharpen::apply`: the linear color scaled by what the move does
+// to the linear luminance; black stays black, a channel under zero is
+// scaled as any other for the gamut op (held at zero under AgX's rail,
+// as `output_sharpen::Params::hold`, by the amount), and a brightening
+// stops where the largest channel reaches white.
+fn osharp_apply(c_in: vec3<f32>, l: f32, delta: f32, amount: f32) -> vec3<f32> {
     // Under AgX's rail every pixel held at zero from below, moved or
     // not: whole from the ramp's top, by the amount's share of it under
     // that.
@@ -1919,13 +1976,6 @@ fn osharp_apply(c_in: vec3<f32>, l: f32, blurred: f32, amount: f32) -> vec3<f32>
             c = select(c_in, c_in - f * c_in, c_in < vec3<f32>(0.0));
         }
     }
-    let d = l - blurred;
-    let t = p.osharp.z;
-    var k = d;
-    if (t > 0.0 && d != 0.0) {
-        k = d * d * d / (d * d + t * t);
-    }
-    let delta = amount * k;
     if (delta == 0.0 || !(abs(delta) <= 1e30)) {
         return c;
     }

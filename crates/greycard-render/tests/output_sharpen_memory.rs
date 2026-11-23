@@ -3,7 +3,10 @@
 //! the sharpen on. Ignored: it allocates the frame (half a gigabyte)
 //! and is a measurement, run by hand, one process a setting:
 //! `cargo test -p greycard-render --release --test output_sharpen_memory -- --ignored --nocapture`
-//! with `GREYCARD_SHARPEN_AMOUNT` 0 for the frame without it.
+//! with `GREYCARD_SHARPEN_AMOUNT` 0 for the frame without it, and
+//! `GREYCARD_SHARPEN_MASKS` the masks whole over the frame at a Radius
+//! of their own (1 to 3, at 2, 0.8, and 2.5; 0 none), or `picture` for
+//! one at the picture's.
 
 use greycard_core::image::WorkingImage;
 use greycard_edit::Edit;
@@ -37,6 +40,34 @@ fn peak_memory_of_a_45_mp_finish() {
     let mut edit = Edit::default();
     edit.output_sharpen.amount = amount;
     edit.output_sharpen.radius = 3.0;
+    let masks = std::env::var("GREYCARD_SHARPEN_MASKS").unwrap_or_default();
+    let own: &[Option<f32>] = match masks.as_str() {
+        "picture" => &[None],
+        "1" => &[Some(2.0)],
+        "2" => &[Some(2.0), Some(0.8)],
+        "3" => &[Some(2.0), Some(0.8), Some(2.5)],
+        _ => &[],
+    };
+    let locals: Vec<greycard_render::finish::Local> = own
+        .iter()
+        .enumerate()
+        .map(|(i, radius)| {
+            let mut a = greycard_edit::Adjustment {
+                id: i as u64 + 1,
+                ..Default::default()
+            };
+            a.mask.components.push(greycard_edit::mask::Component {
+                shape: greycard_edit::mask::Shape::Linear {
+                    from: [-1.0, 0.0],
+                    to: [-2.0, 0.0],
+                },
+                ..Default::default()
+            });
+            a.look.detail.output_sharpen = 0.5;
+            a.look.detail.output_sharpen_radius = *radius;
+            greycard_render::finish::Local::of(&a, vec![None], None)
+        })
+        .collect();
     let global = Baked::global(&edit, Source::SCENE);
     let before = peak_kib();
     let started = std::time::Instant::now();
@@ -44,7 +75,7 @@ fn peak_memory_of_a_45_mp_finish() {
         &image,
         None,
         &global,
-        &[],
+        &locals,
         |x, y| ((x as f32 + 0.5) / w as f32, (y as f32 + 0.5) / w as f32),
         |_, _| (0.0, None),
         None,
@@ -55,7 +86,7 @@ fn peak_memory_of_a_45_mp_finish() {
     );
     let after = peak_kib();
     eprintln!(
-        "45 MP finish, amount {amount}: peak {:.0} MB before the finish, {:.0} MB after \
+        "45 MP finish, amount {amount}, masks {masks:?}: peak {:.0} MB before the finish, {:.0} MB after \
          ({:.0} MB over the frame and its output), {:.1} s",
         before as f64 / 1024.0,
         after as f64 / 1024.0,

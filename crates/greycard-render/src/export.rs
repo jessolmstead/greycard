@@ -2260,6 +2260,8 @@ mod tests {
             dehaze: 0.4,
             sharpen: 0.0,
             output_sharpen: 0.0,
+            output_sharpen_radius: None,
+            output_sharpen_threshold: None,
         };
         let off = opacity_render(&image, &look, 1.0, false);
         assert_eq!(opacity_render(&image, &look, 0.0, true), off, "none is off");

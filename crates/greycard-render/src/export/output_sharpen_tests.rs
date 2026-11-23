@@ -303,6 +303,7 @@ fn the_sheets_sharpen_gives_way_to_an_output_sharpen() {
     let acting = [
         with_share(&sharpened(0.8), whole(), 0.0),
         with_share(&sharpened(0.0), ramp(), 0.5),
+        with_own(&sharpened(0.0), ramp(), 1.5, Some(3.0), Some(0.0)),
     ];
     for edit in &acting {
         assert!(edit.output_sharpens());
@@ -317,6 +318,8 @@ fn the_sheets_sharpen_gives_way_to_an_output_sharpen() {
     let idle = [
         with_share(&sharpened(0.0), ramp(), 0.0),
         with_share(&sharpened(0.0), ramp(), -1.0),
+        with_own(&sharpened(0.0), ramp(), -1.0, Some(3.0), Some(0.0)),
+        with_own(&sharpened(0.0), ramp(), 0.0, Some(3.0), None),
     ];
     for edit in &idle {
         assert!(!edit.output_sharpens());
@@ -341,7 +344,7 @@ fn finish_shares(edit: &Edit) -> bool {
         .iter()
         .map(|a| finish::Local::of(a, vec![None; a.mask.components.len()], None))
         .collect();
-    crate::output_sharpen::Params::finishing(&edit.output_sharpen, &locals).is_some()
+    crate::output_sharpen::Plan::finishing(&edit.output_sharpen, &locals).is_some()
 }
 
 /// A dark, noisy frame, its channels' noise apart, sharpened by a
@@ -492,5 +495,225 @@ fn the_clip_guard_holds_under_a_masks_share() {
             );
         }
         assert!(topped > 0, "the halo reaches white at {long_edge:?}");
+    }
+}
+
+/// `with_share` with the mask's own Radius and Threshold.
+fn with_own(
+    edit: &Edit,
+    mask: Mask,
+    share: f32,
+    radius: Option<f32>,
+    threshold: Option<f32>,
+) -> Edit {
+    let mut e = with_share(edit, mask, share);
+    let detail = &mut e.adjustments.last_mut().unwrap().look.detail;
+    detail.output_sharpen_radius = radius;
+    detail.output_sharpen_threshold = threshold;
+    e
+}
+
+/// [`bars`] softened, as a frame a little out of focus is: each row and
+/// column through a Gaussian of three pixels.
+fn soft_bars(w: usize, h: usize) -> WorkingImage {
+    let sharp = bars(w, h);
+    let mut image = WorkingImage::new(w, h);
+    for k in 0..3 {
+        let plane: Vec<f32> = sharp.data.chunks(3).map(|c| c[k]).collect();
+        let soft = crate::output_sharpen::blur(&plane, w, h, 3.0);
+        for (px, v) in image.data.chunks_mut(3).zip(soft) {
+            px[k] = v;
+        }
+    }
+    image
+}
+
+/// The mean change between two exports, in levels of 255.
+fn mean_levels(a: &[u16], b: &[u16]) -> f64 {
+    let sum: f64 = a
+        .iter()
+        .zip(b)
+        .map(|(a, b)| f64::from(a.abs_diff(*b)) / 257.0)
+        .sum();
+    sum / a.len() as f64
+}
+
+/// A mask's own Radius and Threshold at the picture's are the picture's:
+/// the export is the one with none of its own, to the bit, at full size
+/// and made smaller, the picture's on and off; and a take's own Radius
+/// and Threshold do nothing, the take at the picture's.
+#[test]
+fn own_settings_at_the_pictures_are_the_pictures_to_the_bit() {
+    let image = bars(240, 90);
+    for long_edge in [None, Some(96)] {
+        for picture in [0.0, 0.7] {
+            let base = sharpened(picture);
+            let none = export(&image, &with_share(&base, ramp(), 0.8), long_edge);
+            let same = export(
+                &image,
+                &with_own(&base, ramp(), 0.8, Some(1.3), Some(0.005)),
+                long_edge,
+            );
+            assert!(none == same, "{picture} at {long_edge:?}");
+            let radius_alone = export(
+                &image,
+                &with_own(&base, ramp(), 0.8, Some(1.3), None),
+                long_edge,
+            );
+            assert!(none == radius_alone, "{picture} at {long_edge:?}");
+        }
+        let base = sharpened(1.4);
+        let take = export(&image, &with_share(&base, ramp(), -0.6), long_edge);
+        let own_take = export(
+            &image,
+            &with_own(&base, ramp(), -0.6, Some(3.0), Some(0.0)),
+            long_edge,
+        );
+        assert!(take == own_take, "a take at {long_edge:?}");
+    }
+}
+
+/// A mask whole over the frame at its own Radius and Threshold, the
+/// picture's off, is the picture's own sharpen at those, to the bit: at
+/// +100 its 100%, at +200 its 200%; at full size and made smaller.
+#[test]
+fn a_mask_at_its_own_settings_is_the_pictures_sharpen_at_them() {
+    let image = bars(240, 90);
+    for long_edge in [None, Some(96)] {
+        for (share, amount) in [(1.0, 1.0), (2.0, 2.0)] {
+            let by_mask = export(
+                &image,
+                &with_own(&sharpened(0.0), whole(), share, Some(3.0), Some(0.0)),
+                long_edge,
+            );
+            let mut picture = sharpened(amount);
+            picture.output_sharpen.radius = 3.0;
+            picture.output_sharpen.threshold = 0.0;
+            let by_picture = export(&image, &with_share(&picture, whole(), 0.0), long_edge);
+            assert!(
+                by_mask.2 == by_picture.2,
+                "+{share} at {long_edge:?}: {} levels",
+                worst(&by_mask.2, &by_picture.2, |_| true)
+            );
+        }
+        // +200 at the picture's radius over its off is its 200% too.
+        let by_mask = export(
+            &image,
+            &with_share(&sharpened(0.0), whole(), 2.0),
+            long_edge,
+        );
+        let by_picture = export(
+            &image,
+            &with_share(&sharpened(2.0), whole(), 0.0),
+            long_edge,
+        );
+        assert!(by_mask.2 == by_picture.2, "+200 at {long_edge:?}");
+    }
+}
+
+/// The case a mask's own Radius is for: a soft frame. A mask at +100 at
+/// the picture's Radius 1 and Threshold 1% moves it a little; at Radius
+/// 3 and Threshold 0 several times as much, the picture's off; and at
+/// Radius 3 it sharpens where Radius 1 at 200% still does less. Outside
+/// the mask nothing moves.
+#[test]
+fn a_mask_at_radius_three_sharpens_what_radius_one_does_not() {
+    let image = soft_bars(240, 90);
+    let mut off = Edit::default();
+    off.output_sharpen.radius = 1.0;
+    off.output_sharpen.threshold = 0.01;
+    let (w, h, plain) = export(&image, &off, None);
+    let wts = weights(&ramp(), &image, w, h);
+    let inside = |e: &Edit| {
+        let (_, _, p) = export(&image, e, None);
+        assert_eq!(worst(&plain, &p, |i| wts[i] == 0.0), 0, "outside the mask");
+        let keep: Vec<usize> = (0..w * h).filter(|&i| wts[i] == 1.0).collect();
+        let pick = |p: &[u16]| -> Vec<u16> {
+            keep.iter()
+                .flat_map(|&i| p[i * 3..i * 3 + 3].to_vec())
+                .collect()
+        };
+        mean_levels(&pick(&plain), &pick(&p))
+    };
+    let at_one = inside(&with_share(&off, ramp(), 1.0));
+    let at_one_twice = inside(&with_share(&off, ramp(), 2.0));
+    let at_three = inside(&with_own(&off, ramp(), 1.0, Some(3.0), Some(0.0)));
+    eprintln!(
+        "a soft frame under a mask: +100 at radius 1, threshold 1% {at_one:.2} levels; \
+         +200 there {at_one_twice:.2}; +100 at radius 3, threshold 0 {at_three:.2}"
+    );
+    assert!(at_three > 3.0 * at_one, "{at_three} against {at_one}");
+    assert!(at_three > at_one_twice, "{at_three} against {at_one_twice}");
+}
+
+/// Two masks at radii of their own compose by their terms, order
+/// apart: either order is the same export, to the bit; under both, the
+/// two are neither mask alone (with the picture's on their sum is held,
+/// so they need not move it further than one); and with the picture's
+/// own on too, every pixel outside both masks is the picture's own, to
+/// the bit.
+#[test]
+fn two_masks_at_their_own_radii_compose() {
+    let image = soft_bars(240, 90);
+    let left = Mask {
+        components: vec![Component {
+            shape: Shape::Linear {
+                from: [0.5, 0.0],
+                to: [0.6, 0.0],
+            },
+            ..Default::default()
+        }],
+        ..Default::default()
+    };
+    let right = Mask {
+        components: vec![Component {
+            shape: Shape::Linear {
+                from: [0.4, 0.0],
+                to: [0.3, 0.0],
+            },
+            ..Default::default()
+        }],
+        ..Default::default()
+    };
+    for long_edge in [None, Some(96)] {
+        for picture in [0.0, 0.6] {
+            let base = sharpened(picture);
+            let a = |e: &Edit| with_own(e, left.clone(), 1.2, Some(3.0), Some(0.0));
+            let b = |e: &Edit| with_own(e, right.clone(), 0.9, Some(0.6), None);
+            let ab = export(&image, &b(&a(&base)), long_edge);
+            let ba = export(&image, &a(&b(&base)), long_edge);
+            assert!(ab == ba, "order at {long_edge:?}");
+            let (w, h, alone) = export(&image, &base, long_edge);
+            let wl = weights(&left, &image, w, h);
+            let wr = weights(&right, &image, w, h);
+            assert_eq!(
+                worst(&ab.2, &alone, |i| wl[i] == 0.0 && wr[i] == 0.0),
+                0,
+                "outside both at {long_edge:?}"
+            );
+            let only_a = export(&image, &a(&base), long_edge);
+            let only_b = export(&image, &b(&base), long_edge);
+            let both = |i: usize| wl[i] == 1.0 && wr[i] == 1.0;
+            let pick = |p: &[u16]| -> Vec<u16> {
+                (0..w * h)
+                    .filter(|&i| both(i))
+                    .flat_map(|i| p[i * 3..i * 3 + 3].to_vec())
+                    .collect()
+            };
+            let (m_ab, m_a, m_b) = (
+                mean_levels(&pick(&alone), &pick(&ab.2)),
+                mean_levels(&pick(&alone), &pick(&only_a.2)),
+                mean_levels(&pick(&alone), &pick(&only_b.2)),
+            );
+            assert!(
+                m_ab > 0.5 && pick(&ab.2) != pick(&only_a.2) && pick(&ab.2) != pick(&only_b.2),
+                "{m_ab} {m_a} {m_b}"
+            );
+            if picture == 0.0 {
+                // 1.2 and 0.9, held to 2 together: still more than the
+                // narrower alone.
+                assert!(m_ab > m_b, "{m_ab} {m_b}");
+            }
+        }
     }
 }

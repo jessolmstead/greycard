@@ -28,5 +28,10 @@
     "id": "e5ecf457cae97d249e7c5c9c7c89d7737d4b6aac16dfa3d0d12cf72bd83d5926",
     "name": "local whites, the other shapes, a clone",
     "text": "{\"adjustments\":[{\"id\":1,\"look\":{\"white_balance\":{\"mode\":\"absolute\"}},\"mask\":{\"components\":[{\"shape\":{\"kind\":\"sky\"}}]},\"name\":\"One\"},{\"id\":1,\"look\":{\"white_balance\":{\"mired\":-12.0,\"mode\":\"relative\"}},\"mask\":{\"components\":[{\"shape\":{\"kind\":\"part\",\"phrase\":\"hair\",\"route\":\"eye\"}}]},\"name\":\"One\"},{\"id\":1,\"look\":{\"white_balance\":{\"temperature\":3200.0,\"tint\":0.001}},\"mask\":{\"components\":[{\"shape\":{\"group\":\"water\",\"kind\":\"landscape\"}}]},\"name\":\"One\"},{\"id\":1,\"look\":{\"white_balance\":{\"mired\":5.0,\"mode\":\"kept_relative\"}},\"mask\":{\"components\":[{\"shape\":{\"kind\":\"background\"}}]},\"name\":\"One\"},{\"id\":1,\"mask\":{\"components\":[{\"shape\":{\"chroma\":0.05,\"chroma_feather\":0.02,\"hue\":200.0,\"hue_feather\":20.0,\"kind\":\"color\",\"width\":40.0}}]},\"name\":\"One\"}],\"light\":{\"exposure\":0.75},\"process\":1,\"retouch\":{\"patches\":[{\"id\":2,\"method\":\"clone\",\"points\":[[0.5,0.5]],\"radius\":0.05}]},\"version\":10}"
+  },
+  {
+    "id": "6ab1028ae86b7f159ee8a6f84fb3121c27874dd5941525a34e38c6e5f73f124b",
+    "name": "a mask's own output sharpen",
+    "text": "{\"adjustments\":[{\"id\":1,\"look\":{\"detail\":{\"clarity\":0.0,\"dehaze\":0.0,\"enabled\":true,\"output_sharpen\":1.5,\"output_sharpen_radius\":2.5,\"output_sharpen_threshold\":0.0,\"texture\":0.0}},\"mask\":{\"components\":[{\"shape\":{\"kind\":\"background\"}}]},\"name\":\"One\"},{\"id\":2,\"look\":{\"detail\":{\"clarity\":0.0,\"dehaze\":0.0,\"enabled\":true,\"output_sharpen\":0.4,\"output_sharpen_radius\":3.0,\"texture\":0.0}},\"mask\":{\"components\":[{\"shape\":{\"kind\":\"sky\"}}]},\"name\":\"One\"}],\"light\":{\"exposure\":0.1},\"process\":1,\"version\":10}"
   }
 ]

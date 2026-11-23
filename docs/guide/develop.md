@@ -673,7 +673,10 @@ do not fringe.
 At the fit zoom you will see little of it, as with the grain; check
 it at 1:1.
 
-A mask's Detail has an **Output sharpen** of its own, −100 to +100.
+A mask's Detail has an **Output sharpen** of its own, −100 to +200,
+with a **Radius** and a **Threshold** under it. Each shows the
+picture's until you move it, and a double-click gives the picture's
+back; they act above zero and are off below it.
 Below zero it takes the picture's sharpening away under the mask
 (−100 is none); above zero it adds, and works with the picture's own
 at zero. An export made smaller skips the export sheet's **Sharpen**

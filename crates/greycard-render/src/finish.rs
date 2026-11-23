@@ -15,6 +15,7 @@ use greycard_edit::brush::Raster;
 use greycard_edit::curve::{CurveLut, color_shift, lookup};
 use greycard_edit::mask::Sample;
 use greycard_edit::mixer::{BANDS, MEAN_RADIUS, confidence};
+use greycard_edit::output_sharpen::{RADIUS_MAX, RADIUS_MIN, SHARE_MAX, SHARE_MIN, THRESHOLD_MAX};
 use greycard_edit::{
     BlackWhite, Color, DisplayCurve, Edit, Grain, Light, Look, Mask, Mixer, OutputSharpen, Tint,
     WhiteShift,
@@ -64,8 +65,13 @@ pub struct Baked {
     /// Detail is off. Never the global's, whose sharpen is
     /// [`Self::output_sharpen`]. Under zero it scales the picture's
     /// amount, over zero it adds to it, by the mask's weight
-    /// ([`crate::output_sharpen::amount_at`]).
+    /// ([`crate::output_sharpen::Plan`]).
     pub output_share: f32,
+    /// A local's own Radius and Threshold for a positive share, held to
+    /// the sliders' ends; none takes the picture's. Nothing while its
+    /// Detail is off, and nothing to a negative share.
+    pub output_radius: Option<f32>,
+    pub output_threshold: Option<f32>,
     /// Global only, as the black and white is: the unsharp mask on the
     /// finished picture ([`crate::output_sharpen`]), between the look
     /// table and the output transform. Off on every local's.
@@ -311,10 +317,20 @@ impl Baked {
                 [0.0; 5]
             },
             output_share: if look.detail.enabled {
-                look.detail.output_sharpen.clamp(-1.0, 1.0)
+                look.detail.output_sharpen.clamp(SHARE_MIN, SHARE_MAX)
             } else {
                 0.0
             },
+            output_radius: look
+                .detail
+                .output_sharpen_radius
+                .filter(|_| look.detail.enabled)
+                .map(|r| r.clamp(RADIUS_MIN, RADIUS_MAX)),
+            output_threshold: look
+                .detail
+                .output_sharpen_threshold
+                .filter(|_| look.detail.enabled)
+                .map(|t| t.clamp(0.0, THRESHOLD_MAX)),
             output_sharpen: OutputSharpen::default(),
             vignette_shown: false,
         }
@@ -2400,11 +2416,11 @@ fn finish_in_bands<'l, T: Copy + Default + Send>(
     };
     let w = image.width;
     let mut out = vec![T::default(); w * image.height * 3];
-    // The picture's sharpen, or its blur for a mask's share of it, and
-    // whether a mask's share makes each pixel's amount its own.
+    // The picture's sharpen and the masks' shares of it, their terms,
+    // and whether a mask's share makes each pixel's amounts its own.
     // Held at zero under AgX's rail, as before the gamut op.
-    match crate::output_sharpen::Params::finishing(&global.output_sharpen, locals)
-        .map(|(p, shared)| (p.holding(global.agx_railed()), shared))
+    match crate::output_sharpen::Plan::finishing(&global.output_sharpen, locals)
+        .map(|p| p.holding(global.agx_railed()))
     {
         // One pass, each pixel to its output at once.
         None => out
@@ -2429,17 +2445,19 @@ fn finish_in_bands<'l, T: Copy + Default + Send>(
         // pixel's neighbors there; then the band to the output, its
         // grain drawn again. Only a band is ever held, and a band comes
         // out as the same rows of the whole frame would.
-        Some((params, shared)) => {
+        Some(plan) => {
             let h = image.height;
-            let reach_rows = params.reach();
+            let reach_rows = plan.reach();
+            let (shared, terms) = (plan.shared, plan.terms());
             for y0 in (0..h).step_by(band.max(1)) {
                 let count = band.max(1).min(h - y0);
                 let lo = y0.saturating_sub(reach_rows);
                 let hi = (y0 + count + reach_rows).min(h);
                 let mut held = vec![[0.0f32; 3]; w * (hi - lo)];
-                // Each pixel's amount, only where a mask puts a share on:
-                // the picture's and the shares under the masks' weights.
-                let mut amounts = vec![0.0f32; if shared { w * (hi - lo) } else { 0 }];
+                // Each pixel's amounts, only where a mask puts a share on:
+                // the picture's and the shares under the masks' weights,
+                // a term's each.
+                let mut amounts = vec![0.0f32; if shared { w * (hi - lo) * terms } else { 0 }];
                 let row = |r: usize,
                            row_held: &mut [[f32; 3]],
                            row_in: &[f32],
@@ -2453,14 +2471,14 @@ fn finish_in_bands<'l, T: Copy + Default + Send>(
                     {
                         *o = display_at(x, lo + r, px, &mut on).0;
                         if let Some(a) = amounts.as_deref_mut() {
-                            a[x] = crate::output_sharpen::amount_at(params.amount, &on);
+                            plan.amounts_at(&on, &mut a[x * terms..(x + 1) * terms]);
                         }
                     }
                 };
                 let rows_in = image.data[lo * w * 3..hi * w * 3].par_chunks(w * 3);
                 if shared {
                     held.par_chunks_mut(w)
-                        .zip(amounts.par_chunks_mut(w))
+                        .zip(amounts.par_chunks_mut(w * terms))
                         .zip(rows_in)
                         .enumerate()
                         .for_each(|(r, ((h, a), i))| row(r, h, i, Some(a)));
@@ -2470,14 +2488,15 @@ fn finish_in_bands<'l, T: Copy + Default + Send>(
                         .enumerate()
                         .for_each(|(r, (h, i))| row(r, h, i, None));
                 }
-                let band_amounts = shared.then(|| &amounts[(y0 - lo) * w..(y0 - lo + count) * w]);
-                let sharpened = crate::output_sharpen::sharpen_rows(
+                let band_amounts =
+                    shared.then(|| &amounts[(y0 - lo) * w * terms..(y0 - lo + count) * w * terms]);
+                let sharpened = crate::output_sharpen::sharpen_plan_rows(
                     &held,
                     w,
                     hi - lo,
                     y0 - lo,
                     count,
-                    &params,
+                    &plan,
                     band_amounts,
                 );
                 drop(held);
@@ -2632,6 +2651,51 @@ mod tests {
                 "at {x},{y}"
             );
         }
+        // Masks at settings of their own, three radii and a take: the
+        // bands are the whole frame's still, the widest reach theirs.
+        let own = |share: f32, radius: Option<f32>, threshold: Option<f32>, to: f32| {
+            let mut a = adjustment.clone();
+            a.mask.components[0].shape = greycard_edit::mask::Shape::Linear {
+                from: [0.0, to - 0.3],
+                to: [0.0, to],
+            };
+            a.look.detail.output_sharpen = share;
+            a.look.detail.output_sharpen_radius = radius;
+            a.look.detail.output_sharpen_threshold = threshold;
+            Local::of(&a, vec![None], None)
+        };
+        let locals = vec![
+            own(1.7, Some(3.0), Some(0.0), 0.4),
+            own(0.6, Some(0.5), None, 0.7),
+            own(-0.5, Some(2.0), None, 0.9),
+            own(0.9, None, Some(0.03), 0.6),
+        ];
+        let plan = crate::output_sharpen::Plan::finishing(&edit.output_sharpen, &locals).unwrap();
+        assert_eq!(plan.own.len(), 3);
+        let run = |band: usize| {
+            finish_in_bands(
+                band,
+                &image,
+                1.0,
+                None,
+                &global,
+                &locals,
+                |x, y| ((x as f32 + 0.5) / w as f32, (y as f32 + 0.5) / w as f32),
+                |x, y| {
+                    let (fx, fy) = ((x as f32 + 0.5) / w as f32, (y as f32 + 0.5) / h as f32);
+                    (0.0, Some(grain.at(fx, fy, w as f32 / h as f32)))
+                },
+                None,
+                None,
+                None,
+                &to_out,
+                |v: f32| v,
+            )
+        };
+        let masked = run(h);
+        assert_ne!(masked, whole);
+        assert_eq!(run(7), masked);
+        assert_eq!(run(1), masked);
     }
 
     /// A camera profile's tone curve takes the display curve's place
@@ -2926,6 +2990,8 @@ mod tests {
             white: None,
             detail: [0.0; 5],
             output_share: 0.0,
+            output_radius: None,
+            output_threshold: None,
             output_sharpen: OutputSharpen::default(),
             vignette_shown: false,
         };
@@ -2953,6 +3019,8 @@ mod tests {
             white: None,
             detail: [0.0; 5],
             output_share: 0.0,
+            output_radius: None,
+            output_threshold: None,
             output_sharpen: OutputSharpen::default(),
             vignette_shown: false,
         }
@@ -3061,7 +3129,7 @@ mod tests {
     /// of the no-tail build, fix-check).
     #[test]
     fn an_agx_picture_with_an_output_sharpen_is_what_it_was() {
-        use crate::output_sharpen::{Params, amount_at, sharpen_rows};
+        use crate::output_sharpen::{Plan, amount_at, sharpen_rows};
         let (w, h) = (96usize, 64usize);
         let mut state = 0x2545_f491_u32;
         let mut unit = move || {
@@ -3138,7 +3206,8 @@ mod tests {
                     )
                 })
                 .collect();
-            let (p, shared) = Params::finishing(&global.output_sharpen, &locals).unwrap();
+            let plan = Plan::finishing(&global.output_sharpen, &locals).unwrap();
+            let (p, shared) = (plan.picture, plan.shared);
             assert_eq!(shared, !locals.is_empty());
             let sharpened = sharpen_rows(
                 &shown,
@@ -4073,6 +4142,8 @@ mod tests {
                 white: None,
                 detail: [0.0; 5],
                 output_share: 0.0,
+                output_radius: None,
+                output_threshold: None,
                 output_sharpen: OutputSharpen::default(),
                 vignette_shown: false,
             };
@@ -4755,6 +4826,8 @@ mod tests {
             white: None,
             detail: [0.0; 5],
             output_share: 0.0,
+            output_radius: None,
+            output_threshold: None,
             output_sharpen: OutputSharpen::default(),
             vignette_shown: false,
         };
@@ -5856,6 +5929,8 @@ mod tests {
             white: None,
             detail: [0.0; 5],
             output_share: 0.0,
+            output_radius: None,
+            output_threshold: None,
             output_sharpen: OutputSharpen::default(),
             vignette_shown: false,
         };
@@ -5901,6 +5976,8 @@ mod tests {
             white: None,
             detail: [0.0; 5],
             output_share: 0.0,
+            output_radius: None,
+            output_threshold: None,
             output_sharpen: OutputSharpen::default(),
             vignette_shown: false,
         };
@@ -5988,6 +6065,8 @@ mod tests {
             white: None,
             detail: [0.0; 5],
             output_share: 0.0,
+            output_radius: None,
+            output_threshold: None,
             output_sharpen: OutputSharpen::default(),
             vignette_shown: false,
         };

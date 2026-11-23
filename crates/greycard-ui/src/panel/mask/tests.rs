@@ -447,6 +447,159 @@ fn a_masks_output_sharpen_is_its_own_and_a_look_control() {
     );
 }
 
+/// A mask's Output sharpen has a Radius and a Threshold of its own, on
+/// a mask's Detail alone: each shows the picture's, and follows it,
+/// until moved; moved, it is the mask's own in the edit and its history
+/// row; a double-click gives the picture's back, none in the edit; a
+/// take (a share under zero) has them off; the share reaches +200; and
+/// an edit with its own shows them back from the sidecar's JSON.
+#[test]
+fn a_masks_output_sharpen_has_its_own_radius_and_threshold() {
+    use greycard_edit::history::describe;
+    use i_slint_backend_testing::ElementHandle;
+    use slint::ComponentHandle;
+    let app = window(1);
+    app.window()
+        .set_size(slint::LogicalSize::new(1500.0, 4000.0));
+    let (state, _worker) = crate::testing::state_for(&app, Vec::new());
+    let open_detail = || {
+        for (_, _, set) in crate::panel::edit::FOLDS {
+            set(&app, true);
+        }
+        app.set_collapsed_detail(false);
+        crate::testing::settle(&app);
+    };
+    let count = |id: &str| ElementHandle::find_by_element_id(&app, id).count();
+    let (share_id, radius_id, threshold_id) = (
+        "DetailSection::output-sharpen-slider",
+        "DetailSection::output-radius-slider",
+        "DetailSection::output-threshold-slider",
+    );
+    let enabled = |id: &str| {
+        ElementHandle::find_by_element_id(&app, id)
+            .find_map(|e| e.accessible_enabled())
+            .unwrap_or_else(|| panic!("no slider {id:?}"))
+    };
+    app.set_panel_tab("Develop".into());
+    open_detail();
+    assert_eq!(
+        count(radius_id) + count(threshold_id),
+        0,
+        "the picture's has none"
+    );
+    app.set_panel_tab("Masks".into());
+    app.invoke_new_mask();
+    app.invoke_target_changed(1);
+    open_detail();
+    assert_eq!((count(radius_id), count(threshold_id)), (1, 1));
+    let top = ElementHandle::find_by_element_id(&app, share_id)
+        .find_map(|e| e.accessible_value_maximum());
+    assert_eq!(top, Some(2.0), "the share reaches +200");
+    state.borrow_mut().develop.edit.adjustments[0]
+        .mask
+        .components
+        .push(greycard_edit::mask::Component::default());
+    let edit = || {
+        let st = state.borrow();
+        read_edit(&app, &st.develop.edit, st.develop.target)
+    };
+    let detail = || edit().adjustments[0].look.detail;
+    // The picture's, and following it, until moved.
+    app.set_output_sharpen_radius(2.2);
+    app.set_output_sharpen_threshold(0.04);
+    crate::testing::settle(&app);
+    assert_eq!(app.get_local_output_sharpen_radius(), 2.2);
+    assert_eq!(app.get_local_output_sharpen_threshold(), 0.04);
+    assert_eq!(
+        (
+            detail().output_sharpen_radius,
+            detail().output_sharpen_threshold
+        ),
+        (None, None)
+    );
+    app.set_local_output_sharpen(2.0);
+    app.invoke_view_changed();
+    assert_eq!(detail().output_sharpen, 2.0);
+    // Moved, its own.
+    let before = edit();
+    let drag = |id: &str| {
+        let (at, size) = crate::testing::by_id(&app, id);
+        let (left, right) = (at.x + 110.0, at.x + size.width - 60.0);
+        let x = left + 0.3 * (right - left);
+        let y = at.y + size.height / 2.0;
+        crate::testing::drag(&app, &[(x, y), (x + 10.0, y), (x + 60.0, y)]);
+        crate::testing::settle(&app);
+    };
+    drag(radius_id);
+    assert!(app.get_local_output_sharpen_radius_own());
+    let radius = detail().output_sharpen_radius.expect("its own radius");
+    assert_ne!(radius, 2.2);
+    assert_eq!(
+        app.get_output_sharpen_radius(),
+        2.2,
+        "the picture's untouched"
+    );
+    let after = edit();
+    let name = app.get_adjustment_name().to_string();
+    assert_eq!(
+        describe(&before, &after, &[]),
+        format!("{name}: Output sharpen")
+    );
+    // Its own does not follow the picture's.
+    app.set_output_sharpen_radius(1.1);
+    crate::testing::settle(&app);
+    assert_eq!(detail().output_sharpen_radius, Some(radius));
+    drag(threshold_id);
+    let threshold = detail()
+        .output_sharpen_threshold
+        .expect("its own threshold");
+    assert_ne!(threshold, 0.04);
+    // Back from the sidecar's JSON, and onto the panel.
+    let back = greycard_edit::Edit::from_json(&edit().to_json()).unwrap();
+    assert_eq!(back.adjustments[0].look.detail, detail());
+    // A double-click gives the picture's back.
+    let click_on = |id: &str| {
+        let (at, size) = crate::testing::by_id(&app, id);
+        let (x, y) = (at.x + 30.0, at.y + size.height / 2.0);
+        click(&app, x, y);
+        click(&app, x, y);
+        crate::testing::settle(&app);
+    };
+    click_on(radius_id);
+    assert!(!app.get_local_output_sharpen_radius_own());
+    assert_eq!(app.get_local_output_sharpen_radius(), 1.1);
+    assert_eq!(detail().output_sharpen_radius, None);
+    assert_eq!(detail().output_sharpen_threshold, Some(threshold));
+    // Shown back from an edit with its own.
+    {
+        let st = state.borrow();
+        show_edit(&st, &back, &app, st.develop.target);
+    }
+    crate::testing::settle(&app);
+    assert!(app.get_local_output_sharpen_radius_own());
+    assert_eq!(app.get_local_output_sharpen_radius(), radius);
+    assert_eq!(detail(), back.adjustments[0].look.detail);
+    // And from one with none: the picture's.
+    let mut plain = back.clone();
+    plain.adjustments[0].look.detail.output_sharpen_radius = None;
+    plain.adjustments[0].look.detail.output_sharpen_threshold = None;
+    {
+        let st = state.borrow();
+        show_edit(&st, &plain, &app, st.develop.target);
+    }
+    crate::testing::settle(&app);
+    assert!(!app.get_local_output_sharpen_threshold_own());
+    assert_eq!(
+        app.get_local_output_sharpen_threshold(),
+        plain.output_sharpen.threshold
+    );
+    // A take has them off.
+    assert!(enabled(radius_id) && enabled(threshold_id));
+    app.set_local_output_sharpen(-0.5);
+    crate::testing::settle(&app);
+    assert!(!enabled(radius_id) && !enabled(threshold_id));
+}
+
 /// A look change while a tool is in hand hides the overlay and
 /// drops the toggle kept for the tool going down, so it does not
 /// come back over the edit.

@@ -346,6 +346,26 @@ export component DetailSection inherits Section {
     // A mask's share of the output sharpen, beside the capture's, on a
     // mask's Detail alone: the picture's is OUTPUT SHARPEN.
     in-out property <float> detail-output-sharpen;
+    // Its own Radius and Threshold, each the picture's until moved
+    // (`-own` false); a double-click gives the picture's back. A take
+    // (a share under zero) sharpens at the picture's, so they are off
+    // under one.
+    in property <float> picture-output-radius;
+    in property <float> picture-output-threshold;
+    in-out property <float> detail-output-radius;
+    in-out property <bool> detail-output-radius-own;
+    in-out property <float> detail-output-threshold;
+    in-out property <bool> detail-output-threshold-own;
+    changed picture-output-radius => {
+        if (!root.detail-output-radius-own) {
+            root.detail-output-radius = root.picture-output-radius;
+        }
+    }
+    changed picture-output-threshold => {
+        if (!root.detail-output-threshold-own) {
+            root.detail-output-threshold = root.picture-output-threshold;
+        }
+    }
     callback develop-changed();
 
     title: @tr("DETAIL");
@@ -424,7 +444,7 @@ export component DetailSection inherits Section {
         label: @tr("Output sharpen");
         enabled: root.detail-enabled;
         minimum: -1;
-        maximum: 1;
+        maximum: 2;
         default: 0;
         step: 0.01;
         steps: Steps.percent;
@@ -432,6 +452,50 @@ export component DetailSection inherits Section {
         scale: 100;
         text: (root.detail-output-sharpen >= 0 ? "+" : "") + round(root.detail-output-sharpen * 100);
         changed(v) => { root.develop-changed(); }
+    }
+    // As OUTPUT SHARPEN's Radius and Threshold.
+    if root.local: output-radius-slider := EditSlider {
+        label: @tr("Radius");
+        enabled: root.detail-enabled && root.detail-output-sharpen >= 0;
+        minimum: 0.5;
+        maximum: 3;
+        default: 1;
+        step: 0.01;
+        steps: Steps.hundredths;
+        value <=> root.detail-output-radius;
+        text: round(root.detail-output-radius * 100) / 100;
+        changed(v) => {
+            root.detail-output-radius-own = true;
+            root.develop-changed();
+        }
+        owner-resets: true;
+        reset => {
+            root.detail-output-radius-own = false;
+            root.detail-output-radius = root.picture-output-radius;
+            root.develop-changed();
+        }
+    }
+    if root.local: output-threshold-slider := EditSlider {
+        label: @tr("Threshold");
+        enabled: root.detail-enabled && root.detail-output-sharpen >= 0;
+        minimum: 0;
+        maximum: 0.1;
+        default: 0.01;
+        step: 0.001;
+        steps: Steps.thousandths;
+        value <=> root.detail-output-threshold;
+        scale: 100;
+        text: round(root.detail-output-threshold * 1000) / 10 + "%";
+        changed(v) => {
+            root.detail-output-threshold-own = true;
+            root.develop-changed();
+        }
+        owner-resets: true;
+        reset => {
+            root.detail-output-threshold-own = false;
+            root.detail-output-threshold = root.picture-output-threshold;
+            root.develop-changed();
+        }
     }
 }
 

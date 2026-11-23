@@ -49,7 +49,8 @@ pub(super) struct LocalGpu {
     mix_sat: [[f32; 4]; 2],
     mix_lum: [[f32; 4]; 2],
     /// Its own midtones, in x; its Opacity (`Local::opacity`), in y;
-    /// its share of the output sharpen (`Baked::output_share`), in z.
+    /// its share of the output sharpen (`Baked::output_share`), in z;
+    /// and in w the sharpen's term its share goes to (`Plan::term_of`).
     tone: [f32; 4],
 }
 
@@ -265,8 +266,13 @@ pub(super) struct LocalsGpu {
 /// rasters, a layer each, the narrow ones in one array and the wide ones
 /// (wider than `RASTER_WIDTH`) in another.
 /// `most`: the device's largest texture side, which no raster's layer
-/// passes ([`raster_size`]).
-pub(super) fn locals_gpu(locals: &[Local], most: u32) -> LocalsGpu {
+/// passes ([`raster_size`]). `osharp`: the output sharpen's plan, which
+/// says the term each local's share goes to (none when it does not run).
+pub(super) fn locals_gpu(
+    locals: &[Local],
+    most: u32,
+    osharp: Option<&greycard_render::output_sharpen::Plan>,
+) -> LocalsGpu {
     let mut params = Vec::new();
     let mut tables = Vec::new();
     let mut shapes = Vec::new();
@@ -349,7 +355,12 @@ pub(super) fn locals_gpu(locals: &[Local], most: u32) -> LocalsGpu {
             mix_hue: halves(&b.mixer.hue),
             mix_sat: halves(&b.mixer.saturation),
             mix_lum: halves(&b.mixer.luminance),
-            tone: [b.light.tone.midtones, local.opacity, b.output_share, 0.0],
+            tone: [
+                b.light.tone.midtones,
+                local.opacity,
+                b.output_share,
+                osharp.map_or(0.0, |p| p.term_of(b) as f32),
+            ],
         });
         tables.extend_from_slice(&b.curves.tone);
         tables.extend(b.curves.color.iter().map(|c| [c[0], c[1], 0.0, 0.0]));
@@ -560,7 +571,10 @@ mod tests {
             invert: false,
             ..Default::default()
         });
-        let (a, b) = (locals_gpu(&[off], 8192), locals_gpu(&[without], 8192));
+        let (a, b) = (
+            locals_gpu(&[off], 8192, None),
+            locals_gpu(&[without], 8192, None),
+        );
         assert_eq!(a.params[0].shapes_count, 2);
         assert_eq!(a.params[0].shapes_count, b.params[0].shapes_count);
         assert_eq!(a.params[0].shapes_start, b.params[0].shapes_start);
@@ -605,7 +619,7 @@ mod tests {
                 opacity: 1.0,
             })
             .collect();
-        let gpu = locals_gpu(&locals, 8192);
+        let gpu = locals_gpu(&locals, 8192, None);
         assert_eq!(
             (gpu.params[0].shapes_start, gpu.params[0].shapes_count),
             (0, 1)
@@ -648,7 +662,7 @@ mod tests {
             refined: None,
             opacity: 1.0,
         };
-        let gpu = locals_gpu(&[local], 8192);
+        let gpu = locals_gpu(&[local], 8192, None);
         assert_eq!(gpu.params[0].shapes_count, 2);
         // Kind 3 is nothing and holds no layer, which is what
         // `Local::weight` reads a missing raster as; its mode and its

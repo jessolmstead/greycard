@@ -2,8 +2,11 @@
 //! luminance, after the tone curve, the curves, and the look table,
 //! beside the capture sharpen, which deconvolves the scene-linear
 //! develop. The picture's; a mask takes from its amount or adds to it
-//! in its Detail (`Detail::output_sharpen`), at the picture's radius and
-//! threshold. The render crate's `output_sharpen` is the op.
+//! in its Detail (`Detail::output_sharpen`): a take at the picture's
+//! radius and threshold, an addition at the mask's own where it has
+//! them (`Detail::output_sharpen_radius`, `output_sharpen_threshold`)
+//! and the picture's where not. The render crate's `output_sharpen` is
+//! the op.
 
 use serde::{Deserialize, Serialize};
 
@@ -12,6 +15,10 @@ pub const AMOUNT_MAX: f32 = 2.0;
 pub const RADIUS_MIN: f32 = 0.5;
 pub const RADIUS_MAX: f32 = 3.0;
 pub const THRESHOLD_MAX: f32 = 0.1;
+/// A mask's share's ends (`Detail::output_sharpen`): -100 takes all the
+/// picture's away, +200 adds the picture's whole Amount's range.
+pub const SHARE_MIN: f32 = -1.0;
+pub const SHARE_MAX: f32 = 2.0;
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 #[serde(default)]

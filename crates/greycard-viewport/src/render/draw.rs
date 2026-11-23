@@ -135,12 +135,18 @@ struct Params {
     /// In x the midtones (`Tone::midtones`): stops of shift by the
     /// guide plane's region, as the highlights and shadows are.
     tone: [f32; 4],
-    /// The output sharpen: amount, the blur's standard deviation in
-    /// target pixels, threshold, and the draw's part in it (0 none, 1
-    /// the luminance, 2 the sharpened picture); the taps' spacing and
-    /// count, and the luminance's margin (`osharp`).
+    /// The output sharpen: the picture's amount in x, and the draw's
+    /// part in it in w (0 none, 1 the luminance, 2 the sharpened
+    /// picture); the taps' spacing, the blurs' count, the luminance's
+    /// margin, and the terms' count; each blur's standard deviation in
+    /// target pixels and taps a side, a layer a lane; and each term's
+    /// threshold and the layer it reads, -1 for none (`osharp`).
     osharp: [f32; 4],
     osharp_taps: [f32; 4],
+    osharp_sigma: [f32; 4],
+    osharp_n: [f32; 4],
+    osharp_threshold: [f32; 4],
+    osharp_reads: [f32; 4],
     /// The camera profile's tone curve, when it renders (curve 3): the
     /// gain before it in x, and the working space to linear ProPhoto
     /// and back, rows (`profile_tone::ProfileTone`).
@@ -507,6 +513,10 @@ impl Renderer {
             tone: [v.light.tone.midtones, 0.0, 0.0, 0.0],
             osharp: [0.0; 4],
             osharp_taps: [0.0; 4],
+            osharp_sigma: [0.0; 4],
+            osharp_n: [0.0; 4],
+            osharp_threshold: [0.0; 4],
+            osharp_reads: [-1.0; 4],
             profile: [profile.map_or(1.0, |p| p.gain()), 0.0, 0.0, 0.0],
             pro_in: pro_in.map(|r| [r[0], r[1], r[2], 0.0]),
             pro_out: pro_out.map(|r| [r[0], r[1], r[2], 0.0]),
@@ -559,7 +569,7 @@ impl Renderer {
             tables: local_tables,
             shapes,
             ..
-        } = locals_gpu(&v.locals, self.most_side);
+        } = locals_gpu(&v.locals, self.most_side, taps.as_ref().map(|t| &t.plan));
         let storage = |label: &str, bytes: &[u8]| {
             let buffer = self.device.create_buffer(&gpu::BufferDescriptor {
                 label: Some(label),
@@ -633,7 +643,7 @@ impl Renderer {
             let sharpen_view = self.sharpen.create_view(&Default::default());
             let sample_view = self.sample.create_view(&Default::default());
             let look_view = self.look.texture.create_view(&Default::default());
-            let across_view = across.create_view(&Default::default());
+            let across_view = osharp::OutputSharpen::layers_view(across);
             let texture = |binding: u32, view| gpu::BindGroupEntry {
                 binding,
                 resource: gpu::BindingResource::TextureView(view),
@@ -718,10 +728,17 @@ impl Renderer {
                 // each side of the target: drawn as the target's own
                 // pixels are, moved in by the margin.
                 let m = t.margin;
-                let (lum, across) = self.osharp.targets(&self.device, tw + 2 * m, th + 2 * m);
+                let (lum, across) =
+                    self.osharp
+                        .targets(&self.device, tw + 2 * m, th + 2 * m, t.blurs.len() as u32);
+                let ((sigma, n), (threshold, reads)) = (t.blur_lanes(), t.term_lanes());
                 let first = Params {
-                    osharp: [t.amount, t.sigma, t.threshold, 1.0],
-                    osharp_taps: [t.step, t.n, m as f32, 0.0],
+                    osharp: [t.amount, 0.0, 0.0, 1.0],
+                    osharp_taps: [t.step, t.blurs.len() as f32, m as f32, t.terms.len() as f32],
+                    osharp_sigma: sigma,
+                    osharp_n: n,
+                    osharp_threshold: threshold,
+                    osharp_reads: reads,
                     tile: [m as f32, m as f32, params.tile[2], params.tile[3]],
                     ..params
                 };
@@ -741,7 +758,7 @@ impl Renderer {
                 self.osharp
                     .across(&self.device, &self.queue, encoder, (&lum, &across), &t);
                 let last = Params {
-                    osharp: [t.amount, t.sigma, t.threshold, 2.0],
+                    osharp: [t.amount, 0.0, 0.0, 2.0],
                     tile: params.tile,
                     ..first
                 };
@@ -1068,7 +1085,8 @@ impl Renderer {
         }
         self.redraw = false;
         self.drawn = Some((width, height, v.clone()));
-        let locals = locals_gpu(&v.locals, self.most_side);
+        // For their rasters alone: no sharpen's terms.
+        let locals = locals_gpu(&v.locals, self.most_side, None);
         self.brushes
             .sync(&self.device, &self.queue, &locals.rasters);
         self.wide.sync(&self.device, &self.queue, &locals.wide);

@@ -610,6 +610,30 @@ mod tests {
         assert_eq!(key(&edit, None), key_before_the_aspect_frame(&edit));
     }
 
+    /// A mask's positive share at its own Radius and Threshold acts, as
+    /// one at the picture's does (the export sheet's Sharpen gives way
+    /// to it); a take with its own does not, nor a share at zero.
+    #[test]
+    fn a_masks_own_settings_act_only_with_a_positive_share() {
+        let mut edit = Edit::default();
+        edit.adjustments.push(crate::Adjustment {
+            id: 1,
+            ..Default::default()
+        });
+        edit.adjustments[0]
+            .mask
+            .components
+            .push(crate::mask::Component::default());
+        let detail = &mut edit.adjustments[0].look.detail;
+        detail.output_sharpen_radius = Some(3.0);
+        detail.output_sharpen_threshold = Some(0.0);
+        assert!(!edit.output_sharpens());
+        edit.adjustments[0].look.detail.output_sharpen = -0.5;
+        assert!(!edit.output_sharpens());
+        edit.adjustments[0].look.detail.output_sharpen = 2.0;
+        assert!(edit.output_sharpens());
+    }
+
     /// The key as it was made before [`ASPECT_FRAME`], for an edit with
     /// no mask, no file read, no guide, and no Midtones: the recipe, the
     /// edit, and the lens database while it corrects. The default

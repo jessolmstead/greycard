@@ -86,59 +86,268 @@ impl Params {
         })
     }
 
-    /// What a finish under `locals` runs, and whether a pixel's amount
-    /// is its own ([`amount_at`]): the picture's own sharpen, a mask's
-    /// share of either sign added to it; or, with the picture's off and
-    /// some mask's share positive, the blur at the picture's radius and
-    /// threshold at no amount of its own. A negative share alone takes
-    /// from nothing and runs nothing.
-    pub fn finishing(s: &OutputSharpen, locals: &[crate::finish::Local]) -> Option<(Self, bool)> {
-        let acting = |l: &&crate::finish::Local| l.enabled && l.opacity > 0.0;
-        match Self::of(s) {
-            Some(p) => Some((
-                p,
-                locals
-                    .iter()
-                    .filter(acting)
-                    .any(|l| l.baked.output_share != 0.0),
-            )),
-            None => locals
-                .iter()
-                .filter(acting)
-                .any(|l| l.baked.output_share > 0.0)
-                .then(|| {
-                    let held = s.held();
-                    (
-                        Params {
-                            amount: 0.0,
-                            sigma: held.radius,
-                            threshold: held.threshold,
-                            hold: false,
-                        },
-                        true,
-                    )
-                }),
-        }
-    }
-
     /// Taps a side of the blur: what a band of rows needs beyond it.
     pub fn reach(&self) -> usize {
         half_width(self.sigma)
     }
 }
 
-/// The amount at a pixel, from the picture's `base` and each local's
-/// share under its weight `w` there. A share under zero scales the
-/// picture's amount by `1 + w·share`, so -1 is none of the picture's
-/// under the mask whatever its amount, and -0.5 half; one over zero
-/// adds `w·share`, so +1 is 100% more, and over the picture's off 100%
-/// under it alone. With several masks the scales multiply and the
-/// additions sum, the scales on the picture's amount before the
-/// additions: each mask's take is of the picture's sharpening, never of
-/// another mask's, and the order of the masks does not count. Held to
-/// the amount's ends.
-#[inline]
-pub fn amount_at(base: f32, locals: &[(&crate::finish::Baked, f32)]) -> f32 {
+/// The settings of their own, beyond the picture's, that the masks'
+/// positive shares of one picture sharpen at: each a blur of its own
+/// radius at most, so a finish blurs at most four times. A mask's
+/// fourth distinct setting and on, in the masks' order, sharpens at the
+/// picture's. The viewport holds as many (`osharp.rs`).
+pub const MOST_OWN: usize = 3;
+
+/// The masks whose own setting the cap ([`MOST_OWN`]) last sent to the
+/// picture's, by their place, with the setting (radius and threshold as
+/// bits): a plan is made for every draw and every finish, and the log
+/// says it once each time it changes.
+struct Dropped(std::sync::Mutex<Vec<(usize, u32, u32)>>);
+
+static DROPPED: Dropped = Dropped(std::sync::Mutex::new(Vec::new()));
+
+impl Dropped {
+    /// Says `dropped` in the log if it is not what was said last;
+    /// whether it said it.
+    fn say(&self, dropped: Vec<(usize, u32, u32)>) -> bool {
+        let mut last = self
+            .0
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if *last == dropped {
+            return false;
+        }
+        for &(i, r, t) in &dropped {
+            tracing::info!(
+                "output sharpen: mask {} at radius {} and threshold {} is past the {MOST_OWN} \
+                 settings of their own a picture takes, and sharpens at the picture's",
+                i + 1,
+                f32::from_bits(r),
+                f32::from_bits(t)
+            );
+        }
+        let said = !dropped.is_empty();
+        *last = dropped;
+        said
+    }
+}
+
+/// The output sharpen a finish under its masks runs (§663, §730):
+/// unsharp terms summed on the encoded luminance, each its own amount,
+/// blur, and threshold. At a pixel, with `w` a mask's weight times its
+/// opacity and `s` its share,
+///
+/// ```text
+/// A₀ = clamp(base · Π(1 + w·s⁻) + Σ₀ w·s⁺, 0, 2)
+/// Aₖ = clamp(Σₖ w·s⁺, 0, 2)                       k = 1..=3
+/// S  = A₀ + Σₖ Aₖ;  where S > 2, every Aᵢ ← Aᵢ · 2 / S
+/// δ  = A₀ · soft(l − B₀, t₀) + Σₖ Aₖ · soft(l − Bₖ, tₖ)
+/// ```
+///
+/// Term 0 is the picture's, at its Radius and Threshold: its own
+/// Amount, every mask's take (a negative share, which scales the
+/// picture's alone), and the positive shares of the masks with no
+/// Radius or Threshold of their own, or with the picture's. Term `k` is
+/// an own setting's ([`MOST_OWN`]): the positive shares of the masks at
+/// that radius and threshold. `Bₖ` is the luminance's blur at the
+/// term's radius, and `δ` moves it as one term does ([`apply`]), held at
+/// zero under AgX's rail by the amounts' sum. The sum is held at 200%
+/// as one term's amount is, so a radius moved off the picture's, or a
+/// setting past the cap sharpening at the picture's, changes the
+/// radius and not how much a pixel takes. With no own setting this is
+/// §730's single term, to the bit.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Plan {
+    /// Term 0: the picture's own amount (none while its section is
+    /// off), its radius and threshold held to the ends whether it is on
+    /// or off, and the hold.
+    pub picture: Params,
+    /// Whether term 0 can act anywhere: the picture's amount, or a
+    /// mask's positive share at its settings. Not blurred otherwise.
+    pub picture_acts: bool,
+    /// The own settings, `(radius, threshold)`: the first [`MOST_OWN`]
+    /// distinct ones in the masks' order, then sorted by radius and
+    /// threshold, so the terms sum in one order whatever the masks'.
+    pub own: Vec<(f32, f32)>,
+    /// Whether each pixel's amounts are its own ([`Plan::amounts_at`]):
+    /// some mask has a share. Otherwise every pixel takes term 0 at the
+    /// picture's amount.
+    pub shared: bool,
+}
+
+impl Plan {
+    /// What a finish of the picture's sharpen `s` under `locals` runs,
+    /// or none when nothing sharpens: the picture's off and no mask's
+    /// share positive (a take alone takes from nothing).
+    pub fn finishing(s: &OutputSharpen, locals: &[crate::finish::Local]) -> Option<Self> {
+        let held = s.held();
+        let picture = Params {
+            amount: Params::of(s).map_or(0.0, |p| p.amount),
+            sigma: held.radius,
+            threshold: held.threshold,
+            hold: false,
+        };
+        let mut plan = Plan {
+            picture,
+            picture_acts: picture.amount > 0.0,
+            own: Vec::new(),
+            shared: false,
+        };
+        // The masks whose own setting the cap sent to the picture's, by
+        // their place, with the setting.
+        let mut dropped: Vec<(usize, u32, u32)> = Vec::new();
+        for (i, l) in locals
+            .iter()
+            .enumerate()
+            .filter(|(_, l)| l.enabled && l.opacity > 0.0)
+        {
+            let share = l.baked.output_share;
+            plan.shared |= share != 0.0;
+            if share <= 0.0 {
+                continue;
+            }
+            let key = plan.key(&l.baked);
+            if key == (picture.sigma, picture.threshold) || plan.own.contains(&key) {
+                plan.picture_acts |= key == (picture.sigma, picture.threshold);
+            } else if plan.own.len() < MOST_OWN {
+                plan.own.push(key);
+            } else {
+                plan.picture_acts = true;
+                dropped.push((i, key.0.to_bits(), key.1.to_bits()));
+            }
+        }
+        DROPPED.say(dropped);
+        // By radius, then threshold: the terms sum in one order whatever
+        // the masks' order, so two masks swapped are the same picture to
+        // the bit.
+        plan.own
+            .sort_by(|a, b| a.0.total_cmp(&b.0).then(a.1.total_cmp(&b.1)));
+        (plan.picture_acts || !plan.own.is_empty()).then_some(plan)
+    }
+
+    /// These, held at zero under AgX's rail or not ([`Params::hold`]).
+    pub fn holding(self, hold: bool) -> Self {
+        Plan {
+            picture: self.picture.holding(hold),
+            ..self
+        }
+    }
+
+    /// The radius and threshold a local's positive share sharpens at.
+    fn key(&self, b: &crate::finish::Baked) -> (f32, f32) {
+        (
+            b.output_radius.unwrap_or(self.picture.sigma),
+            b.output_threshold.unwrap_or(self.picture.threshold),
+        )
+    }
+
+    /// The term a local's share goes to: 0, the picture's, for a take,
+    /// for a share at the picture's settings, and past [`MOST_OWN`]; `k`
+    /// for the own setting `k - 1`.
+    pub fn term_of(&self, b: &crate::finish::Baked) -> usize {
+        if b.output_share <= 0.0 {
+            return 0;
+        }
+        let key = self.key(b);
+        self.own.iter().position(|k| *k == key).map_or(0, |k| k + 1)
+    }
+
+    /// Amounts a pixel: term 0 and each own setting's.
+    pub fn terms(&self) -> usize {
+        1 + self.own.len()
+    }
+
+    /// The terms' amounts at a pixel into `out` ([`Self::terms`] long),
+    /// from each local's share under its weight `w` there. A share under
+    /// zero scales the picture's amount by `1 + w·share`, so -1 is none
+    /// of the picture's under the mask whatever its amount, and -0.5
+    /// half; one over zero adds `w·share` to its term, so +1 is 100%
+    /// more, and over the picture's off 100% under it alone. With
+    /// several masks the scales multiply and the additions sum, the
+    /// scales on the picture's amount before the additions: each mask's
+    /// take is of the picture's sharpening, never of another mask's,
+    /// and the order of the masks does not count. Each held to the
+    /// amount's ends, and their sum held at the top by scaling every
+    /// term alike.
+    #[inline]
+    pub fn amounts_at(&self, locals: &[(&crate::finish::Baked, f32)], out: &mut [f32]) {
+        let mut scale = 1.0;
+        out.fill(0.0);
+        for (b, w) in locals {
+            let s = w * b.output_share;
+            if s < 0.0 {
+                scale *= (1.0 + s).max(0.0);
+            } else if self.own.is_empty() {
+                out[0] += s;
+            } else {
+                out[self.term_of(b)] += s;
+            }
+        }
+        out[0] = (self.picture.amount * scale + out[0]).clamp(0.0, AMOUNT_MAX);
+        if self.own.is_empty() {
+            return;
+        }
+        // The sum held at the amount's top, every term scaled alike: so
+        // a mask's radius moved off the picture's, or past the cap onto
+        // it, changes the radius and not how much the pixel takes. With
+        // no own term the clamp above is this.
+        let mut sum = out[0];
+        for a in &mut out[1..] {
+            *a = a.clamp(0.0, AMOUNT_MAX);
+            sum += *a;
+        }
+        if sum > AMOUNT_MAX {
+            let held = AMOUNT_MAX / sum;
+            for a in out.iter_mut() {
+                *a *= held;
+            }
+        }
+    }
+
+    /// Taps a side of the widest blur: what a band of rows needs beyond
+    /// it.
+    pub fn reach(&self) -> usize {
+        let own = self.own.iter().map(|&(r, _)| half_width(r));
+        own.chain(self.picture_acts.then(|| self.picture.reach()))
+            .max()
+            .unwrap_or(1)
+    }
+
+    /// The blurs the terms read, by radius, each once: term 0's first
+    /// where it acts, then each own radius not yet among them; and
+    /// which of them each term reads (none for term 0 where it does
+    /// not act).
+    pub fn blurs(&self) -> (Vec<f32>, Vec<Option<usize>>) {
+        let mut radii: Vec<f32> = Vec::new();
+        let of = |r: f32, radii: &mut Vec<f32>| match radii.iter().position(|x| *x == r) {
+            Some(i) => i,
+            None => {
+                radii.push(r);
+                radii.len() - 1
+            }
+        };
+        let mut reads = vec![
+            self.picture_acts
+                .then(|| of(self.picture.sigma, &mut radii)),
+        ];
+        for &(r, _) in &self.own {
+            reads.push(Some(of(r, &mut radii)));
+        }
+        (radii, reads)
+    }
+
+    /// The threshold each term sharpens at.
+    pub fn thresholds(&self) -> impl Iterator<Item = f32> + '_ {
+        std::iter::once(self.picture.threshold).chain(self.own.iter().map(|&(_, t)| t))
+    }
+}
+
+/// §730's amount at a pixel, one term at the picture's radius, as it
+/// was written before a mask had settings of its own: the reference
+/// [`Plan::amounts_at`]'s term 0 is held to, to the bit.
+#[cfg(test)]
+pub(crate) fn amount_at(base: f32, locals: &[(&crate::finish::Baked, f32)]) -> f32 {
     let (mut scale, mut add) = (1.0, 0.0);
     for (b, w) in locals {
         let s = w * b.output_share;
@@ -201,15 +410,28 @@ pub fn soft(d: f32, t: f32) -> f32 {
 /// all off) the pixel is not sharpened and is as it came, to the bit.
 #[inline]
 pub fn apply(c: [f32; 3], l: f32, blurred: f32, p: &Params) -> [f32; 3] {
-    if !c.iter().all(|v| v.is_finite()) || p.amount.is_nan() || p.amount <= 0.0 {
+    moved(
+        c,
+        l,
+        p.amount,
+        p.amount * soft(l - blurred, p.threshold),
+        p.hold,
+    )
+}
+
+/// `c` with luminance `l` moved by `delta` in encoded luminance, as
+/// [`apply`] moves it: `amount` the terms' amounts summed, which says
+/// whether the pixel is sharpened at all and how far it is held.
+#[inline]
+pub fn moved(c: [f32; 3], l: f32, amount: f32, delta: f32, hold: bool) -> [f32; 3] {
+    if !c.iter().all(|v| v.is_finite()) || amount.is_nan() || amount <= 0.0 {
         return c;
     }
     // Held, every pixel the sharpen passes over is held at zero from
     // below, moved or not, so a flat stretch outside the gamut is
     // clipped as its sharpened edge is: whole from `HOLD_RAMP` up, by
     // the amount's share of it under that.
-    let c = if p.hold { held(c, p.amount) } else { c };
-    let delta = p.amount * soft(l - blurred, p.threshold);
+    let c = if hold { held(c, amount) } else { c };
     if delta == 0.0 || !delta.is_finite() {
         return c;
     }
@@ -329,6 +551,51 @@ pub(crate) fn sharpen_rows(
         .map(|(i, (c, (l, b)))| match amounts {
             Some(a) => apply(*c, *l, *b, &Params { amount: a[i], ..*p }),
             None => apply(*c, *l, *b, p),
+        })
+        .collect()
+}
+
+/// [`sharpen_rows`] by `plan`'s terms ([`Plan`]): `amounts`, when
+/// given, each pixel's [`Plan::terms`] amounts in a row, term 0 at the
+/// picture's amount everywhere otherwise. With no own setting this is
+/// [`sharpen_rows`] of term 0, to the bit; with one, a pixel where only
+/// term 0 has an amount is what that makes it, to the bit.
+pub(crate) fn sharpen_plan_rows(
+    held: &[[f32; 3]],
+    w: usize,
+    rows: usize,
+    first: usize,
+    count: usize,
+    plan: &Plan,
+    amounts: Option<&[f32]>,
+) -> Vec<[f32; 3]> {
+    if plan.own.is_empty() {
+        return sharpen_rows(held, w, rows, first, count, &plan.picture, amounts);
+    }
+    let amounts = amounts.expect("a mask's own setting makes each pixel's amounts its own");
+    let l: Vec<f32> = held.par_iter().map(|c| luminance(*c)).collect();
+    let (radii, reads) = plan.blurs();
+    let blurs: Vec<Vec<f32>> = radii
+        .iter()
+        .map(|&r| blur_rows(&l, w, rows, first, count, r))
+        .collect();
+    let thresholds: Vec<f32> = plan.thresholds().collect();
+    let n = plan.terms();
+    let band = first * w..(first + count) * w;
+    held[band.clone()]
+        .par_iter()
+        .zip(l[band].par_iter())
+        .enumerate()
+        .map(|(i, (c, l))| {
+            let a = &amounts[i * n..(i + 1) * n];
+            let (mut amount, mut delta) = (0.0f32, 0.0f32);
+            for (k, (&a, read)) in a.iter().zip(&reads).enumerate() {
+                if let (true, Some(b)) = (a > 0.0, read) {
+                    amount += a;
+                    delta += a * soft(l - blurs[*b][i], thresholds[k]);
+                }
+            }
+            moved(*c, *l, amount, delta, plan.picture.hold)
         })
         .collect()
 }
@@ -657,7 +924,7 @@ mod tests {
     #[test]
     fn an_amount_a_pixel_is_the_pictures_or_none() {
         let (w, h) = (24, 6);
-        let (p, _) = Params::finishing(&on(1.2, 1.4, 0.01), &[]).unwrap();
+        let p = Plan::finishing(&on(1.2, 1.4, 0.01), &[]).unwrap().picture;
         let mut px: Vec<[f32; 3]> = step(w, h, 0.3, 0.7);
         px[3 * w + 2] = [0.4, -0.01, 0.2];
         let whole = sharpen_rows(&px, w, h, 0, h, &p, None);
@@ -679,24 +946,29 @@ mod tests {
             a.look.detail.output_sharpen = share;
             crate::finish::Local::of(&a, vec![None], None)
         };
-        assert_eq!(Params::finishing(&off, &[]), None);
-        assert_eq!(Params::finishing(&off, &[masked(-0.5)]), None);
+        assert_eq!(Plan::finishing(&off, &[]), None);
+        assert_eq!(Plan::finishing(&off, &[masked(-0.5)]), None);
         assert_eq!(
-            Params::finishing(&off, &[masked(-0.5), masked(0.3)]),
-            Some((
-                Params {
+            Plan::finishing(&off, &[masked(-0.5), masked(0.3)]),
+            Some(Plan {
+                picture: Params {
                     amount: 0.0,
                     sigma: 1.4,
                     threshold: 0.01,
                     hold: false,
                 },
-                true
-            ))
+                picture_acts: true,
+                own: Vec::new(),
+                shared: true,
+            })
         );
         let picture = on(1.2, 1.4, 0.01);
-        assert_eq!(Params::finishing(&picture, &[]).map(|p| p.1), Some(false));
         assert_eq!(
-            Params::finishing(&picture, &[masked(-0.5)]).map(|p| p.1),
+            Plan::finishing(&picture, &[]).map(|p| p.shared),
+            Some(false)
+        );
+        assert_eq!(
+            Plan::finishing(&picture, &[masked(-0.5)]).map(|p| p.shared),
             Some(true)
         );
         let local = |share: f32| crate::finish::Baked {
@@ -704,6 +976,26 @@ mod tests {
             ..crate::finish::Baked::of(&greycard_edit::Look::default())
         };
         let (a, b, off) = (local(1.0), local(-0.5), local(-1.0));
+        // The plan's term 0 is this, to the bit, with no own setting.
+        let at_picture = |base: f32| Plan {
+            picture: Params { amount: base, ..p },
+            picture_acts: true,
+            own: Vec::new(),
+            shared: true,
+        };
+        for (base, on) in [
+            (0.0, vec![(&a, 0.25)]),
+            (1.0, vec![(&a, 1.0), (&a, 1.0)]),
+            (2.0, vec![(&off, 1.0)]),
+            (1.0, vec![(&b, 0.5)]),
+            (1.5, vec![(&off, 1.0), (&a, 0.5)]),
+            (1.0, vec![(&b, 1.0), (&a, 0.25)]),
+            (0.7, vec![(&b, 0.3), (&a, 0.37), (&b, 0.9), (&a, 0.11)]),
+        ] {
+            let mut out = [0.0];
+            at_picture(base).amounts_at(&on, &mut out);
+            assert_eq!(out[0].to_bits(), amount_at(base, &on).to_bits());
+        }
         assert_eq!(amount_at(0.0, &[(&a, 0.25)]), 0.25);
         assert_eq!(amount_at(1.0, &[(&a, 1.0), (&a, 1.0)]), AMOUNT_MAX);
         // A take scales the picture's: -100 is none at any amount,
@@ -741,6 +1033,263 @@ mod tests {
             let hi = (y0 + count + n).min(h);
             let band = sharpen_rows(&px[lo * w..hi * w], w, hi - lo, y0 - lo, count, &p, None);
             assert_eq!(band, whole[y0 * w..(y0 + count) * w], "rows {y0} on");
+        }
+    }
+
+    /// A local with an Output sharpen share and, maybe, its own Radius
+    /// and Threshold, as the finish bakes it.
+    fn masked(share: f32, radius: Option<f32>, threshold: Option<f32>) -> crate::finish::Local {
+        let mut a = greycard_edit::Adjustment::default();
+        a.mask.components.push(Default::default());
+        a.look.detail.output_sharpen = share;
+        a.look.detail.output_sharpen_radius = radius;
+        a.look.detail.output_sharpen_threshold = threshold;
+        crate::finish::Local::of(&a, vec![None], None)
+    }
+
+    /// Which term each mask's share goes to: a take, a share with no
+    /// settings of its own, and one with the picture's own, to the
+    /// picture's; one with its own Radius or Threshold to a term of its
+    /// own, shared by every mask at the same two; three own settings at
+    /// most, a fourth at the picture's. Each radius is blurred once.
+    #[test]
+    fn a_masks_own_settings_are_a_term_of_their_own() {
+        let picture = on(1.0, 1.3, 0.005);
+        let locals = [
+            masked(0.5, Some(3.0), None),
+            masked(0.5, Some(1.3), Some(0.005)),
+            masked(-0.5, Some(3.0), Some(0.0)),
+            masked(1.0, None, Some(0.0)),
+            masked(0.2, Some(3.0), None),
+            masked(2.0, Some(0.5), Some(0.1)),
+            masked(1.0, Some(2.0), None),
+            masked(0.0, Some(2.5), None),
+        ];
+        let plan = Plan::finishing(&picture, &locals).unwrap();
+        assert_eq!(plan.own, vec![(0.5, 0.1), (1.3, 0.0), (3.0, 0.005)]);
+        assert!(plan.picture_acts && plan.shared);
+        let terms: Vec<usize> = locals.iter().map(|l| plan.term_of(&l.baked)).collect();
+        assert_eq!(terms, vec![3, 0, 0, 2, 3, 1, 0, 0]);
+        // The picture's radius blurred once for terms 0 and 2.
+        assert_eq!(
+            plan.blurs(),
+            (
+                vec![1.3, 0.5, 3.0],
+                vec![Some(0), Some(1), Some(0), Some(2)]
+            )
+        );
+        assert_eq!(plan.reach(), MOST_TAPS);
+        // Held to the sliders' ends as baked.
+        let wide = masked(1.0, Some(9.0), Some(-1.0));
+        let plan = Plan::finishing(&picture.with_off(), std::slice::from_ref(&wide)).unwrap();
+        assert_eq!(plan.own, vec![(3.0, 0.0)]);
+        // The picture's off and only own settings: its radius is not
+        // blurred, and the reach is the own one's.
+        let only = [masked(1.0, Some(0.5), None)];
+        let plan = Plan::finishing(&picture.with_off(), &only).unwrap();
+        assert!(!plan.picture_acts);
+        assert_eq!(plan.blurs(), (vec![0.5], vec![None, Some(0)]));
+        assert_eq!(plan.reach(), 2);
+        // A take with its own radius over the picture's off: nothing.
+        assert_eq!(
+            Plan::finishing(&picture.with_off(), &[masked(-1.0, Some(3.0), None)]),
+            None
+        );
+        // Off under a Detail switched off.
+        let mut a = greycard_edit::Adjustment::default();
+        a.mask.components.push(Default::default());
+        a.look.detail.output_sharpen = 1.0;
+        a.look.detail.output_sharpen_radius = Some(3.0);
+        a.look.detail.enabled = false;
+        let off = crate::finish::Local::of(&a, vec![None], None);
+        assert_eq!(Plan::finishing(&picture.with_off(), &[off]), None);
+    }
+
+    /// The terms' amounts: the takes scale the picture's term alone, an
+    /// own term is its shares summed, each held at 200%, and where the
+    /// terms sum past 200% every one is scaled alike to 200%.
+    #[test]
+    fn own_terms_sum_their_shares_and_the_takes_leave_them() {
+        let picture = on(1.0, 1.3, 0.005);
+        let locals = [
+            masked(-0.5, None, None),
+            masked(1.5, Some(3.0), None),
+            masked(1.0, Some(3.0), None),
+            masked(2.0, None, Some(0.0)),
+        ];
+        let plan = Plan::finishing(&picture, &locals).unwrap();
+        let at = |on: &[(usize, f32)]| {
+            let on: Vec<(&crate::finish::Baked, f32)> =
+                on.iter().map(|&(i, w)| (&locals[i].baked, w)).collect();
+            let mut out = vec![0.0; plan.terms()];
+            plan.amounts_at(&on, &mut out);
+            out
+        };
+        assert_eq!(at(&[]), vec![1.0, 0.0, 0.0]);
+        assert_eq!(at(&[(0, 1.0), (1, 0.5)]), vec![0.5, 0.0, 0.75]);
+        assert_eq!(at(&[(3, 0.25)]), vec![1.0, 0.5, 0.0]);
+        // Past the top, held: 1 + 2 (its 2.5 held at 2) is 3, scaled by
+        // two thirds; 0.5 + 2 is 2.5, by four fifths.
+        let near = |got: Vec<f32>, want: [f32; 3]| {
+            assert!(
+                got.iter().zip(want).all(|(g, w)| (g - w).abs() < 1e-6),
+                "{got:?} against {want:?}"
+            );
+            assert!((got.iter().sum::<f32>() - AMOUNT_MAX).abs() < 1e-6);
+        };
+        near(at(&[(1, 1.0), (2, 1.0)]), [2.0 / 3.0, 0.0, 4.0 / 3.0]);
+        near(at(&[(0, 1.0), (3, 1.0)]), [0.4, 1.6, 0.0]);
+    }
+
+    /// The sum is continuous across the picture's radius: a mask at
+    /// +200 over the picture's 100% at radius 1, its own radius at 1.00
+    /// (the picture's term) and at 1.01 (a term of its own), takes 200%
+    /// either way; and past the cap, the fallback onto the picture's
+    /// term changes the radius and not the sum.
+    #[test]
+    fn the_sum_is_continuous_across_the_pictures_radius() {
+        let picture = on(1.0, 1.0, 0.01);
+        let total = |radius: f32| {
+            let locals = [masked(2.0, Some(radius), None)];
+            let plan = Plan::finishing(&picture, &locals).unwrap();
+            let mut out = vec![0.0; plan.terms()];
+            plan.amounts_at(&[(&locals[0].baked, 1.0)], &mut out);
+            (plan.terms(), out.iter().sum::<f32>())
+        };
+        let (at, off) = (total(1.0), total(1.01));
+        assert_eq!((at.0, off.0), (1, 2));
+        assert!((at.1 - off.1).abs() < 1e-6, "{at:?} against {off:?}");
+        assert_eq!(at.1, AMOUNT_MAX);
+        // Four own settings: the fourth on the picture's term, the sum
+        // the same as were it a term of its own.
+        let locals = [
+            masked(0.5, Some(0.6), None),
+            masked(0.5, Some(1.1), None),
+            masked(0.5, Some(2.0), None),
+            masked(0.9, Some(2.9), None),
+        ];
+        let plan = Plan::finishing(&picture, &locals).unwrap();
+        assert_eq!(plan.terms(), 4);
+        let on: Vec<(&crate::finish::Baked, f32)> =
+            locals.iter().map(|l| (&l.baked, 1.0)).collect();
+        let mut out = vec![0.0; 4];
+        plan.amounts_at(&on, &mut out);
+        assert!(
+            (out.iter().sum::<f32>() - AMOUNT_MAX).abs() < 1e-6,
+            "{out:?}"
+        );
+    }
+
+    /// The cap's fallback is said once each time it changes, not at
+    /// every plan: a draw and a finish of the same edit say it once.
+    #[test]
+    fn the_caps_fallback_is_said_once_a_change() {
+        let said = Dropped(std::sync::Mutex::new(Vec::new()));
+        let one = vec![(3, 2.9f32.to_bits(), 0.01f32.to_bits())];
+        assert!(!said.say(Vec::new()));
+        assert!(said.say(one.clone()));
+        assert!(!said.say(one.clone()));
+        assert!(!said.say(Vec::new()), "nothing to say when none is dropped");
+        assert!(said.say(one), "and again once it comes back");
+    }
+
+    /// Three own terms overlapping at their tops, over the picture's at
+    /// its top, are held at 200% together, each its share of it.
+    #[test]
+    fn three_overlapping_own_terms_are_held_at_the_top() {
+        let locals = [
+            masked(2.0, Some(0.6), None),
+            masked(2.0, Some(1.5), Some(0.0)),
+            masked(2.0, Some(3.0), Some(0.05)),
+        ];
+        let plan = Plan::finishing(&on(2.0, 1.0, 0.01), &locals).unwrap();
+        let on: Vec<(&crate::finish::Baked, f32)> =
+            locals.iter().map(|l| (&l.baked, 1.0)).collect();
+        let mut out = vec![0.0; plan.terms()];
+        plan.amounts_at(&on, &mut out);
+        assert_eq!(out.len(), 4);
+        assert!(out.iter().all(|a| (a - 0.5).abs() < 1e-6), "{out:?}");
+        assert!((out.iter().sum::<f32>() - AMOUNT_MAX).abs() < 1e-6);
+    }
+
+    /// The terms on a picture: with no own setting, the single term's
+    /// sharpen, to the bit; with one, each pixel where only the
+    /// picture's term has an amount is what that term makes it, to the
+    /// bit, and every pixel is the terms' deltas summed on the encoded
+    /// luminance, each against its own radius's blur and its own
+    /// threshold; and a band is the whole frame's rows, to the bit.
+    #[test]
+    fn the_terms_sum_on_the_luminance() {
+        let (w, h) = (40, 33);
+        let px: Vec<[f32; 3]> = (0..w * h)
+            .map(|i| {
+                let v = ((i * 2654435761) % 1000) as f32 / 1000.0;
+                [v, v * 0.7 + 0.05, 0.2]
+            })
+            .collect();
+        let picture = on(0.8, 1.3, 0.005);
+        let single = Plan::finishing(&picture, &[masked(0.4, None, None)]).unwrap();
+        let ones: Vec<f32> = (0..w * h).map(|i| (i % 7) as f32 * 0.2).collect();
+        assert_eq!(
+            sharpen_plan_rows(&px, w, h, 0, h, &single, Some(&ones)),
+            sharpen_rows(&px, w, h, 0, h, &single.picture, Some(&ones))
+        );
+        let locals = [
+            masked(0.6, Some(3.0), Some(0.0)),
+            masked(1.0, Some(0.5), None),
+        ];
+        let plan = Plan::finishing(&picture, &locals).unwrap();
+        assert_eq!(plan.terms(), 3);
+        // Amounts by pixel: the picture's alone on the left half, the
+        // terms each over their own stretches, all three on the right.
+        let amounts: Vec<f32> = (0..w * h)
+            .flat_map(|i| {
+                let x = i % w;
+                if x < w / 2 {
+                    [ones[i], 0.0, 0.0]
+                } else {
+                    [0.8, (x % 3) as f32 * 0.4, ((x + 1) % 2) as f32 * 1.7]
+                }
+            })
+            .collect();
+        let got = sharpen_plan_rows(&px, w, h, 0, h, &plan, Some(&amounts));
+        let alone = sharpen_rows(&px, w, h, 0, h, &plan.picture, Some(&ones));
+        let l: Vec<f32> = px.iter().map(|c| luminance(*c)).collect();
+        let blurred = [
+            blur(&l, w, h, 1.3),
+            blur(&l, w, h, 0.5),
+            blur(&l, w, h, 3.0),
+        ];
+        let thresholds = [0.005, 0.005, 0.0];
+        for i in 0..w * h {
+            if i % w < w / 2 {
+                assert_eq!(got[i], alone[i], "pixel {i}, the picture's term alone");
+                continue;
+            }
+            let a = &amounts[i * 3..i * 3 + 3];
+            let delta: f32 = (0..3)
+                .filter(|&k| a[k] > 0.0)
+                .map(|k| a[k] * soft(l[i] - blurred[k][i], thresholds[k]))
+                .sum();
+            let want = moved(px[i], l[i], a.iter().sum(), delta, false);
+            for k in 0..3 {
+                assert!((got[i][k] - want[k]).abs() < 1e-6, "pixel {i}");
+            }
+        }
+        let n = plan.reach();
+        for (y0, count) in [(0, 6), (6, 6), (17, 9), (27, 6)] {
+            let lo = y0 - n.min(y0);
+            let hi = (y0 + count + n).min(h);
+            let band = sharpen_plan_rows(
+                &px[lo * w..hi * w],
+                w,
+                hi - lo,
+                y0 - lo,
+                count,
+                &plan,
+                Some(&amounts[y0 * w * 3..(y0 + count) * w * 3]),
+            );
+            assert_eq!(band, got[y0 * w..(y0 + count) * w], "rows {y0} on");
         }
     }
 }
