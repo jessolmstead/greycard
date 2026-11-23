@@ -23,8 +23,6 @@ the reasoning lives in `docs/notes.md`.
 - [ ] Slint asks the card for every feature it has, so wgpu warns of
       `MAPPABLE_PRIMARY_BUFFERS` at every start; ask only for what we
       use, upstream in Slint
-- [ ] A mask's negative Output sharpen does nothing while the
-      picture's Amount is 0; show it disabled there
 - [ ] 0.12 saves a 0.13 sidecar that holds no state (a rating, a
       flag, or a turn only) again at schema 9: the floors go, and so
       would `turn_owed`, `line_id`, `undone`, and the tombstones; under
@@ -1467,10 +1465,8 @@ clears or a tester asks for it.
 - [ ] A mask's Detail with its own sharpen radius and threshold, and a
       denoise in a mask (a pixls tester, 2026-11-22)
 - [ ] SHARPEN's Radius past 2, to 3 (discussion 194)
-- [ ] A mask's own Output sharpen radii, their cost in the window
-      measured on a card (`the_cost_of_own_radii_in_the_window`), and
-      a fourth distinct setting said in the window, not only the log
-      (§736)
+- [ ] A mask's fourth distinct Output sharpen setting said in the
+      window, not only the log (§736)
 - [ ] A crop held to a longest side in pixels, to judge what
       resolution a tight crop leaves, as RawTherapee has (discussion
       194)

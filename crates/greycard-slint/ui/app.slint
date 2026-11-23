@@ -4934,6 +4934,8 @@ export component App inherits Window {
                                     local: true;
                                     detail-sharpen <=> root.local-sharpen;
                                     detail-output-sharpen <=> root.local-output-sharpen;
+                                    // As `OutputSharpen::is_off`.
+                                    picture-output-off: !root.output-sharpen-enabled || root.output-sharpen-amount <= 0;
                                     picture-output-radius: root.output-sharpen-radius;
                                     picture-output-threshold: root.output-sharpen-threshold;
                                     detail-output-radius <=> root.local-output-sharpen-radius;

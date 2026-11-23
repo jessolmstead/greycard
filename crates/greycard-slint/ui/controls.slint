@@ -1352,6 +1352,13 @@ export component EditSlider inherits Rectangle {
     in property <string> text;
     in property <float> minimum: 0;
     in property <float> maximum: 1;
+    // The least a drag, a key, the wheel, or a typed number sets: the
+    // minimum, unless another setting leaves the range's foot doing
+    // nothing. That foot is drawn dimmed and keeps its place on the
+    // track, so the slider's zero does not move. A value already in it
+    // (`lowest` raised past a stored one) stays until moved into reach:
+    // nothing here writes it for the raise alone.
+    in property <float> lowest: root.minimum;
     in property <float> default: 0;
     // A wheel's click, and the step a screen reader is told of.
     in property <float> step: 0.01;
@@ -1383,7 +1390,7 @@ export component EditSlider inherits Rectangle {
     accessible-role: slider;
     accessible-label: root.label;
     accessible-value: root.text;
-    accessible-value-minimum: root.minimum;
+    accessible-value-minimum: root.lowest;
     accessible-value-maximum: root.maximum;
     accessible-value-step: root.step;
     accessible-enabled: root.enabled;
@@ -1397,9 +1404,14 @@ export component EditSlider inherits Rectangle {
     property <length> track-left: label-width;
     property <length> track-right: self.width - value-width;
     property <length> track-width: track-right - track-left;
-    property <float> fraction: root.logarithmic
-        ? log(value / minimum, 2) / log(maximum / minimum, 2)
-        : (value - minimum) / (maximum - minimum);
+    pure function fraction-of(v: float) -> float {
+        return root.logarithmic
+            ? log(v / minimum, 2) / log(maximum / minimum, 2)
+            : (v - minimum) / (maximum - minimum);
+    }
+    property <float> fraction: root.fraction-of(root.value);
+    // Where the reach starts on the track: 0 unless `lowest` is raised.
+    property <float> lowest-fraction: root.fraction-of(root.lowest);
     property <bool> active: enabled && (ta.has-hover || ta.pressed || fs.has-focus);
     property <float> scroll-acc: 0;
     property <length> scroll-delta;
@@ -1453,10 +1465,17 @@ export component EditSlider inherits Rectangle {
     property <bool> fine-drag: false;
     property <bool> fine-held: false;
 
+    // What a move to `v` sets: `v` within reach; out of it, the
+    // value as it is when that is out of reach too, else `lowest`. A
+    // value left out of reach by `lowest` stays until a move brings it
+    // in.
+    function reach(v: float) -> float {
+        return v >= root.lowest ? v : min(root.value, root.lowest);
+    }
     function set-fraction(f: float) {
-        value = root.logarithmic
+        value = root.reach(root.logarithmic
             ? clamp(minimum * pow(maximum / minimum, clamp(f, 0, 1)), minimum, maximum)
-            : clamp(minimum + clamp(f, 0, 1) * (maximum - minimum), minimum, maximum);
+            : clamp(minimum + clamp(f, 0, 1) * (maximum - minimum), minimum, maximum));
         changed(value);
     }
     function set-from(x: length) {
@@ -1490,9 +1509,11 @@ export component EditSlider inherits Rectangle {
     // step keys are still its own, taken and doing nothing.
     function nudge(by: float) {
         if (!root.enabled) { return; }
-        value = root.logarithmic
+        let to = root.logarithmic
             ? clamp(value * pow(2, by), minimum, maximum)
             : clamp(value + by, minimum, maximum);
+        // A step up from out of reach goes to its edge.
+        value = by > 0 ? max(to, root.lowest) : root.reach(to);
         root.step-count += 1;
         root.stepped = true;
         changed(value);
@@ -1617,6 +1638,16 @@ export component EditSlider inherits Rectangle {
                 : root.active ? Theme.accent-hover
                 : Theme.accent;
         }
+        // The foot out of reach, drawn as a disabled track over the
+        // fill.
+        if root.lowest-fraction > 0: Rectangle {
+            x: 0;
+            width: root.lowest-fraction * track.width;
+            height: 100%;
+            border-top-left-radius: parent.border-radius;
+            border-bottom-left-radius: parent.border-radius;
+            background: Theme.border;
+        }
     }
     handle := Rectangle {
         property <length> size: root.active ? 16px : 14px;
@@ -1625,7 +1656,10 @@ export component EditSlider inherits Rectangle {
         width: size;
         height: size;
         border-radius: self.width / 2;
-        background: !root.enabled ? Theme.text-muted : ta.pressed ? Theme.text-strong : Theme.text;
+        // Out of reach, a value that does nothing is drawn as a
+        // disabled one.
+        background: !root.enabled || root.value < root.lowest ? Theme.text-muted
+            : ta.pressed ? Theme.text-strong : Theme.text;
         border-width: fs.has-focus ? 2px : 0;
         border-color: Theme.focus-ring;
         animate width, height { duration: Theme.quick; }
@@ -1727,7 +1761,7 @@ export component EditSlider inherits Rectangle {
             if (root.owner-resets) {
                 root.reset();
             } else {
-                root.value = root.default;
+                root.value = max(root.default, root.lowest);
                 root.changed(root.value);
             }
         }
@@ -1778,7 +1812,7 @@ export component EditSlider inherits Rectangle {
         nudged(way, big) => { root.bump(way, big); }
         tabbed(way) => { root.ask(way, true); }
         committed(typed) => {
-            let entered = Typing.parse(typed, root.scale, root.minimum, root.maximum);
+            let entered = Typing.parse(typed, root.scale, root.lowest, root.maximum);
             if (entered.ok) {
                 root.value = entered.value;
                 root.changed(root.value);

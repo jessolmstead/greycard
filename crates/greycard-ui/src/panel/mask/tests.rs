@@ -600,6 +600,129 @@ fn a_masks_output_sharpen_has_its_own_radius_and_threshold() {
     assert!(!enabled(radius_id) && !enabled(threshold_id));
 }
 
+/// While the picture's output sharpen does nothing (no Amount, or
+/// off), a mask's take has nothing to take from: the share's negative
+/// half is out of reach of a drag, a key, and a typed number, and a
+/// take already stored stays as it is in the edit through the Amount's
+/// going to 0 and back, with no step of its own. With an Amount the
+/// whole range is the slider's.
+#[test]
+fn a_masks_take_is_out_of_reach_while_the_pictures_output_sharpen_does_nothing() {
+    use i_slint_backend_testing::ElementHandle;
+    use slint::ComponentHandle;
+    use slint::platform::Key;
+    let app = window(1);
+    app.window()
+        .set_size(slint::LogicalSize::new(1500.0, 4000.0));
+    let (state, _worker) = crate::testing::state_for(&app, crate::testing::folder(1));
+    app.invoke_select(0);
+    rest();
+    app.set_panel_tab("Masks".into());
+    app.invoke_new_mask();
+    app.invoke_target_changed(1);
+    for (_, _, set) in crate::panel::edit::FOLDS {
+        set(&app, true);
+    }
+    app.set_collapsed_detail(false);
+    crate::testing::settle(&app);
+    state.borrow_mut().develop.edit.adjustments[0]
+        .mask
+        .components
+        .push(greycard_edit::mask::Component::default());
+    rest();
+    const SHARE: &str = "DetailSection::output-sharpen-slider";
+    let share = || app.get_local_output_sharpen();
+    let lowest = || {
+        ElementHandle::find_by_element_id(&app, SHARE)
+            .find_map(|e| e.accessible_value_minimum())
+            .unwrap()
+    };
+    let edit = || {
+        let st = state.borrow();
+        read_edit(&app, &st.develop.edit, st.develop.target)
+    };
+    let steps = || state.borrow().sidecars[0].states();
+    // From the track's middle to past its left end.
+    let drag_left = || {
+        let (x, y) = crate::testing::track_middle(&app, SHARE);
+        let (at, _) = crate::testing::by_id(&app, SHARE);
+        crate::testing::drag(&app, &[(x, y), (x - 10.0, y), (at.x - 20.0, y)]);
+        crate::testing::settle(&app);
+    };
+    let typed = |text: &str| {
+        let (at, size) = crate::testing::slider_field(&app, SHARE);
+        click(&app, at.x + size.width / 2.0, at.y + size.height / 2.0);
+        crate::testing::type_text(&app, text);
+        crate::testing::press(&app, Key::Return);
+        crate::testing::settle(&app);
+    };
+    let down = |n: usize| {
+        for _ in 0..n {
+            crate::testing::press(&app, Key::DownArrow);
+        }
+        crate::testing::settle(&app);
+    };
+
+    // At no Amount: a drag, the keys, and a typed number stop at 0.
+    assert_eq!(app.get_output_sharpen_amount(), 0.0);
+    assert_eq!(lowest(), 0.0);
+    drag_left();
+    assert_eq!(share(), 0.0, "a drag stops at 0");
+    down(3);
+    crate::testing::press(&app, "-");
+    assert_eq!(share(), 0.0, "the keys stop at 0");
+    typed("-50");
+    assert_eq!(share(), 0.0, "a typed take stops at 0");
+    // Switched off, the same.
+    app.set_output_sharpen_amount(0.4);
+    app.set_output_sharpen_enabled(false);
+    crate::testing::settle(&app);
+    assert_eq!(lowest(), 0.0, "switched off");
+
+    // With an Amount, the whole range.
+    app.set_output_sharpen_enabled(true);
+    app.invoke_view_changed();
+    rest();
+    crate::testing::settle(&app);
+    assert_eq!(lowest(), -1.0);
+    drag_left();
+    assert_eq!(share(), -1.0, "a drag reaches -100");
+    typed("-50");
+    rest();
+    assert_eq!(share(), -0.5);
+    assert_eq!(edit().adjustments[0].look.detail.output_sharpen, -0.5);
+
+    // The take kept through the Amount's going to 0 and back, each the
+    // Amount's step alone.
+    let kept = edit();
+    let before = steps();
+    app.set_output_sharpen_amount(0.0);
+    app.invoke_view_changed();
+    rest();
+    crate::testing::settle(&app);
+    assert_eq!(steps(), before + 1, "the Amount's step");
+    assert_eq!(lowest(), 0.0);
+    assert_eq!(share(), -0.5, "the take shown as it is");
+    assert_eq!(edit().adjustments, kept.adjustments, "the take kept");
+    // Out of reach, a key down leaves it, a key up brings it to 0.
+    let (x, y) = crate::testing::slider_label(&app, SHARE);
+    click(&app, x, y);
+    down(1);
+    assert_eq!(share(), -0.5, "a key down leaves a take out of reach");
+    app.set_output_sharpen_amount(0.4);
+    app.invoke_view_changed();
+    rest();
+    crate::testing::settle(&app);
+    assert_eq!(steps(), before + 2, "the Amount's step");
+    assert_eq!(edit(), kept, "the edit as it was");
+    assert_eq!(lowest(), -1.0);
+    app.set_output_sharpen_amount(0.0);
+    crate::testing::settle(&app);
+    crate::testing::press(&app, Key::UpArrow);
+    crate::testing::settle(&app);
+    assert_eq!(share(), 0.0, "a key up brings a take into reach");
+}
+
 /// A look change while a tool is in hand hides the overlay and
 /// drops the toggle kept for the tool going down, so it does not
 /// come back over the edit.

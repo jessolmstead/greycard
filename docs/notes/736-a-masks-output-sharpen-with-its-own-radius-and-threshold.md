@@ -59,5 +59,12 @@ Ti.
 **Cost.** A 45 MP export at four threads: the picture's sharpen 4.7 s,
 with one mask at its own radius 5.6 s, with three 6.6 s; no extra peak
 memory. The window on lavapipe goes from 28.4 ms (the picture's alone)
-to 43.3 ms with one own radius and 67.4 ms with three. A card's own
-numbers are not measured yet.
+to 43.3 ms with one own radius and 67.4 ms with three. On an RTX
+5070 Ti it is 1.0 ms a draw, 1.4 ms with one own radius, and 2.0 ms
+with three.
+
+**Out of reach (2026-11-23).** A share under zero scales the picture's
+own sharpen, so it does nothing while that is off or at no Amount. The
+slider's negative half is then drawn dimmed and no drag, key, or typed
+number goes under zero. A share already stored stays, drawn muted, and
+acts again when the Amount rises: nothing is written for the change.
