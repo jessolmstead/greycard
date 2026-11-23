@@ -11,8 +11,25 @@ the reasoning lives in `docs/notes.md`.
       sitting covered on another monitor, while clicks go on being
       handled, and comes back minutes later: winit 0.30 waits on a
       frame callback mutter does not send. The log names the stall
-      (`window: a press ... no frame since`); the fix is winit's or
-      Slint's, and waits on a logged stall to report with
+      (`window: a press ... no frame since`). A winit patch that
+      redraws a window whose callback is held back is on a branch; it
+      needs a hosted fork, the notices, a review, and its report
+      upstream
+- [ ] A second stall under the same patch: mutter 51 never applies a
+      commit carrying `wp_commit_timer_v1.set_timestamp` until
+      something else repaints, reproduced with a small C client, and
+      seen for 51 s on NVIDIA with explicit sync. Waits on the report
+      to mutter, and a run with `__NV_DISABLE_EXPLICIT_SYNC=1`
+- [ ] Slint asks the card for every feature it has, so wgpu warns of
+      `MAPPABLE_PRIMARY_BUFFERS` at every start; ask only for what we
+      use, upstream in Slint
+- [ ] A mask's negative Output sharpen does nothing while the
+      picture's Amount is 0; show it disabled there
+- [ ] 0.12 against a sidecar 0.13 saved with an edit, run and not
+      only read in its source: shown unedited, nothing written over
+      (§734); before the cut
+- [ ] The fuzz targets run, not only built, against schema 10's
+      sidecar round trip (§734)
 - [ ] The Back up sheet says "N frames already there have newer
       sidecars here" for every sidecar-only item, also when the
       archive's edit is the newer one coming home, or a join
@@ -185,6 +202,13 @@ the reasoning lives in `docs/notes.md`.
       `a_cached_thumbnail_job_finds_what_the_pool_kept` under load
       (2026-11-22). Its wait is longer now; the abort itself is not
       found
+- [ ] An index a later greycard wrote is refused in silence: the
+      roots show empty and will not expand, and only the log says why
+      (issue 199). Say it in the window, or list the roots from disk
+- [ ] A left-click that closes the picture's context menu moves the
+      picture toward the click, on Windows at 1:1 (issue 179); the
+      right press's release may never reach the viewport. Unverified
+      here
 - [ ] A right-click while a menu is open does not close it, on
       Windows (issue 179); unverified here
 - [ ] The native context menu on Windows opens away from the pointer
@@ -999,8 +1023,11 @@ clears or a tester asks for it.
       order on Develop, Crop, Masks and Retouch tabs since 2026-09-14
 - [ ] The gamut op under AgX (§735): AgX keeps process 1's finish, a
       look table cut per channel at its entry and the output sharpen's
-      hold. Waits on the owner's eye on a comparison, and a measure of
-      how far existing matches move
+      hold. A trial (2026-11-22, CPU, sRGB) found no clear win: the
+      op's top after AgX's rail changes nothing without a look and
+      turns hue with one; the op in AgX's place takes about 5% of
+      chroma from saturated colors with no look at all. Left as it is
+      until a frame of the owner's clips under a look
 - [ ] Export to an ICC profile the user loads, matrix or table
       (discussion 193)
 - [ ] ProPhoto as an export color space, beside sRGB, Display P3,
@@ -1397,6 +1424,13 @@ clears or a tester asks for it.
 #### User Requests
 
 - [ ] MIDI Controller support
+- [ ] A second key for the Original at its own geometry, uncropped
+      and unturned, with the view fit while it shows (issue 198); it
+      needs a develop of its own, the kept Original being the edit's
+- [ ] An export that leaves out the location alone and keeps the rest
+      of the metadata (discussion 147)
+- [ ] The lens found or picked by hand written as LensModel on an
+      export whose source has none, for every maker (issue 197)
 - [ ] The filter bar's Kind row shown disabled, not hidden, where
       the frames hold one kind (discussion 59, 2026-11-22)
 - [ ] A `{total}` token in the import's and the export's Name, for
@@ -1787,6 +1821,9 @@ release when the wait clears.
 - [ ] The makers' embedded lens corrections, exact where a file carries
       them. Waits on rawler surfacing them (and the Panasonic lens name)
       (discussion 187)
+- [ ] Pentax's lens read from the makernote's LensType, in rawler,
+      so a K-3 III's or K-1's DNG and PEF find their lens (issue 197);
+      waits on the reporter's samples
 - [ ] lensfun calibrates the Sigma 50mm f/1.4 DG HSM Art with a
       distortion k1 of exactly zero (made on a Canon 6D), so it gets no
       distortion correction where Adobe's profile straightens it; measure
