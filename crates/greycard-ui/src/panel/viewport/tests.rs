@@ -2859,7 +2859,20 @@ fn the_masks_menus_hand_the_keys_back() {
             .count()
     };
     app.set_landscape_kinds(offers(&["Foliage", "Water"]));
-    app.set_landscape_menu_shown(true);
+    // The offer `found` leaves, which the menu's timer asks after
+    // as it opens, a turn later.
+    state.borrow_mut().develop.landscape_offer = Some(crate::panel::landscape::Pending {
+        id: 1,
+        mode: greycard_edit::mask::Mode::Add,
+    });
+    let raise = || {
+        app.set_landscape_menu_shown(true);
+        for _ in 0..2 {
+            i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(20));
+            slint::platform::update_timers_and_animations();
+        }
+    };
+    raise();
     assert_eq!(water_offered(), 1);
     assert!(app.get_menu_up(), "the menu took the keys' focus");
     crate::testing::press(&app, Key::DownArrow);
@@ -2874,7 +2887,7 @@ fn the_masks_menus_hand_the_keys_back() {
     assert_eq!(steps.get(), 3, "Right is the window's");
 
     // Landscape put away with Escape: the same.
-    app.set_landscape_menu_shown(true);
+    raise();
     assert_eq!(water_offered(), 1);
     assert!(app.get_menu_up(), "the menu took the keys' focus");
     crate::testing::press(&app, Key::Escape);

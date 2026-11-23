@@ -1718,10 +1718,6 @@ clears or a tester asks for it.
       and its strip would do; upstream, rawler's `preview_image`
       takes the first preview listed, and a public
       `apply_linearization` would spare consumers the table
-- [ ] Landscape crashes the editor on an Apple Silicon Mac (issue
-      186). Read from the code, unproven: its menu is the one native
-      menu opened from a worker's answer instead of a click. Waits on
-      a run on the Mac (`--sheet landscape`) and the crashed run's log
 - [ ] A clearer name for the Lens section's From the file, which
       reads as the raw's own corrections (issue 189). The owner's
       wording

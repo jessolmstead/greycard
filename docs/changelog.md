@@ -117,6 +117,8 @@ design note behind it.
 
 ### Fixes
 
+- A Landscape mask no longer crashes the editor on a Mac: its menu
+  opens a turn after the answer, not inside it (issue 186).
 - An archive join of a frame turned on one computer no longer lands
   its crop and masks a quarter turn off
   ([§734](https://github.com/jessolmstead/greycard/blob/master/docs/notes/734-schema-10-as-built.md)).
