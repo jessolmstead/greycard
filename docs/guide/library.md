@@ -533,9 +533,9 @@ A frame's versions live in the same `.gcd` (see
 
 A newer greycard may write its `.gcd` files in a form an older one
 can't read: 0.13's are refused by 0.12, as 0.12's were by 0.11. An
-older version leaves such a frame's edit alone rather than
-write over it: it shows the camera's picture, and its
-log says why. From 0.13 on, a later version's file opens read-only
+older version leaves such a frame alone rather than write over it:
+it won't open it or change its rating, its status line says why, and
+an export of it comes out unedited. From 0.13 on, a later version's file opens read-only
 where it can be shown at all. Once a version has saved a frame, open it with that
 version or a later one. A damaged `.gcd` is left alone the same way;
 move it aside or delete it, then open the folder again, to start the

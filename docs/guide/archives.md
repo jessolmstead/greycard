@@ -232,5 +232,9 @@ and use **Delete rejects folder...** there.
 
 Once greycard 0.4 has opened your library, an older version refuses
 to open the library and leaves it as it is. Your raws and sidecars
-are not affected. A sidecar that 0.13 has saved with an edit can't be
-read by 0.12 or older, which leave it alone.
+are not affected. To go back to the older version, close greycard and
+rename `library.sqlite`: it builds a new index from your folders. A
+sidecar that 0.13 has saved with an edit, or exported from, can't be
+read by 0.12 or older, which leave it alone. One holding only a
+rating, a flag, a label, or a turn they read, and save again in their
+own form when you change it.

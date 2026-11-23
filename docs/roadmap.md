@@ -25,9 +25,20 @@ the reasoning lives in `docs/notes.md`.
       use, upstream in Slint
 - [ ] A mask's negative Output sharpen does nothing while the
       picture's Amount is 0; show it disabled there
-- [ ] 0.12 against a sidecar 0.13 saved with an edit, run and not
-      only read in its source: shown unedited, nothing written over
-      (§734); before the cut
+- [ ] 0.12 saves a 0.13 sidecar that holds no state (a rating, a
+      flag, or a turn only) again at schema 9: the floors go, and so
+      would `turn_owed`, `line_id`, `undone`, and the tombstones; under
+      another placement it removes 0.13's copy. Ratings and turns
+      survived every run (2026-11-22). Decide before the cut whether
+      such a file should be one 0.12 refuses
+- [ ] An export of a frame nobody developed records a state at
+      schema 10 (§734), after which 0.12 can't read its rating or
+      turn; any 0.13 save does the same to an edit 0.12 made. Keep
+      the export's record on the line without a state, or accept it;
+      before the cut
+- [ ] The library index's step from 17 to 18 changes only data, yet
+      locks 0.12 out (issue 199). Keep `user_version` at 17 with a
+      marker row, or accept it; before the cut
 - [ ] The fuzz targets run, not only built, against schema 10's
       sidecar round trip (§734)
 - [ ] The Back up sheet says "N frames already there have newer
@@ -202,9 +213,10 @@ the reasoning lives in `docs/notes.md`.
       `a_cached_thumbnail_job_finds_what_the_pool_kept` under load
       (2026-11-22). Its wait is longer now; the abort itself is not
       found
-- [ ] An index a later greycard wrote is refused in silence: the
-      roots show empty and will not expand, and only the log says why
-      (issue 199). Say it in the window, or list the roots from disk
+- [ ] An index a later greycard wrote is refused, and the Library
+      view's notice gives the path twice before the reason, which
+      falls off the window's edge; the roots list with no frames
+      (issue 199). Put the reason first, or list the roots from disk
 - [ ] A left-click that closes the picture's context menu moves the
       picture toward the click, on Windows at 1:1 (issue 179); the
       right press's release may never reach the viewport. Unverified
