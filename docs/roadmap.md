@@ -322,6 +322,8 @@ Decided (§34): ONNX Runtime through `ort`, CPU floor with CUDA, DirectML
 or CoreML when found; models downloaded on first use with their
 licenses, never bundled; a `greycard-ai` crate that core never sees.
 
+- [ ] A deblur in a mask: estimate the blur and reverse it, for a
+      subject a little out of focus, which a sharpen cannot bring back
 - [ ] AI masks, after Sky (§175): a learned sky matte for dense canopies and twigs
       against glare, where the color-line matte fails (needs clean
       data we assemble); more hard negatives
