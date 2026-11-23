@@ -205,6 +205,10 @@ the reasoning lives in `docs/notes.md`.
 - [ ] An index a later greycard wrote is refused in silence: the
       roots show empty and will not expand, and only the log says why
       (issue 199). Say it in the window, or list the roots from disk
+- [ ] A build from master calls itself by the last release's number
+      with a commit beside it, so a tester going back to the release
+      did not see it as older (issue 199). Decide: the next version's
+      number with a dev mark from the first commit after a release
 - [ ] A left-click that closes the picture's context menu moves the
       picture toward the click, on Windows at 1:1 (issue 179); the
       right press's release may never reach the viewport. Unverified
