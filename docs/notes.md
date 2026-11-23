@@ -746,3 +746,4 @@ in its section; the roadmap and the changelog only point at it.
 - [§732. The Windows builds signed through SignPath](notes/732-the-windows-builds-signed-through-signpath.md) (2026-11-22)
 - [§733. The render gate: kept pictures for existing edits](notes/733-the-render-gate.md) (2026-11-22)
 - [§734. Schema 10 as built](notes/734-schema-10-as-built.md) (2026-11-22)
+- [§735. The gamut op at the output: process 2](notes/735-the-gamut-op-at-the-output.md) (2026-11-22)

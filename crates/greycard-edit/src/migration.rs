@@ -408,7 +408,7 @@ fn develops_nothing(obj: &serde_json::Map<String, serde_json::Value>) -> bool {
     let [_, picture_then] = Edit::picture_defaults();
     [Edit::default(), picture_then].into_iter().any(|d| {
         edit.noise.learned_strength = d.noise.learned_strength;
-        edit == d
+        edit.develops_as(&d)
     })
 }
 

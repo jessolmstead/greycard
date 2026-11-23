@@ -459,16 +459,26 @@ ask for first.
       channel from the same linear develop the OpenColorIO renders
       start from, so a difference is the transform's and not the
       export's lens profile, crop or look (§227, §230)
-- [ ] The scene-referred tail's remaining parts, after the AgX port
-      (§226 for the design): (2) the master point curve on a norm with
-      the channels scaled by one ratio, the R, G and B curves per
-      channel; (3) a gamut compression at constant hue after the curves
-      and the look table, before the output matrix, in place of the
-      clamps at the curve, the look table and the output, measured as
-      §226 measures the hue turn in sRGB; (4) the clamp before the
-      curves dropped once the curve's range is guaranteed, a final clamp
-      to the encodable range kept. Each behind the comparison over the
-      archive sets and its own notes section
+- [ ] The scene-referred tail's remaining parts (§226; the gamut op
+      landed as §735): (2) the master point curve on a norm with the
+      channels scaled by one ratio, the R, G and B curves per channel;
+      (4) the clamp into the curves' range dropped once the curve's
+      range is guaranteed. Each behind the comparison over the archive
+      sets and its own notes section
+- [ ] The gamut op's cost: 3.3 to 3.9 times the clamp's finish on
+      saturated frames (§735)
+- [ ] The gamut op's hue drift to a reach of 1.2 (1.07 degrees sRGB,
+      1.16 P3, against 0.1) and the neon pink's sRGB-to-P3 hue (1.60
+      against 0.5), held to what was measured (§735)
+- [ ] Blue stage lights' hue reversals under the gamut op, a little
+      over the clamp's on four frames (§735); measure again on more
+      sets
+- [ ] The camera match's developer runners' constants
+      (`fit_lightroom`, `measure_baseline`), fitted under the clamp,
+      refit under the gamut op (§735)
+- [ ] The guide's lines on Per channel's hue shift toward white, and
+      on the clipping lamp's black end, checked by eye under the gamut
+      op (§735)
 - [ ] The demosaic's direction choices flip on inputs a millionth
       apart (AMaZE, RCD and VNG4 alike), so a frame's GPU and CPU
       chromatic aberration outputs, equal to 1e-5, still export a few
@@ -985,10 +995,10 @@ clears or a tester asks for it.
       first (§498)
 - [ ] The panel's look, refined as the editor grows (§14); in develop
       order on Develop, Crop, Masks and Retouch tabs since 2026-09-14
-- [ ] The gamut op after a look under AgX: today a look table that
-      pushes an AgX picture's colors out of range has them cut per
-      channel. Waits on the gamut op's landing, then the owner's eye
-      on a comparison, and a measure of how far existing matches move
+- [ ] The gamut op under AgX (§735): AgX keeps process 1's finish, a
+      look table cut per channel at its entry and the output sharpen's
+      hold. Waits on the owner's eye on a comparison, and a measure of
+      how far existing matches move
 - [ ] Export to an ICC profile the user loads, matrix or table
       (discussion 193)
 - [ ] ProPhoto as an export color space, beside sRGB, Display P3,

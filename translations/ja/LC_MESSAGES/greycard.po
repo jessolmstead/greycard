@@ -5150,7 +5150,7 @@ msgid "{name} removed; Settings can restore it"
 msgstr "{name}を削除しました。「設定」から復元できます"
 
 #: crates/greycard-ui/src/panel/assets.rs:2297
-#: crates/greycard-ui/src/panel/history.rs:1017
+#: crates/greycard-ui/src/panel/history.rs:1020
 msgid "{name} removed"
 msgstr "{name}を削除しました"
 
@@ -5202,7 +5202,7 @@ msgstr "カメラのJPEGあり、{}"
 #: crates/greycard-ui/src/panel/deliver.rs:1704
 #: crates/greycard-ui/src/panel/edit.rs:544
 #: crates/greycard-ui/src/panel/edit.rs:1340
-#: crates/greycard-ui/src/panel/history.rs:485
+#: crates/greycard-ui/src/panel/history.rs:488
 msgid "developing..."
 msgstr "現像中..."
 
@@ -6178,69 +6178,69 @@ msgstr "キューを実行中です。先に停止してください"
 msgid "export queue cleared ({sets})"
 msgstr "書き出しキューをクリアしました（{sets}）"
 
-#: crates/greycard-ui/src/panel/history.rs:105
+#: crates/greycard-ui/src/panel/history.rs:108
 #: crates/greycard-ui/src/panel/original.rs:25
 msgid "Original"
 msgstr "元の状態"
 
 #. History: the first step kept once earlier ones were dropped
-#: crates/greycard-ui/src/panel/history.rs:108
+#: crates/greycard-ui/src/panel/history.rs:111
 msgid "Earliest kept"
 msgstr "保持されている最初の手順"
 
-#: crates/greycard-ui/src/panel/history.rs:263
+#: crates/greycard-ui/src/panel/history.rs:266
 msgid "; the {what} shown once restored"
 msgstr "。{what}は復元後に表示されます"
 
-#: crates/greycard-ui/src/panel/history.rs:264
+#: crates/greycard-ui/src/panel/history.rs:267
 msgid " and "
 msgstr "と"
 
-#: crates/greycard-ui/src/panel/history.rs:302
+#: crates/greycard-ui/src/panel/history.rs:305
 msgid "{name}, {taken}; click to restore it"
 msgstr "{name}、{taken}。クリックで復元"
 
-#: crates/greycard-ui/src/panel/history.rs:307
+#: crates/greycard-ui/src/panel/history.rs:310
 msgid "{name}, {taken}; click to rename it"
 msgstr "{name}、{taken}。クリックで名前を変更"
 
-#: crates/greycard-ui/src/panel/history.rs:312
+#: crates/greycard-ui/src/panel/history.rs:315
 msgid "{name}, {taken}; click to remove it"
 msgstr "{name}、{taken}。クリックで削除"
 
-#: crates/greycard-ui/src/panel/history.rs:317
+#: crates/greycard-ui/src/panel/history.rs:320
 msgid "{name}, {taken}; click to restore, double-click to rename"
 msgstr "{name}、{taken}。クリックで復元、ダブルクリックで名前を変更"
 
-#: crates/greycard-ui/src/panel/history.rs:830
+#: crates/greycard-ui/src/panel/history.rs:833
 msgid " with the export preset {name}"
 msgstr "（書き出しプリセット「{name}」）"
 
-#: crates/greycard-ui/src/panel/history.rs:834
+#: crates/greycard-ui/src/panel/history.rs:837
 msgid ""
 "{file}, exported {when}{preset}; click to go back to the state it was "
 "exported from"
 msgstr "{file}、{when}に書き出し{preset}。クリックで書き出し時の状態に戻ります"
 
-#: crates/greycard-ui/src/panel/history.rs:844
+#: crates/greycard-ui/src/panel/history.rs:847
 msgid "the current state: {name}"
 msgstr "現在の状態：{name}"
 
-#: crates/greycard-ui/src/panel/history.rs:847
+#: crates/greycard-ui/src/panel/history.rs:850
 msgid "step {i}: {name}; click to make it current"
 msgstr "手順{i}：{name}。クリックでこの状態にします"
 
-#: crates/greycard-ui/src/panel/history.rs:892
+#: crates/greycard-ui/src/panel/history.rs:895
 msgid "{name} taken; type a name for it"
 msgstr "{name}を作成しました。名前を入力してください"
 
-#: crates/greycard-ui/src/panel/history.rs:924
-#: crates/greycard-ui/src/panel/history.rs:938
-#: crates/greycard-ui/src/panel/history.rs:945
+#: crates/greycard-ui/src/panel/history.rs:927
+#: crates/greycard-ui/src/panel/history.rs:941
+#: crates/greycard-ui/src/panel/history.rs:948
 msgid "{name} restored"
 msgstr "{name}を復元しました"
 
-#: crates/greycard-ui/src/panel/history.rs:941
+#: crates/greycard-ui/src/panel/history.rs:944
 msgid "{name} is the current state"
 msgstr "{name}が現在の状態です"
 

@@ -244,7 +244,20 @@ fn each_removable(
 /// variant's field, a wire's missing value: anything [`read_at`]
 /// leaves out) is pinned only by an edit here at that default: a new
 /// one needs its golden edit, added before the cut.
+///
+/// Each is a state made under process 1, as the fixtures were written:
+/// a state keeps its process, so their texts and ids hold whatever
+/// process this build stamps (`process_written_is_the_states_own`).
 pub(crate) fn golden_edits() -> Vec<(&'static str, Edit)> {
+    let mut out = golden_edits_now();
+    for (_, e) in &mut out {
+        e.process = 1;
+    }
+    out
+}
+
+/// [`golden_edits`] as this build makes them, at its own process.
+fn golden_edits_now() -> Vec<(&'static str, Edit)> {
     use crate::geometry::{Aspect, Crop};
     use crate::mask::{Component, LandscapeGroup, Mask, Route, Shape};
     use crate::white::LocalWhite;
@@ -360,6 +373,31 @@ fn ids_now() -> String {
         })
         .collect();
     serde_json::to_string_pretty(&rows).unwrap() + "\n"
+}
+
+/// A state's process is written as its own, and is in its text and its
+/// id at 10: the golden edits made at this build's process differ from
+/// their process-1 texts in the process alone.
+#[test]
+fn process_written_is_the_states_own() {
+    for ((name, at_one), (_, now)) in golden_edits().into_iter().zip(golden_edits_now()) {
+        let (a, b) = (written_text(&at_one), written_text(&now));
+        assert_eq!(
+            a.replace(
+                r#""process":1"#,
+                &format!(r#""process":{}"#, crate::PROCESS)
+            ),
+            b,
+            "{name}"
+        );
+        if crate::PROCESS != 1 {
+            assert_ne!(
+                state_id(ZERO_ID, &at_one, None),
+                state_id(ZERO_ID, &now, None),
+                "{name}"
+            );
+        }
+    }
 }
 
 /// An id made at schema 10 is made the same by every later build: the

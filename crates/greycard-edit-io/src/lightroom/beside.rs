@@ -145,7 +145,7 @@ pub fn no_edit_of_ours(sidecar: &Sidecar) -> bool {
     sidecar.versions.is_empty()
         && sidecar.line.history.is_empty()
         && sidecar.line.snapshots.is_empty()
-        && Edit::raw_defaults().contains(&current)
+        && Edit::raw_defaults().iter().any(|d| current.develops_as(d))
 }
 
 /// The sliders the mapper reads at the values Lightroom starts a frame

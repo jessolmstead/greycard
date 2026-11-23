@@ -5077,7 +5077,7 @@ msgid "{name} removed; Settings can restore it"
 msgstr "已移除 {name}；可在設定中還原"
 
 #: crates/greycard-ui/src/panel/assets.rs:2297
-#: crates/greycard-ui/src/panel/history.rs:1017
+#: crates/greycard-ui/src/panel/history.rs:1020
 msgid "{name} removed"
 msgstr "已移除 {name}"
 
@@ -5129,7 +5129,7 @@ msgstr "附相機 JPEG，{}"
 #: crates/greycard-ui/src/panel/deliver.rs:1704
 #: crates/greycard-ui/src/panel/edit.rs:544
 #: crates/greycard-ui/src/panel/edit.rs:1340
-#: crates/greycard-ui/src/panel/history.rs:485
+#: crates/greycard-ui/src/panel/history.rs:488
 msgid "developing..."
 msgstr "正在處理..."
 
@@ -6081,69 +6081,69 @@ msgstr "佇列正在執行；請先停止"
 msgid "export queue cleared ({sets})"
 msgstr "已清空匯出佇列（{sets}）"
 
-#: crates/greycard-ui/src/panel/history.rs:105
+#: crates/greycard-ui/src/panel/history.rs:108
 #: crates/greycard-ui/src/panel/original.rs:25
 msgid "Original"
 msgstr "原始"
 
 #. History: the first step kept once earlier ones were dropped
-#: crates/greycard-ui/src/panel/history.rs:108
+#: crates/greycard-ui/src/panel/history.rs:111
 msgid "Earliest kept"
 msgstr "最早保留的步驟"
 
-#: crates/greycard-ui/src/panel/history.rs:263
+#: crates/greycard-ui/src/panel/history.rs:266
 msgid "; the {what} shown once restored"
 msgstr "；{what}將在還原後顯示"
 
-#: crates/greycard-ui/src/panel/history.rs:264
+#: crates/greycard-ui/src/panel/history.rs:267
 msgid " and "
 msgstr "和"
 
-#: crates/greycard-ui/src/panel/history.rs:302
+#: crates/greycard-ui/src/panel/history.rs:305
 msgid "{name}, {taken}; click to restore it"
 msgstr "{name}，{taken}；按一下可還原"
 
-#: crates/greycard-ui/src/panel/history.rs:307
+#: crates/greycard-ui/src/panel/history.rs:310
 msgid "{name}, {taken}; click to rename it"
 msgstr "{name}，{taken}；按一下可重新命名"
 
-#: crates/greycard-ui/src/panel/history.rs:312
+#: crates/greycard-ui/src/panel/history.rs:315
 msgid "{name}, {taken}; click to remove it"
 msgstr "{name}，{taken}；按一下可移除"
 
-#: crates/greycard-ui/src/panel/history.rs:317
+#: crates/greycard-ui/src/panel/history.rs:320
 msgid "{name}, {taken}; click to restore, double-click to rename"
 msgstr "{name}，{taken}；按一下還原，按兩下重新命名"
 
-#: crates/greycard-ui/src/panel/history.rs:830
+#: crates/greycard-ui/src/panel/history.rs:833
 msgid " with the export preset {name}"
 msgstr "，使用匯出預設集 {name}"
 
-#: crates/greycard-ui/src/panel/history.rs:834
+#: crates/greycard-ui/src/panel/history.rs:837
 msgid ""
 "{file}, exported {when}{preset}; click to go back to the state it was "
 "exported from"
 msgstr "{file}，匯出於 {when}{preset}；按一下可回到匯出時的狀態"
 
-#: crates/greycard-ui/src/panel/history.rs:844
+#: crates/greycard-ui/src/panel/history.rs:847
 msgid "the current state: {name}"
 msgstr "目前狀態：{name}"
 
-#: crates/greycard-ui/src/panel/history.rs:847
+#: crates/greycard-ui/src/panel/history.rs:850
 msgid "step {i}: {name}; click to make it current"
 msgstr "第 {i} 步：{name}；按一下設為目前狀態"
 
-#: crates/greycard-ui/src/panel/history.rs:892
+#: crates/greycard-ui/src/panel/history.rs:895
 msgid "{name} taken; type a name for it"
 msgstr "已建立快照 {name}；請為它輸入名稱"
 
-#: crates/greycard-ui/src/panel/history.rs:924
-#: crates/greycard-ui/src/panel/history.rs:938
-#: crates/greycard-ui/src/panel/history.rs:945
+#: crates/greycard-ui/src/panel/history.rs:927
+#: crates/greycard-ui/src/panel/history.rs:941
+#: crates/greycard-ui/src/panel/history.rs:948
 msgid "{name} restored"
 msgstr "已還原 {name}"
 
-#: crates/greycard-ui/src/panel/history.rs:941
+#: crates/greycard-ui/src/panel/history.rs:944
 msgid "{name} is the current state"
 msgstr "{name} 是目前狀態"
 

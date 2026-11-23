@@ -1027,7 +1027,9 @@ pub(crate) fn camera_jpeg(path: &Path) -> Result<Picture, String> {
 /// The edit a frame is developed under for the fit: the default, on
 /// the run's display curve. Before tables declared their curve this
 /// was the default edit alone, so every table fitted then was fitted
-/// under per channel whatever the open picture was on.
+/// under per channel whatever the open picture was on; before fit 3
+/// (`greycard_match::FIT_VERSION`) the finish clamped per channel
+/// where it now has the gamut op.
 pub(crate) fn fit_edit(curve: DisplayCurve) -> Edit {
     Edit {
         display_curve: curve,

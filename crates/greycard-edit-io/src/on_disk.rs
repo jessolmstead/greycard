@@ -386,7 +386,10 @@ pub fn never_developed(sidecar: &Sidecar) -> bool {
 /// off for new edits.
 pub fn line_never_developed(line: &Line) -> bool {
     // No state recorded (§724), and its start not seeded yet.
-    !line.recorded() && Edit::raw_defaults().contains(line.current())
+    !line.recorded()
+        && Edit::raw_defaults()
+            .iter()
+            .any(|d| line.current().develops_as(d))
 }
 
 /// A sidecar read with no window holding the frame (`Sidecar::from_json`,

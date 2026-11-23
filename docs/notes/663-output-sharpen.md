@@ -22,7 +22,9 @@ on the linear color, `decode(l + δ) / decode(l)`: every channel scaled
 alike, so the hue and the saturation hold, dark halo and light alike.
 Black (linear luminance under 1e-6) stays black; channels are held at
 zero from below on every pixel the sharpen passes over, moved or not, so
-a flat stretch outside the gamut is clipped as its sharpened edge is;
+a flat stretch outside the gamut is clipped as its sharpened edge is
+(since §735 under AgX's rail alone; elsewhere a channel under zero is
+scaled with the rest and the gamut op brings it in at its hue);
 a brightening stops where the largest channel reaches white, so no
 channel clips out of proportion. The first version added the
 encoded delta to every channel, which saturated dark halos, washed out

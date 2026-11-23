@@ -36,11 +36,14 @@
 use crate::Edit;
 use crate::mask::{LandscapeGroup, Shape};
 
-/// The pipeline's own part of the key: raise it when the develop or
-/// the finish comes to make a different picture from the same edit (a
-/// change to an op, a default the edit does not store, the shrink that
-/// makes the kept pictures), and every picture kept under the old
-/// number is never asked for again.
+/// The pipeline's own part of the key: raise it when the develop comes
+/// to make a different picture from the same edit (a change to an op, a
+/// default the edit does not store, the shrink that makes the kept
+/// pictures), and every picture kept under the old number is never
+/// asked for again. It names the learned masks' rasters too, whose
+/// print leaves the finish out (`mask_base`), so a change to the finish
+/// alone raises the edited pictures' recipes instead
+/// (`edited_pictures::EDITED_RECIPE` in the engine).
 ///
 /// 2: a tint blends toward its hue rather than turning it, 2026-10-10.
 /// 3: highlights by the frame's own range and whites pivoting at the
@@ -56,8 +59,13 @@ pub const DEVELOP_RECIPE: u32 = 6;
 /// The [`crate::PROCESS`] the key was last raised for. A state's
 /// process is not in the key while one exists; a new one renders
 /// differently, so raising it raises [`DEVELOP_RECIPE`] (or takes the
-/// process into the key) and this with it.
-pub const PROCESS_KEYED: u32 = 1;
+/// process into the key) and this with it. A process that changes the
+/// finish alone raises the edited pictures' recipes instead
+/// (`edited_pictures::EDITED_RECIPE` in the engine, whose test holds
+/// it to this), since this recipe also names the masks' rasters, whose
+/// print leaves the finish out. 2: the gamut op, by the engine's
+/// recipes (0x8005 and 0x8006).
+pub const PROCESS_KEYED: u32 = 2;
 
 /// The capture sharpen's guide, by version: taken into the key of an
 /// edit whose sharpen reads one ([`Edit::sharpen_reads_guide`]), so

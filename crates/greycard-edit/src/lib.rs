@@ -106,9 +106,15 @@ pub const VERSION: u32 = 10;
 /// build renders.
 ///
 /// Not in the pictures' key while one process exists: raising it must
-/// re-key them (`key::DEVELOP_RECIPE`, and `key::PROCESS_KEYED` with
-/// it, which a test holds to this).
-pub const PROCESS: u32 = 1;
+/// re-key them (`key::DEVELOP_RECIPE`, or for a change to the finish
+/// alone the engine's `edited_pictures::EDITED_RECIPE`, and
+/// `key::PROCESS_KEYED` with it, which a test holds to this).
+///
+/// 2: the gamut op at the output in the clamp's place (the floor before
+/// the per channel curve, the look table read at its cube, the rail, the
+/// bound, and the roll at held Oklab hue), 2026-11-22. AgX's rail with
+/// no camera profile's curve renders as at 1.
+pub const PROCESS: u32 = 2;
 
 /// The process a state the user makes now takes: [`PROCESS`], or in a
 /// test the one it sets for its thread.

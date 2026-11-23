@@ -40,6 +40,13 @@ design note behind it.
 
 ### Develop
 
+- Every edit's saturated and bright colors now reach the export's
+  limits at their hue, where they were clipped per channel
+  ([§735](https://github.com/jessolmstead/greycard/blob/master/docs/notes/735-the-gamut-op-at-the-output.md)).
+- Existing edits look different where colors are saturated or very
+  bright, and every edited frame's kept pictures are made again, once.
+- AgX pictures render as before, look tables and Output sharpen
+  included, unless a profile's tone curve replaces AgX.
 - The learned denoiser works on Fujifilm X-Trans raws, in the same
   three tiers; each tier's X-Trans network is a separate download
   ([§731](https://github.com/jessolmstead/greycard/blob/master/docs/notes/731-the-learned-denoiser-on-x-trans.md)).

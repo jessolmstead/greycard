@@ -109,11 +109,11 @@ What we built of §724's design (docs/notes/724-states-that-are-never-rewritten.
 
 ### Process
 
-- `PROCESS = 1`, and every state has `Edit.process`: the rendering it was made under.
+- `PROCESS = 2` (§735; 1 is the clamp per channel), and every state has `Edit.process`: the rendering it was made under.
 - It is stamped only on a state the user makes: a step (a slider, a reset, a paste, a preset), and a new version's first state. A restored snapshot keeps its own.
 - It is never restamped by a read, a migration, a join, or a save. Absent reads as 1.
 - Before 1.0 it only records. Nothing renders by it, and no old rendering is kept.
-- It raises no floor, and it is out of the picture key and of the ids at 9. `key::PROCESS_KEYED` and its test make a bump re-key the pictures. The render gate's process follows it.
+- It raises no floor, and it is out of the picture key and of the ids at 9. `key::PROCESS_KEYED` and its test make a bump re-key the pictures; a bump that changes the finish alone raises the engine's edited and reduced recipes (`RECIPE_FOR_PROCESS`), not `DEVELOP_RECIPE`, which also names the masks' rasters (§735). The render gate's process follows it.
 
 ### The revision hash
 

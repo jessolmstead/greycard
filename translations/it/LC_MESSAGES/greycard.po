@@ -5269,7 +5269,7 @@ msgid "{name} removed; Settings can restore it"
 msgstr "{name} rimosso; Impostazioni può ripristinarlo"
 
 #: crates/greycard-ui/src/panel/assets.rs:2297
-#: crates/greycard-ui/src/panel/history.rs:1017
+#: crates/greycard-ui/src/panel/history.rs:1020
 msgid "{name} removed"
 msgstr "{name} rimosso"
 
@@ -5321,7 +5321,7 @@ msgstr "Con il JPEG della fotocamera, {}"
 #: crates/greycard-ui/src/panel/deliver.rs:1704
 #: crates/greycard-ui/src/panel/edit.rs:544
 #: crates/greycard-ui/src/panel/edit.rs:1340
-#: crates/greycard-ui/src/panel/history.rs:485
+#: crates/greycard-ui/src/panel/history.rs:488
 msgid "developing..."
 msgstr "sviluppo..."
 
@@ -6367,45 +6367,45 @@ msgstr "la coda è in corso; fermala prima"
 msgid "export queue cleared ({sets})"
 msgstr "coda di esportazione svuotata ({sets})"
 
-#: crates/greycard-ui/src/panel/history.rs:105
+#: crates/greycard-ui/src/panel/history.rs:108
 #: crates/greycard-ui/src/panel/original.rs:25
 msgid "Original"
 msgstr "Originale"
 
 #. History: the first step kept once earlier ones were dropped
-#: crates/greycard-ui/src/panel/history.rs:108
+#: crates/greycard-ui/src/panel/history.rs:111
 msgid "Earliest kept"
 msgstr "Primo conservato"
 
-#: crates/greycard-ui/src/panel/history.rs:263
+#: crates/greycard-ui/src/panel/history.rs:266
 msgid "; the {what} shown once restored"
 msgstr "; {what} mostrato una volta ripristinato"
 
-#: crates/greycard-ui/src/panel/history.rs:264
+#: crates/greycard-ui/src/panel/history.rs:267
 msgid " and "
 msgstr " e "
 
-#: crates/greycard-ui/src/panel/history.rs:302
+#: crates/greycard-ui/src/panel/history.rs:305
 msgid "{name}, {taken}; click to restore it"
 msgstr "{name}, {taken}; clic per ripristinarla"
 
-#: crates/greycard-ui/src/panel/history.rs:307
+#: crates/greycard-ui/src/panel/history.rs:310
 msgid "{name}, {taken}; click to rename it"
 msgstr "{name}, {taken}; clic per rinominarla"
 
-#: crates/greycard-ui/src/panel/history.rs:312
+#: crates/greycard-ui/src/panel/history.rs:315
 msgid "{name}, {taken}; click to remove it"
 msgstr "{name}, {taken}; clic per rimuoverla"
 
-#: crates/greycard-ui/src/panel/history.rs:317
+#: crates/greycard-ui/src/panel/history.rs:320
 msgid "{name}, {taken}; click to restore, double-click to rename"
 msgstr "{name}, {taken}; clic per ripristinare, doppio clic per rinominare"
 
-#: crates/greycard-ui/src/panel/history.rs:830
+#: crates/greycard-ui/src/panel/history.rs:833
 msgid " with the export preset {name}"
 msgstr " con il preset di esportazione {name}"
 
-#: crates/greycard-ui/src/panel/history.rs:834
+#: crates/greycard-ui/src/panel/history.rs:837
 msgid ""
 "{file}, exported {when}{preset}; click to go back to the state it was "
 "exported from"
@@ -6413,25 +6413,25 @@ msgstr ""
 "{file}, esportato {when}{preset}; clic per tornare allo stato da cui è stato "
 "esportato"
 
-#: crates/greycard-ui/src/panel/history.rs:844
+#: crates/greycard-ui/src/panel/history.rs:847
 msgid "the current state: {name}"
 msgstr "lo stato attuale: {name}"
 
-#: crates/greycard-ui/src/panel/history.rs:847
+#: crates/greycard-ui/src/panel/history.rs:850
 msgid "step {i}: {name}; click to make it current"
 msgstr "passo {i}: {name}; clic per renderlo attuale"
 
-#: crates/greycard-ui/src/panel/history.rs:892
+#: crates/greycard-ui/src/panel/history.rs:895
 msgid "{name} taken; type a name for it"
 msgstr "{name} creata; scrivi un nome"
 
-#: crates/greycard-ui/src/panel/history.rs:924
-#: crates/greycard-ui/src/panel/history.rs:938
-#: crates/greycard-ui/src/panel/history.rs:945
+#: crates/greycard-ui/src/panel/history.rs:927
+#: crates/greycard-ui/src/panel/history.rs:941
+#: crates/greycard-ui/src/panel/history.rs:948
 msgid "{name} restored"
 msgstr "{name} ripristinata"
 
-#: crates/greycard-ui/src/panel/history.rs:941
+#: crates/greycard-ui/src/panel/history.rs:944
 msgid "{name} is the current state"
 msgstr "{name} è lo stato attuale"
 

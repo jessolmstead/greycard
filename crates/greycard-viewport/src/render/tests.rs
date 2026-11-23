@@ -1801,14 +1801,23 @@ fn the_output_sharpen_on_the_gpu_is_the_cpus() {
     for amount in [0.3f32, 1.0, 2.0] {
         for radius in [0.5f32, 1.0, 3.0] {
             for threshold in [0.0f32, 0.01, 0.05] {
-                cases.push((amount, radius, threshold, false));
+                cases.push((amount, radius, threshold, false, false));
             }
         }
     }
-    cases.push((1.5, 1.5, 0.01, true));
-    for (amount, radius, threshold, masked) in cases {
+    cases.push((1.5, 1.5, 0.01, true, false));
+    // Under AgX's rail, a color curve putting channels under zero at the
+    // sharpen, which holds them at zero there as before the gamut op.
+    cases.push((1.5, 1.0, 0.0, false, true));
+    cases.push((1.5, 1.5, 0.01, true, true));
+    for (amount, radius, threshold, masked, agx) in cases {
         let mut edit = greycard_edit::Edit::default();
         edit.light.exposure = 0.4;
+        if agx {
+            edit.display_curve = greycard_edit::DisplayCurve::Agx;
+            edit.curves.red_green = vec![[0.0, 0.85], [1.0, 0.85]];
+            edit.curves.blue_yellow = vec![[0.0, 0.2], [1.0, 0.2]];
+        }
         edit.output_sharpen.amount = amount;
         edit.output_sharpen.radius = radius;
         edit.output_sharpen.threshold = threshold;
@@ -1872,7 +1881,7 @@ fn the_output_sharpen_on_the_gpu_is_the_cpus() {
             }
         }
         eprintln!(
-            "amount {amount}, radius {radius}, threshold {threshold}, mask {masked}: \
+            "amount {amount}, radius {radius}, threshold {threshold}, mask {masked}, agx {agx}: \
              {moved} pixels moved, worst {:.2} levels at {},{}, mean {:.3} levels",
             worst.0 * 255.0,
             worst.1,
@@ -1880,11 +1889,15 @@ fn the_output_sharpen_on_the_gpu_is_the_cpus() {
             sum / (w * h * 3) as f64 * 255.0
         );
         assert!(moved > w * h / 10, "the case moves the picture");
-        // Within the read back's own rounding: a level at the most, a
-        // tenth of one on the mean.
+        // Within the read back's own rounding: a level at the most, and
+        // a fifth of one on the mean. The mean mostly measures the gamut
+        // op's float rounding on the frame's saturated colors (0.177 on
+        // lavapipe with nothing sharpened; the clamp's came under 0.15),
+        // since the sharpen moves a few hundred pixels of the frame:
+        // the worst pixel's gate does the work.
         assert!(
-            worst.0 < 1.0 / 255.0 && sum / ((w * h * 3) as f64) < 0.15 / 255.0,
-            "amount {amount}, radius {radius}, threshold {threshold}: {worst:?}"
+            worst.0 < 1.0 / 255.0 && sum / ((w * h * 3) as f64) < 0.2 / 255.0,
+            "amount {amount}, radius {radius}, threshold {threshold}, agx {agx}: {worst:?}"
         );
     }
 }
@@ -1906,7 +1919,9 @@ fn osharp_view_on_the_cpu(
 ) -> Vec<Option<[f32; 3]>> {
     use greycard_render::finish::{finish_pixel_display, finish_pixel_output};
     use greycard_render::output_sharpen::{Params, apply, luminance};
-    let p = Params::of(&global.output_sharpen).unwrap();
+    let p = Params::of(&global.output_sharpen)
+        .unwrap()
+        .holding(global.agx_railed());
     let z = zoom as f32;
     let sigma = p.sigma * z;
     let n = ((3.0 * sigma / z).ceil() as usize).clamp(1, 9);
@@ -2273,9 +2288,22 @@ fn a_masks_output_sharpen_on_the_gpu_is_the_cpus() {
         (1.5, 0.5, 1.0, true),
         (0.0, 1.0, 1.0, false),
     ];
-    for (amount, share, opacity, detail_on) in cases {
+    // And under AgX's rail with a color curve putting channels under zero
+    // at the sharpen, which holds them at zero there as before the gamut
+    // op: a mask taking the picture's sharpen down, and one adding its own.
+    let agx = [(2.0f32, -0.5f32, 0.8f32, true), (0.0, 1.0, 1.0, true)];
+    let cases = cases
+        .into_iter()
+        .map(|c| (c, false))
+        .chain(agx.into_iter().map(|c| (c, true)));
+    for ((amount, share, opacity, detail_on), agx) in cases {
         let mut edit = greycard_edit::Edit::default();
         edit.light.exposure = 0.3;
+        if agx {
+            edit.display_curve = greycard_edit::DisplayCurve::Agx;
+            edit.curves.red_green = vec![[0.0, 0.85], [1.0, 0.85]];
+            edit.curves.blue_yellow = vec![[0.0, 0.2], [1.0, 0.2]];
+        }
         edit.output_sharpen.amount = amount;
         edit.output_sharpen.radius = 1.4;
         let mut look = Look::default();
@@ -2361,13 +2389,17 @@ fn a_masks_output_sharpen_on_the_gpu_is_the_cpus() {
                 }
             }
             eprintln!(
-                "amount {amount}, share {share}, opacity {opacity}, detail {detail_on}, zoom {zoom}: \
+                "amount {amount}, share {share}, opacity {opacity}, detail {detail_on}, agx {agx}, zoom {zoom}: \
                  {moved} moved, worst {:.2} levels, mean {:.3}, outside the mask {outside}",
                 worst * 255.0,
                 sum / (vw * vh * 3) as f64 * 255.0
             );
             assert!(
-                worst < 1.0 / 255.0 && sum / ((vw * vh * 3) as f64) < 0.15 / 255.0,
+                // As `the_output_sharpen_on_the_gpu_is_the_cpus`: a fifth
+                // of a level on the mean, which mostly measures the gamut
+                // op's rounding (0.177 with nothing sharpened); the worst
+                // pixel's gate does the work.
+                worst < 1.0 / 255.0 && sum / ((vw * vh * 3) as f64) < 0.2 / 255.0,
                 "amount {amount}, share {share}, zoom {zoom}: {worst}"
             );
             assert_eq!(outside, 0, "amount {amount}, share {share}, zoom {zoom}");
@@ -2519,16 +2551,20 @@ fn a_masks_output_sharpen_holds_past_one_turned_and_panned() {
 /// gamut too: the passes run at no amount (a mask that sharpens weighs
 /// nothing anywhere) draw what no passes draw, to the bit; and at an
 /// amount of next to nothing every pixel is within a level of that,
-/// where a hold at zero switched on whole at the first ulp moved an
-/// out-of-gamut color by whole levels (the parity sweep's seed
+/// where a hold at zero switched on whole at the first ulp once moved
+/// an out-of-gamut color by whole levels (the parity sweep's seed
 /// 0x67726579 edit 195 on a real card: a mask weighing next to nothing
 /// there on the card and nothing on lavapipe, 3.7 levels of blue). The
-/// shader's ramp is the CPU's.
+/// sharpen holds nothing at zero now (the gamut op brings such a color
+/// in), and this holds that nothing else switches on.
 #[test]
 fn the_output_sharpen_comes_on_with_its_amount() {
     use greycard_render::finish::finish_pixel_display;
-    use greycard_render::output_sharpen::HOLD_RAMP;
-    assert_eq!(shader_literal("OSHARP_HOLD_RAMP"), HOLD_RAMP);
+    // The hold's ramp under AgX's rail is the CPU's.
+    assert_eq!(
+        shader_literal("OSHARP_HOLD_RAMP"),
+        greycard_render::output_sharpen::HOLD_RAMP
+    );
     let Some((device, queue)) = device("the output sharpen's onset") else {
         return;
     };
@@ -2551,8 +2587,8 @@ fn the_output_sharpen_comes_on_with_its_amount() {
         saturation: 1.0,
     };
     base.output_sharpen.radius = 1.6;
-    // The edit puts colors outside the working space's gamut, where
-    // the hold acts: some channel under zero at the sharpen.
+    // The edit puts colors outside the working space's gamut: some
+    // channel under zero at the sharpen.
     let global = Baked::global(&base, Source::SCENE);
     let outside = image
         .data
@@ -3008,6 +3044,238 @@ fn a_profile_tone_curve_on_the_gpu_is_the_cpus() {
     }
 }
 
+/// A frame of saturated lights: each column a hue between the working
+/// space's primaries, each row a stop brighter, from a twentieth of
+/// display white to eight times it, so the gamut op meets every part of
+/// itself (the early out, the rail, the bound, and the roll) at once.
+fn saturated_frame() -> WorkingImage {
+    let (w, h) = (48usize, 32usize);
+    let mut data = Vec::with_capacity(w * h * 3);
+    for y in 0..h {
+        for x in 0..w {
+            let hue = (x as f32 * 7.5).to_radians();
+            let level = 2f32.powf(y as f32 / 4.0 - 4.5);
+            let c = [0.0f32, 120.0, 240.0].map(|k| (hue - k.to_radians()).cos().max(0.0));
+            // A little of the others in every other row, so not every
+            // light sits on a face of the cube.
+            let mix = if y % 2 == 0 { 0.0 } else { 0.08 };
+            data.extend(c.map(|v| level * (v + mix)));
+        }
+    }
+    WorkingImage {
+        width: w,
+        height: h,
+        data,
+    }
+}
+
+/// The gamut op on the GPU is the CPU's on any color the finish can
+/// hand it, those outside the working cube among them, which the
+/// display stage makes only by curves and masks: the shader under test
+/// takes the source's pixel straight into the op, so each pixel is one
+/// color. Into sRGB, P3, and Adobe RGB, for a scene and a picture
+/// already rendered; read back in eight bits.
+#[test]
+fn the_gamut_op_on_the_gpu_is_the_cpus_on_any_color() {
+    let Some((device, queue)) = device("the gamut op's check") else {
+        return;
+    };
+    let wgsl = include_str!("../viewport.wgsl");
+    let op_line = "        s = gamut_unclamped(gamut_output(), c);";
+    assert_eq!(wgsl.matches(op_line).count(), 1);
+    let wgsl = wgsl.replace(op_line, "        s = gamut_unclamped(gamut_output(), t);");
+    let (w, h) = (64usize, 64usize);
+    let ok = greycard_core::color::Oklab::for_working_space();
+    let mut state = 0x2545_f491_u32;
+    let mut unit = move || {
+        state ^= state << 13;
+        state ^= state >> 17;
+        state ^= state << 5;
+        (state >> 8) as f32 / (1u32 << 24) as f32
+    };
+    // Half the frame where the bound and the roll act into sRGB (a reach
+    // of 1 to 1.8 there, the bound's onset at 1.1), so a change to
+    // either shows in many pixels and by more than the readback's
+    // rounding (review L6): the bound's onset moved by 0.05 shows by
+    // eight levels here, under a gate of one.
+    let srgb = greycard_render::gamut::Op::for_output(
+        &greycard_render::export::Space::Srgb.matrix(),
+        greycard_render::gamut::Params::SCENE,
+    )
+    .unwrap();
+    let mut data = Vec::with_capacity(w * h * 3);
+    while data.len() < w * h * 3 {
+        let c = [unit(), unit(), unit()].map(|v| 1.8 * v - 0.3);
+        // Of light, if not of a light inside the working space: a
+        // positive Oklab lightness.
+        let lms = greycard_core::color::apply3(&ok.to_lms, c).map(|v| v.abs().cbrt().copysign(v));
+        if greycard_core::color::apply3(&greycard_core::color::LMS_TO_LAB, lms)[0] <= 0.0 {
+            continue;
+        }
+        let bound = (1.0..1.8).contains(&srgb.reach(srgb.rail(c).0));
+        if data.len() < w * h * 3 / 2 || bound {
+            data.extend(c);
+        }
+    }
+    let image = WorkingImage {
+        width: w,
+        height: h,
+        data,
+    };
+    let mut renderer = Renderer::with_shader(&device, &queue, &wgsl);
+    renderer.upload(&Halves::from_image(&image, None));
+    let seen: Vec<f32> = image
+        .data
+        .iter()
+        .map(|v| half::f16::from_f32(*v).to_f32())
+        .collect();
+    use greycard_render::export::Space;
+    for space in [Space::Srgb, Space::DisplayP3, Space::AdobeRgb] {
+        let to_out = space.matrix();
+        renderer.set_output(to_out);
+        for source in [Source::SCENE, Source::Display] {
+            let view = View {
+                center: (w as f32 / 2.0, h as f32 / 2.0),
+                plane: (w as f32, h as f32),
+                frame_size: (w as f32, h as f32),
+                source,
+                ..View::blank()
+            };
+            let target = renderer.render(w as u32, h as u32, &view).0;
+            let shown = renderer.read_back(&target).expect("read back");
+            let op = greycard_render::gamut::Op::for_output(
+                &to_out,
+                greycard_render::finish::gamut_params(source),
+            )
+            .unwrap();
+            let mut worst = (0.0f32, [0.0f32; 3], [0.0f32; 3], [0.0f32; 3]);
+            for y in 0..h {
+                for x in 0..w {
+                    let i = (y * w + x) * 3;
+                    let px = [seen[i], seen[i + 1], seen[i + 2]];
+                    let cpu = op.apply(px).map(greycard_render::finish::encode);
+                    let gpu = shown.get_pixel(x as u32, y as u32);
+                    let gpu = [0, 1, 2].map(|k| f32::from(gpu[k]) / 255.0);
+                    for k in 0..3 {
+                        let d = (cpu[k] - gpu[k]).abs();
+                        if d > worst.0 {
+                            worst = (d, px, cpu, gpu);
+                        }
+                    }
+                }
+            }
+            eprintln!("the op into {space:?} from {source:?}, GPU against CPU: {worst:?}");
+            assert!(worst.0 < 1.0 / 255.0, "{space:?} {source:?}: {worst:?}");
+        }
+    }
+}
+
+/// The gamut op in the finish on the GPU is the CPU's: over saturated
+/// lights at three exposures, into sRGB, P3, and Rec.2020, for a scene
+/// and for a picture already rendered, with and without a look table
+/// and a camera profile's curve, under each display curve (AgX's rail
+/// with the table clipped at its entry, as before the op). Read back in eight bits, so half a
+/// level is the floor; the largest difference is held under one, so
+/// the bound's onset moved by 0.05 shows (by six levels; review L6).
+#[test]
+fn the_gamut_finish_on_the_gpu_is_the_cpus() {
+    let Some((device, queue)) = device("the gamut finish's check") else {
+        return;
+    };
+    let image = saturated_frame();
+    let (w, h) = (image.width, image.height);
+    let mut renderer = Renderer::new(&device, &queue);
+    renderer.upload(&Halves::from_image(&image, None));
+    let seen: Vec<f32> = image
+        .data
+        .iter()
+        .map(|v| half::f16::from_f32(*v).to_f32())
+        .collect();
+    let table = look_tables().into_iter().next().expect("a table");
+    let look = lut::Look::new(table, 0.8).expect("the table's primaries");
+    let tone = profile_tones().into_iter().next();
+    use greycard_render::export::Space;
+    {
+        let mut worst = (0.0f32, [0.0f32; 3], [0.0f32; 3], [0.0f32; 3], String::new());
+        for space in [Space::Srgb, Space::DisplayP3, Space::Rec2020] {
+            let to_out = space.matrix();
+            renderer.set_output(to_out);
+            for source in [Source::SCENE, Source::Display] {
+                for with_look in [false, true] {
+                    renderer.set_look(with_look.then_some(&look));
+                    let profiles = if source.is_scene() {
+                        vec![None, tone.clone()]
+                    } else {
+                        vec![None]
+                    };
+                    for profile in profiles {
+                        for (stops, curve) in [-2.0f32, 0.0, 2.0]
+                            .into_iter()
+                            .flat_map(|s| greycard_edit::DisplayCurve::ALL.map(|c| (s, c)))
+                        {
+                            let mut edit = greycard_edit::Edit {
+                                display_curve: curve,
+                                ..Default::default()
+                            };
+                            edit.light.exposure = stops;
+                            let view = View {
+                                center: (w as f32 / 2.0, h as f32 / 2.0),
+                                plane: (w as f32, h as f32),
+                                frame_size: (w as f32, h as f32),
+                                source,
+                                profile_tone: profile.clone(),
+                                ..View::with_look(&edit)
+                            };
+                            let target = renderer.render(w as u32, h as u32, &view).0;
+                            let shown = renderer.read_back(&target).expect("read back");
+                            let global =
+                                Baked::global(&edit, source).with_profile_tone(profile.clone());
+                            for y in 0..h {
+                                for x in 0..w {
+                                    let i = (y * w + x) * 3;
+                                    let px = [seen[i], seen[i + 1], seen[i + 2]];
+                                    let cpu = greycard_render::finish::finish_pixel_with(
+                                        px,
+                                        &global,
+                                        &[],
+                                        0.0,
+                                        None,
+                                        None,
+                                        None,
+                                        None,
+                                        with_look.then_some(&look),
+                                        &to_out,
+                                    );
+                                    let gpu = shown.get_pixel(x as u32, y as u32);
+                                    let gpu = [0, 1, 2].map(|k| f32::from(gpu[k]) / 255.0);
+                                    for k in 0..3 {
+                                        let d = (cpu[k] - gpu[k]).abs();
+                                        if d > worst.0 {
+                                            worst = (
+                                                d,
+                                                px,
+                                                cpu,
+                                                gpu,
+                                                format!(
+                                                    "{space:?} {source:?} look {with_look} \
+                                                     profile {} {stops} {curve:?}",
+                                                    profile.is_some()
+                                                ),
+                                            );
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        eprintln!("the gamut finish, GPU against CPU: {worst:?}");
+        assert!(worst.0 < 1.0 / 255.0, "{worst:?}");
+    }
+}
+
 /// The whites down, the white point and its roll over display white
 /// (issue 132): on the GPU it is the CPU's, at the slider's steps and
 /// past its limit as a picture's and its masks' add, under both display
@@ -3180,7 +3448,9 @@ fn display_curve_parity(
 /// in it by fifty to seventy-five, and that curve inverted on the
 /// GPU's level gives the pixel's encoded value to a few
 /// hundred-thousandths. The output space is Rec.2020, the working
-/// space, so the level is the curve's own value. Over the parity
+/// space, so the level is the curve's own value where the gamut op
+/// leaves the color the curves make (a pixel it moves, a saturated one
+/// its rail takes under sRGB's top, is passed over). Over the parity
 /// frame at three exposures and five windows, for each curve: how
 /// many channels landed in a window, the root mean square and the
 /// largest gap, in levels of the encoded value. The random parity
@@ -3198,6 +3468,18 @@ fn a_display_curves_gap_before_the_point_curves() {
     let mut renderer = Renderer::new(&device, &queue);
     renderer.upload(&Halves::from_image(&image, None));
     renderer.set_output(greycard_render::export::Space::Rec2020.matrix());
+    let op = greycard_render::gamut::Op::for_output(
+        &greycard_render::export::Space::Rec2020.matrix(),
+        greycard_render::finish::gamut_params(Source::SCENE),
+    )
+    .unwrap();
+    let unencode = |v: f32| {
+        if v <= 0.04045 {
+            v / 12.92
+        } else {
+            ((v + 0.055) / 1.055).powf(2.4)
+        }
+    };
     let seen: Vec<f32> = image
         .data
         .iter()
@@ -3247,6 +3529,12 @@ fn a_display_curves_gap_before_the_point_curves() {
                             greycard_render::finish::FRAME_TYPICAL,
                         )
                         .encoded;
+                        let made =
+                            [0, 1, 2].map(|k| unencode(lookup(&global.curves, k, before[k])));
+                        let out = op.apply(made);
+                        if (0..3).any(|k| (out[k] - made[k]).abs() > 1e-4) {
+                            continue;
+                        }
                         let gpu = shown.get_pixel(x as u32, y as u32);
                         for k in 0..3 {
                             let e = before[k];
@@ -6492,7 +6780,7 @@ fn peaking_on_the_device_is_the_cpus() {
 
 /// The shadows' paint is for black, not for a color outside the
 /// output space. A saturated green of the working space leaves the
-/// clamp, and the AgX rail, with a channel at zero at any
+/// gamut op, and the AgX rail, with a channel at or near zero at any
 /// brightness: three ramps from nothing up, of that green, of a
 /// grey, and of a red, are painted where the bare picture has a
 /// channel at zero and none above level 2, and nowhere else. Under
@@ -6570,7 +6858,16 @@ fn the_shadows_paint_is_for_black_and_not_a_color_out_of_gamut() {
                 } else {
                     assert_eq!(got, p, "{curve:?} at {x},{y}: no shadow");
                     past |= lo == 0 && hi <= 8;
-                    bright |= lo == 0 && hi > 64;
+                    // A bright color at zero in a channel: under AgX's
+                    // rail, exactly; under the gamut op, which brings a
+                    // saturated green to the output's edge at its hue,
+                    // a few levels off zero, so the old case (a bright
+                    // color the clamp left at zero) is AgX's to show.
+                    bright |= hi > 64
+                        && match curve {
+                            greycard_edit::DisplayCurve::Agx => lo == 0,
+                            _ => lo <= 8,
+                        };
                 }
             }
         }
@@ -7368,8 +7665,10 @@ fn field_view(renderer: &mut Renderer) -> View {
     view
 }
 
-/// Where nothing follows the curves (no look table, the export space
-/// the working space, no grain, no output sharpen) and the curves do
+/// Where nothing follows the curves (a picture already rendered, which
+/// the gamut op leaves alone inside its output; no look table, the
+/// export space the working space, no grain, no output sharpen) and the
+/// curves do
 /// nothing, the histogram where they take the picture in is the
 /// scopes' own, at either tap: the same picture binned, short of a
 /// level's rounding in the encode and decode about the curve. So the
@@ -7382,7 +7681,13 @@ fn the_histogram_before_the_curves_is_the_scopes_where_nothing_follows() {
     };
     let mut renderer = Renderer::new(&device, &queue);
     renderer.set_output([[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]]);
-    let view = field_view(&mut renderer);
+    // A picture already rendered: the gamut op leaves its colors inside
+    // its own output alone, where a scene's rail under sRGB's top would
+    // follow the curves into the working space too.
+    let view = View {
+        source: Source::Display,
+        ..field_view(&mut renderer)
+    };
     let scopes = gpu_bins(&mut renderer, &view, Scope::Rgb, None)[..scope::HIST].to_vec();
     let total: u32 = scopes.iter().sum();
     for tap in [Tap::BeforeCurves, Tap::BeforeGlobalCurves] {
@@ -7749,8 +8054,8 @@ fn what_follows_the_curves_sends_no_tapped_histogram() {
 
 /// The global curves' tap against the scopes, which are checked
 /// against the CPU's reference: with nothing past the global curves
-/// (no global curve, the export space the working space, no look
-/// table, no grain), the scopes read what that tap reads, a local's
+/// (a picture already rendered, no global curve, the export space the
+/// working space, no look table, no grain), the scopes read what that tap reads, a local's
 /// strong curve in both. And past every point curve, with a strong
 /// global curve and nothing past it, the last tap reads what the
 /// scopes read; a color curve, past it, sends nothing.
@@ -7766,7 +8071,11 @@ fn the_curve_taps_are_the_scopes_where_nothing_follows_them() {
     };
     let mut renderer = Renderer::new(&device, &queue);
     renderer.set_output(identity);
-    let mut view = field_view(&mut renderer);
+    // A picture already rendered, as the histogram's check above.
+    let mut view = View {
+        source: Source::Display,
+        ..field_view(&mut renderer)
+    };
     let mut local = local_of(vec![(
         Shape::Linear {
             from: [0.2, 0.0],

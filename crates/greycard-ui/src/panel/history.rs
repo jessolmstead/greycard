@@ -98,7 +98,10 @@ fn state_name(sidecar: &greycard_edit::Line, i: usize) -> String {
         None if {
             let mut plain = state.clone();
             plain.noise.learned_strength = Edit::default().noise.learned_strength;
-            Edit::raw_defaults().contains(&plain) || Edit::picture_defaults().contains(state)
+            Edit::raw_defaults().iter().any(|d| plain.develops_as(d))
+                || Edit::picture_defaults()
+                    .iter()
+                    .any(|d| state.develops_as(d))
         } =>
         {
             // History: the first step, the frame as it came

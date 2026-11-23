@@ -66,11 +66,15 @@ fn a_state_with_no_process_reads_as_the_first() {
 /// written and leaves the file writable.
 #[test]
 fn a_state_keeps_its_own_process_through_a_round_trip() {
-    let mut s = Sidecar::default();
-    s.record(exposed(1.0));
-    s.record(exposed(2.0));
-    s.take_snapshot("Kept", 1_800_000_000);
-    s.fill_ids();
+    // Made by a build at 1.
+    let s = under(1, || {
+        let mut s = Sidecar::default();
+        s.record(exposed(1.0));
+        s.record(exposed(2.0));
+        s.take_snapshot("Kept", 1_800_000_000);
+        s.fill_ids();
+        s
+    });
     let made = processes(&s);
     assert!(made.iter().all(|(p, _)| *p == 1), "{made:?}");
     let back = under(5, || {
@@ -98,9 +102,13 @@ fn a_state_keeps_its_own_process_through_a_round_trip() {
 /// differing is no step.
 #[test]
 fn a_state_the_user_makes_takes_the_build_s_process() {
-    let mut s = Sidecar::default();
-    s.record(exposed(1.0));
-    s.take_snapshot("At one", 1_800_000_000);
+    // Made by a build at 1.
+    let mut s = under(1, || {
+        let mut s = Sidecar::default();
+        s.record(exposed(1.0));
+        s.take_snapshot("At one", 1_800_000_000);
+        s
+    });
     under(5, || {
         let mut same = s.line.current.clone();
         same.process = 5;
@@ -131,19 +139,22 @@ fn a_state_the_user_makes_takes_the_build_s_process() {
 /// under a build at another.
 #[test]
 fn a_join_never_restamps_a_state() {
-    let mut base = Sidecar::default();
-    base.record(exposed(1.0));
-    let v = base.new_version(None, Some("V")).unwrap();
-    base.fill_ids();
-    let text = base.to_json();
-    let copy = |stops: f32| {
-        let mut c = Sidecar::from_json(&text, &Edit::default()).unwrap();
-        c.record(exposed(stops));
-        c.line_mut(Some(&v)).unwrap().record(exposed(stops + 0.5));
-        c.fill_ids();
-        c
-    };
-    let (a, b) = (copy(2.0), copy(3.0));
+    // Made by a build at 1.
+    let (a, b) = under(1, || {
+        let mut base = Sidecar::default();
+        base.record(exposed(1.0));
+        let v = base.new_version(None, Some("V")).unwrap();
+        base.fill_ids();
+        let text = base.to_json();
+        let copy = |stops: f32| {
+            let mut c = Sidecar::from_json(&text, &Edit::default()).unwrap();
+            c.record(exposed(stops));
+            c.line_mut(Some(&v)).unwrap().record(exposed(stops + 0.5));
+            c.fill_ids();
+            c
+        };
+        (copy(2.0), copy(3.0))
+    });
     under(5, || {
         for j in [sync::join(&a, &b), sync::join(&b, &a)] {
             let all = processes(&j);

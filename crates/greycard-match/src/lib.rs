@@ -61,6 +61,8 @@ pub const LUT_SIZE: usize = 33;
 ///
 /// 1. Everything before §260: the table's residual in encoded sRGB.
 /// 2. §260: the residual in Oklab, and lightness held off chroma.
+/// 3. The frames finished through the gamut op, not the clamp per
+///    channel: the pairs' saturated and bright colors are the op's.
 ///
 /// The hold on greys no pair reaches is not a bump: on sets from
 /// several folders it moves no table by more than a few thousandths,
@@ -68,4 +70,13 @@ pub const LUT_SIZE: usize = 33;
 /// monochrome set fitted as a grey ([`mono`]): a color set's table is
 /// the same to the bit, and a monochrome table fitted before keeps the
 /// develop's color where its frames had none until it is refitted.
-pub const FIT_VERSION: u32 = 2;
+pub const FIT_VERSION: u32 = 3;
+
+/// The fit a table must be from for the Look section not to ask for it
+/// to be refitted: 2, since fit 3 changed only the finish the frames
+/// went through (the gamut op for the clamp), and a fit-2 table read at
+/// its cube (`gamut::look_kept`) moves pictures by nothing measurable
+/// inside it (four tables, 2026-11-21), where fit 1's tables can turn
+/// color noise into blotches. A refit replaces any table from before
+/// [`FIT_VERSION`] whatever its frames.
+pub const STALE_FIT: u32 = 2;

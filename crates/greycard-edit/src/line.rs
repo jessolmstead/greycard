@@ -1679,10 +1679,11 @@ impl Line {
         was.placed_under = 0;
         let unseeded = was.noise.learned_strength == Edit::default().noise.learned_strength;
         was.noise.learned_strength = start.noise.learned_strength;
-        was == *start
+        // The process a state was made under is no develop.
+        was.develops_as(start)
             || (unseeded
-                && Edit::raw_defaults().contains(&was)
-                && Edit::raw_defaults().contains(start))
+                && Edit::raw_defaults().iter().any(|d| was.develops_as(d))
+                && Edit::raw_defaults().iter().any(|d| start.develops_as(d)))
     }
 
     /// The current state, as shown under the frame's turn: what the
@@ -3072,6 +3073,8 @@ mod tests {
         // was made against.
         let mut want = exposed(1.0);
         want.light.baseline = Some(baseline::BEFORE_BODIES);
+        // And the first process, which it was made under.
+        want.process = 1;
         assert_eq!(odd.history[0], want);
         assert_eq!(odd.history[0].label, None);
         greycard_core::testing::remove_dir_retry(&dir);

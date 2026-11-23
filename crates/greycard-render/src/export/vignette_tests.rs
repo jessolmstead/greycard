@@ -164,9 +164,12 @@ fn the_scene_vignette_renders_as_before() {
     assert_eq!(hash, SCENE_HASH, "{hash:#018x}");
 }
 
-/// [`the_scene_vignette_renders_as_before`]'s hash, from the build
-/// before the vignette's place.
-const SCENE_HASH: u64 = 0xb73e_ceb6_96a1_de90;
+/// [`the_scene_vignette_renders_as_before`]'s hash: from the build
+/// before the vignette's place, then taken again when the gamut op came
+/// in the clamp's place (`crate::gamut`), which moves the bytes of
+/// every finish but AgX's; the place's own change was held to the old
+/// hash before.
+const SCENE_HASH: u64 = 0xc284_48f7_3e04_fd65;
 
 fn placed(vignette: Vignette, place: Place) -> Vignette {
     Vignette { place, ..vignette }
@@ -264,9 +267,17 @@ fn the_display_vignette_lightens_toward_white() {
         let up = rendered(&image, &edit, source);
         let (a, b) = (mean_at(&plain, w, 0, h - 1), mean_at(&up, w, 0, h - 1));
         assert!(b > a + 0.03 * 65535.0, "{source:?}: {a} to {b}");
-        // Nothing darkens.
-        for (p, u) in plain.iter().zip(&up) {
-            assert!(u >= p, "{source:?}: {p} to {u}");
+        // No pixel's luminance darkens: the gamut op takes chroma for
+        // the lightness a light color gains, so a channel may.
+        let luminance = |px: &[u16]| -> f32 {
+            let lin = |v: u16| encode_inverse(f32::from(v) / 65535.0);
+            0.2126 * lin(px[0]) + 0.7152 * lin(px[1]) + 0.0722 * lin(px[2])
+        };
+        for (p, u) in plain.chunks(3).zip(up.chunks(3)) {
+            assert!(
+                luminance(u) >= luminance(p) - 1e-4,
+                "{source:?}: {p:?} to {u:?}"
+            );
         }
     }
 }
@@ -384,4 +395,13 @@ fn an_unknown_place_renders_as_the_scene() {
         rendered(&image, &unknown, source),
         rendered(&image, &scene, source)
     );
+}
+
+/// The sRGB curve undone, for a luminance of encoded values.
+fn encode_inverse(v: f32) -> f32 {
+    if v <= 0.04045 {
+        v / 12.92
+    } else {
+        ((v + 0.055) / 1.055).powf(2.4)
+    }
 }

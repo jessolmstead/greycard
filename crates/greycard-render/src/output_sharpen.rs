@@ -41,14 +41,14 @@ pub const MOST_TAPS: usize = 9;
 pub const BLACK: f32 = 1e-6;
 
 /// The amount over which a pixel's channels under zero are held at
-/// zero whole; under it they are held by the share the amount is of
-/// it, so the hold comes on with the sharpen and not at its first ulp.
-/// A mask's weight sets the amount a pixel, and two devices may round
-/// a weight of next to nothing to nothing or not: a hold switched on
-/// whole at any amount turned that into whole levels of an
-/// out-of-gamut color (the parity sweep's seed 0x67726579 edit 195 on
-/// a real card, 3.7 levels of blue). The panel's first step, 1%, so
-/// every amount the panel sets is held whole as it always was.
+/// zero whole, under AgX's rail ([`Params::hold`]); under it they are
+/// held by the share the amount is of it, so the hold comes on with the
+/// sharpen and not at its first ulp. A mask's weight sets the amount a
+/// pixel, and two devices may round a weight of next to nothing to
+/// nothing or not: a hold switched on whole at any amount turned that
+/// into whole levels of an out-of-gamut color (the parity sweep's seed
+/// 0x67726579 edit 195 on a real card, 3.7 levels of blue). The panel's
+/// first step, 1%, so every amount the panel sets is held whole.
 /// `viewport.wgsl`'s `OSHARP_HOLD_RAMP` is this.
 pub const HOLD_RAMP: f32 = 0.01;
 
@@ -59,9 +59,22 @@ pub struct Params {
     /// The blur's standard deviation in this picture's pixels.
     pub sigma: f32,
     pub threshold: f32,
+    /// Whether channels under zero are held at zero ([`held`]): under
+    /// AgX's rail (`finish::Baked::agx_railed`), which takes only what
+    /// is under zero and clips per channel as it always did, so an AgX
+    /// picture is what it was. Where the gamut op follows, a color under
+    /// zero is left to it, scaled as any other: a hold there would clip
+    /// the sharpened pixels per channel and the rest not, a hue step at
+    /// a mask's edge.
+    pub hold: bool,
 }
 
 impl Params {
+    /// These, held at zero or not ([`Params::hold`]).
+    pub fn holding(self, hold: bool) -> Self {
+        Params { hold, ..self }
+    }
+
     /// `s` for the picture being made, its radius in that picture's own
     /// pixels whatever its size, or none when it does nothing.
     pub fn of(s: &OutputSharpen) -> Option<Self> {
@@ -69,6 +82,7 @@ impl Params {
             amount: s.amount,
             sigma: s.radius,
             threshold: s.threshold,
+            hold: false,
         })
     }
 
@@ -99,6 +113,7 @@ impl Params {
                             amount: 0.0,
                             sigma: held.radius,
                             threshold: held.threshold,
+                            hold: false,
                         },
                         true,
                     )
@@ -175,9 +190,11 @@ pub fn soft(d: f32, t: f32) -> f32 {
 
 /// `c` with luminance `l` sharpened against its blur `blurred`: the
 /// encoded luminance moved, and the linear color scaled by what that
-/// does to the linear luminance. Black stays black; no channel goes
+/// does to the linear luminance. Black stays black; a channel under
+/// zero is scaled as any other, its proportions kept, for the gamut op
+/// to bring in at its hue, or, held ([`Params::hold`]), no channel goes
 /// under zero on any pixel the sharpen acts on at [`HOLD_RAMP`] or
-/// more, moved or not (under it, by the amount's share), and a
+/// more, moved or not (under it, by the amount's share); and a
 /// brightening stops where the color's largest channel reaches white,
 /// so the channels' proportions hold. At no amount (a pixel outside
 /// the only mask that sharpens, or under one that takes the picture's
@@ -187,11 +204,11 @@ pub fn apply(c: [f32; 3], l: f32, blurred: f32, p: &Params) -> [f32; 3] {
     if !c.iter().all(|v| v.is_finite()) || p.amount.is_nan() || p.amount <= 0.0 {
         return c;
     }
-    // Every pixel the sharpen passes over is held at zero from below,
-    // moved or not, so a flat stretch outside the gamut is clipped as
-    // its sharpened edge is: whole from `HOLD_RAMP` up, by the amount's
-    // share of it under that.
-    let c = held(c, p.amount);
+    // Held, every pixel the sharpen passes over is held at zero from
+    // below, moved or not, so a flat stretch outside the gamut is
+    // clipped as its sharpened edge is: whole from `HOLD_RAMP` up, by
+    // the amount's share of it under that.
+    let c = if p.hold { held(c, p.amount) } else { c };
     let delta = p.amount * soft(l - blurred, p.threshold);
     if delta == 0.0 || !delta.is_finite() {
         return c;
@@ -533,8 +550,8 @@ mod tests {
         );
     }
 
-    /// A channel under zero (a color outside the working space) is held
-    /// at zero on every pixel the sharpen passes over, the flat ones
+    /// Held (AgX's rail), a channel under zero (a color outside the
+    /// working space) is held at zero on every pixel the sharpen passes over, the flat ones
     /// too, so a flat stretch is clipped as its sharpened edge is.
     #[test]
     fn every_pixel_is_held_at_zero_from_below_alike() {
@@ -549,13 +566,14 @@ mod tests {
                 }
             })
             .collect();
-        sharpen(&mut px, w, h, &Params::of(&on(1.0, 1.0, 0.01)).unwrap());
+        let p = Params::of(&on(1.0, 1.0, 0.01)).unwrap().holding(true);
+        sharpen(&mut px, w, h, &p);
         assert_eq!(px[0], [0.5, 0.0, 0.3], "a flat pixel far from the edge");
         assert!(px.iter().all(|c| c.iter().all(|v| *v >= 0.0)));
         assert_ne!(px[w / 2 - 1], [0.5, 0.0, 0.3], "the edge moved");
     }
 
-    /// The hold at zero comes on with the amount: a color outside the
+    /// Held (AgX's rail), the hold at zero comes on with the amount: a color outside the
     /// gamut at an amount of next to nothing is next to as it came, not
     /// clipped (the parity sweep's edit 195 on a real card, where a
     /// mask's weight of next to nothing on one device and nothing on
@@ -575,6 +593,7 @@ mod tests {
                     amount,
                     sigma: 1.0,
                     threshold: 0.01,
+                    hold: true,
                 },
             )
         };
@@ -592,6 +611,40 @@ mod tests {
         for i in 1..=2000 {
             let now = at(i as f32 * 0.0001);
             assert!(gap(now, last) < 1e-3, "a step at {}", i as f32 * 0.0001);
+            last = now;
+        }
+    }
+
+    /// A channel under zero is not held: the color is scaled as any
+    /// other, its proportions kept, for the gamut op to bring in at its
+    /// hue, and the sharpen comes on with its amount from the color as
+    /// it came, with no step.
+    #[test]
+    fn a_color_under_zero_is_left_to_the_gamut_op() {
+        let c = [0.2, -0.03, 0.05];
+        let (l, blurred) = (luminance(c), 0.3);
+        let past = Params {
+            amount: 1.0,
+            sigma: 1.0,
+            threshold: 0.01,
+            hold: false,
+        };
+        let out = apply(c, l, blurred, &past);
+        let ratio = out[0] / c[0];
+        assert!(ratio < 1.0, "darkened against a brighter blur: {ratio}");
+        for k in 0..3 {
+            assert!((out[k] - c[k] * ratio).abs() < 1e-7, "{out:?}");
+        }
+        // And it comes on with the amount, from the color as it came.
+        let at = |amount: f32| apply(c, l, blurred, &Params { amount, ..past });
+        assert_eq!(at(0.0), c);
+        let mut last = c;
+        for i in 1..=1000 {
+            let now = at(i as f32 * 0.001);
+            assert!(
+                (0..3).all(|k| (now[k] - last[k]).abs() < 1e-3),
+                "a step at {i}"
+            );
             last = now;
         }
     }
@@ -634,7 +687,8 @@ mod tests {
                 Params {
                     amount: 0.0,
                     sigma: 1.4,
-                    threshold: 0.01
+                    threshold: 0.01,
+                    hold: false,
                 },
                 true
             ))

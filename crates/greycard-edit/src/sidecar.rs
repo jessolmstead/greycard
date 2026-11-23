@@ -2772,9 +2772,11 @@ mod before_versions {
         // Every state that develops something keeps the zero it was
         // made against; the default state takes its body's.
         let kept_zero = |mut e: Edit| {
-            if e != Edit::default() {
+            if !e.develops_as(&Edit::default()) {
                 e.light.baseline = Some(baseline::BEFORE_BODIES);
             }
+            // Made before there was a process: the first.
+            e.process = 1;
             e
         };
         let made_states: Vec<_> = states(&made.line)

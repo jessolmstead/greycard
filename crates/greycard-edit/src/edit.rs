@@ -319,6 +319,19 @@ impl Edit {
         [Self::default(), Self::raw_without_lens()]
     }
 
+    /// Whether this is `other` but for the process each was made under
+    /// ([`Edit::process`]): what a state develops, not the rendering it
+    /// was made for. The rule for a default: a state an earlier process
+    /// made at the defaults is still no develop.
+    pub fn develops_as(&self, other: &Edit) -> bool {
+        if self.process == other.process {
+            return self == other;
+        }
+        let mut same = self.clone();
+        same.process = other.process;
+        same == *other
+    }
+
     /// A raw's default with the lens section off: a fresh edit's start
     /// with lens corrections off for new edits.
     pub fn raw_without_lens() -> Self {
@@ -1338,8 +1351,15 @@ mod tests {
         let json = sharpened.to_json();
         assert!(json.contains("\"output_sharpen\""), "{json}");
         assert_eq!(Edit::from_json(&json).unwrap(), sharpened);
-        // An empty document is the default edit; unknown fields are ignored.
-        assert_eq!(Edit::from_json("{}").unwrap(), Edit::default());
+        // An empty document is the default edit, made under the first
+        // process; unknown fields are ignored.
+        assert_eq!(
+            Edit::from_json("{}").unwrap(),
+            Edit {
+                process: 1,
+                ..Edit::default()
+            }
+        );
         let partial = r#"{"light": {"exposure": -1}, "future_field": 3}"#;
         let e = Edit::from_json(partial).unwrap();
         assert_eq!(e.light.exposure, -1.0);

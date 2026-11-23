@@ -267,13 +267,15 @@ impl Source {
         self.curve_at(c, how, &White::default_white())
     }
 
-    /// The display curve, per channel or AgX as `how` says, reaching
-    /// white at `white`, the frame's; a clip at white for a picture.
+    /// The display curve, per channel or AgX as `how` says,
+    /// reaching white at `white`, the frame's; a clip at white for a
+    /// picture. Per channel, the floor first ([`crate::gamut::floor`]).
     #[inline]
     pub(crate) fn curve_at(self, c: [f32; 3], how: DisplayCurve, white: &White) -> [f32; 3] {
         match (self, how) {
             (Source::Display, _) => c.map(|x| x.clamp(0.0, 1.0)),
             (Source::Scene(_), DisplayCurve::Channels) => {
+                let c = crate::gamut::floor(c, white.white);
                 c.map(|x| tone_at(x, white.stops, white.white, white.gain))
             }
             (Source::Scene(_), DisplayCurve::Agx) => white.agx.apply(c),
@@ -353,6 +355,17 @@ impl Baked {
         self.profile_tone
             .as_ref()
             .filter(|_| self.source.is_scene())
+    }
+
+    /// Whether the output is AgX's rail rather than the gamut op: a
+    /// scene under AgX with no camera profile's curve in its place. The
+    /// look table then clips at its entry, as before the op
+    /// (`finish_pixel_display`), and the rail takes only what is under
+    /// zero (`agx::output_rail`).
+    pub fn agx_railed(&self) -> bool {
+        self.source.is_scene()
+            && self.display_curve == DisplayCurve::Agx
+            && self.profile_curve().is_none()
     }
 }
 
@@ -996,6 +1009,13 @@ pub fn finish_pixel_display(
         Some(p) => p.apply(shaped),
         None => global.source.curve_at(shaped, global.display_curve, &white),
     };
+    // A profile's curve can leave the working cube under zero; the lower
+    // faces at held hue take the clamp's place there
+    // (`gamut::into_working`). The clamp below is the tables' index, and
+    // every other curve's range is in it already.
+    if profile.is_some() {
+        c = crate::gamut::into_working(c);
+    }
     c = [0, 1, 2].map(|k| {
         let x = encode(c[k].clamp(0.0, 1.0));
         let mut x2 = x;
@@ -1021,8 +1041,18 @@ pub fn finish_pixel_display(
     // whole stage — into the table's primaries, clipped into them,
     // encoded, looked up tetrahedrally, decoded, back, blended by the
     // strength — and the shader does the same arithmetic.
+    // Where the gamut op follows, the table reads the color brought to
+    // its cube and adds its change to the color as it came
+    // (`gamut::look_kept`), so the output brings it in once. Under AgX's
+    // rail, which takes nothing over one, the table clips at its entry
+    // as it always did (`Look::at`), so an AgX picture with a look is
+    // what it was.
     if let Some(look) = look {
-        c = look.at(c);
+        c = if global.agx_railed() {
+            look.at(c)
+        } else {
+            crate::gamut::look_kept(look, c)
+        };
     }
     // The vignette on the picture as shown: after the display curve,
     // every point and color curve and the look table, so a bright edge
@@ -1054,11 +1084,12 @@ pub fn finish_pixel_output(
     // (`agx::output_rail`). Nothing to do in Rec.2020, where the
     // formation leaves nothing under zero, and nothing on the other
     // curves. The weights are the matrix's, kept from the last pixel.
-    if global.source.is_scene()
-        && global.display_curve == DisplayCurve::Agx
-        && global.profile_curve().is_none()
-    {
+    // AgX keeps its own; every other curve's output goes through the
+    // gamut op ([`crate::gamut`]).
+    if global.agx_railed() {
         s = crate::agx::output_rail(s, rail_weights(to_out));
+    } else if let Some(op) = crate::gamut::op_for(to_out, gamut_params(global.source)) {
+        s = op.apply(c);
     }
     let e = s.map(|v| encode(v.clamp(0.0, 1.0)));
     match grain {
@@ -1109,6 +1140,18 @@ pub fn rebalanced(
         })
     });
     (out, reference)
+}
+
+/// The gamut op's thresholds for a source: a scene's knees, or a
+/// picture already rendered for a display at thresholds of one, so
+/// nothing inside its output moves.
+#[inline]
+pub fn gamut_params(source: Source) -> crate::gamut::Params {
+    if source.is_scene() {
+        crate::gamut::Params::SCENE
+    } else {
+        crate::gamut::Params::EDGE
+    }
 }
 
 /// The output rail's weights for `to_out`, computed once per matrix
@@ -1207,6 +1250,9 @@ pub fn pick(
         Some(p) => p.apply(shaped),
         None => source.curve_at(shaped, display_curve, &white),
     };
+    if profile.is_some() {
+        c = crate::gamut::into_working(c);
+    }
     let encoded = c.map(|v| encode(v.clamp(0.0, 1.0)));
     let luma = encode((LUMA[0] * c[0] + LUMA[1] * c[1] + LUMA[2] * c[2]).clamp(0.0, 1.0));
     let shaded = [0, 1, 2].map(|k| decode(lookup(curves, k, encoded[k])));
@@ -2356,7 +2402,10 @@ fn finish_in_bands<'l, T: Copy + Default + Send>(
     let mut out = vec![T::default(); w * image.height * 3];
     // The picture's sharpen, or its blur for a mask's share of it, and
     // whether a mask's share makes each pixel's amount its own.
-    match crate::output_sharpen::Params::finishing(&global.output_sharpen, locals) {
+    // Held at zero under AgX's rail, as before the gamut op.
+    match crate::output_sharpen::Params::finishing(&global.output_sharpen, locals)
+        .map(|(p, shared)| (p.holding(global.agx_railed()), shared))
+    {
         // One pass, each pixel to its output at once.
         None => out
             .par_chunks_mut(w * 3)
@@ -2917,6 +2966,229 @@ mod tests {
         Arc::new(table)
     }
 
+    /// A strong fading table (sRGB's primaries, at full strength).
+    pub(crate) fn fading_table() -> lut::Look {
+        let mut table = lut::Lut3d::identity(17);
+        for v in table.data.iter_mut() {
+            *v = [v[0] * 0.9 + 0.05, v[1].powf(1.1), v[2] * 0.85 + 0.1];
+        }
+        lut::Look::new(Arc::new(table), 1.0).unwrap()
+    }
+
+    /// An AgX picture with a look table is what it was before the gamut
+    /// op: AgX's rail takes only what is under zero, so the table clips
+    /// at its entry (`Look::at`), the display stage before it and the
+    /// rail after it as they were. Over saturated and natural scene
+    /// colors into sRGB, P3, and Rec.2020, to the bit. Reading the table
+    /// at its cube (`gamut::look_kept`) left a strong fade's over-one to
+    /// the final clamp: up to 125 levels apart in sRGB (review M1).
+    #[test]
+    fn an_agx_picture_with_a_look_is_what_it_was() {
+        let look = fading_table();
+        let edit = Edit {
+            display_curve: DisplayCurve::Agx,
+            ..Edit::default()
+        };
+        let global = Baked::global(&edit, Source::SCENE);
+        assert!(global.agx_railed());
+        let mut state = 0x9e37_79b9_u32;
+        let mut unit = move || {
+            state ^= state << 13;
+            state ^= state >> 17;
+            state ^= state << 5;
+            (state >> 8) as f32 / (1u32 << 24) as f32
+        };
+        let colors: Vec<[f32; 3]> = (0..20_000)
+            .map(|i| {
+                let level = 0.02 * 2f32.powf(9.0 * unit());
+                let c = [unit(), unit(), unit()];
+                // Half saturated (a channel near nothing), half natural.
+                let c = if i % 2 == 0 {
+                    let k = (unit() * 3.0) as usize % 3;
+                    let mut c = c;
+                    c[k] *= 0.02;
+                    c
+                } else {
+                    c.map(|v| 0.3 + 0.7 * v)
+                };
+                c.map(|v| v * level)
+            })
+            .collect();
+        for space in [
+            crate::export::Space::Srgb,
+            crate::export::Space::DisplayP3,
+            crate::export::Space::Rec2020,
+        ] {
+            let m = space.matrix();
+            let mut worst = 0.0f32;
+            for px in &colors {
+                let got = finish_pixel_with(
+                    *px,
+                    &global,
+                    &[],
+                    0.0,
+                    None,
+                    None,
+                    None,
+                    None,
+                    Some(&look),
+                    &m,
+                );
+                // As it was: the display stage, the table as `Look::at`
+                // has it, and the output with AgX's rail.
+                let shown = finish_pixel_display(*px, &global, &[], 0.0, None, None, None, None);
+                let want = finish_pixel_output(look.at(shown), &global, None, &m);
+                for k in 0..3 {
+                    worst = worst.max((got[k] - want[k]).abs());
+                }
+            }
+            eprintln!(
+                "{space:?}: an AgX look {:.3} levels from before",
+                worst * 255.0
+            );
+            assert!(worst * 255.0 < 1e-3, "{space:?}: {} levels", worst * 255.0);
+        }
+    }
+
+    /// An AgX picture with an output sharpen is what it was before the
+    /// gamut op too: under AgX's rail the sharpen holds channels under
+    /// zero at zero (`output_sharpen::Params::hold`) as it always did.
+    /// A color curve puts channels under zero at the sharpen; the
+    /// picture's sharpen alone, and a mask taking half of it off over a
+    /// gradient (a negative share), into sRGB, P3, and Rec.2020, against
+    /// the display stage, the sharpen held, and AgX's rail, composed as
+    /// before, to the bit. Left unheld, 26 levels apart in sRGB (review
+    /// of the no-tail build, fix-check).
+    #[test]
+    fn an_agx_picture_with_an_output_sharpen_is_what_it_was() {
+        use crate::output_sharpen::{Params, amount_at, sharpen_rows};
+        let (w, h) = (96usize, 64usize);
+        let mut state = 0x2545_f491_u32;
+        let mut unit = move || {
+            state ^= state << 13;
+            state ^= state >> 17;
+            state ^= state << 5;
+            (state >> 8) as f32 / (1u32 << 24) as f32
+        };
+        let mut image = WorkingImage::new(w, h);
+        for px in image.data.as_chunks_mut::<3>().0 {
+            let level = 0.02 * 2f32.powf(8.0 * unit());
+            let mut c = [unit(), unit(), unit()];
+            if unit() < 0.5 {
+                c[(unit() * 3.0) as usize % 3] *= 0.02;
+            }
+            *px = c.map(|v| v * level);
+        }
+        let mut edit = Edit {
+            display_curve: DisplayCurve::Agx,
+            curves: Curves {
+                red_green: vec![[0.0, 0.85], [1.0, 0.85]],
+                blue_yellow: vec![[0.0, 0.2], [1.0, 0.2]],
+                ..Default::default()
+            },
+            ..Edit::default()
+        };
+        edit.output_sharpen.amount = 1.5;
+        edit.output_sharpen.radius = 1.0;
+        edit.output_sharpen.threshold = 0.0;
+        let global = Baked::global(&edit, Source::SCENE);
+        assert!(global.agx_railed());
+        let mut look = Look::default();
+        look.detail.enabled = true;
+        look.detail.output_sharpen = -0.5;
+        let adjustment = greycard_edit::Adjustment {
+            id: 1,
+            mask: Mask {
+                components: vec![greycard_edit::mask::Component {
+                    shape: greycard_edit::mask::Shape::Linear {
+                        from: [0.0, 0.2],
+                        to: [0.0, 0.5],
+                    },
+                    ..Default::default()
+                }],
+                ..Default::default()
+            },
+            look,
+            ..Default::default()
+        };
+        let masked = vec![Local::of(&adjustment, vec![None], None)];
+        let at = |x: usize, y: usize| ((x as f32 + 0.5) / w as f32, (y as f32 + 0.5) / w as f32);
+        for locals in [Vec::new(), masked] {
+            // As it was: the display stage, the sharpen held, the rail.
+            let mut amounts = Vec::with_capacity(w * h);
+            let shown: Vec<[f32; 3]> = (0..w * h)
+                .map(|i| {
+                    let (x, y) = (i % w, i / w);
+                    let (u, v) = at(x, y);
+                    let on: Vec<(&Baked, f32)> = locals
+                        .iter()
+                        .map(|l| (&l.baked, l.weight_sampled(u, v, None)))
+                        .filter(|(_, m)| *m > 0.0)
+                        .collect();
+                    amounts.push(amount_at(edit.output_sharpen.amount, &on));
+                    finish_pixel_display(
+                        image.pixel(x, y),
+                        &global,
+                        &on,
+                        0.0,
+                        None,
+                        None,
+                        None,
+                        None,
+                    )
+                })
+                .collect();
+            let (p, shared) = Params::finishing(&global.output_sharpen, &locals).unwrap();
+            assert_eq!(shared, !locals.is_empty());
+            let sharpened = sharpen_rows(
+                &shown,
+                w,
+                h,
+                0,
+                h,
+                &p.holding(true),
+                shared.then_some(&amounts[..]),
+            );
+            assert!(
+                shown.iter().filter(|c| c.iter().any(|v| *v < 0.0)).count() > w * h / 20,
+                "channels under zero at the sharpen"
+            );
+            for space in [
+                crate::export::Space::Srgb,
+                crate::export::Space::DisplayP3,
+                crate::export::Space::Rec2020,
+            ] {
+                let m = space.matrix();
+                let got = finish_with(
+                    &image,
+                    None,
+                    &global,
+                    &locals,
+                    at,
+                    |_, _| (0.0, None),
+                    None,
+                    None,
+                    None,
+                    &m,
+                    |v: f32| v,
+                );
+                let mut worst = 0.0f32;
+                for (i, c) in sharpened.iter().enumerate() {
+                    let want = finish_pixel_output(*c, &global, None, &m);
+                    for k in 0..3 {
+                        worst = worst.max((got[i * 3 + k] - want[k]).abs());
+                    }
+                }
+                eprintln!(
+                    "{space:?}, {} masks: an AgX sharpen {:.3} levels from before",
+                    locals.len(),
+                    worst * 255.0
+                );
+                assert!(worst * 255.0 < 1e-3, "{space:?}: {} levels", worst * 255.0);
+            }
+        }
+    }
+
     /// The look table runs after the tone curve and before the output
     /// matrix, and a strength of zero leaves the picture alone —
     /// exactly, not nearly, since the stage is skipped.
@@ -2946,7 +3218,10 @@ mod tests {
         // value lands well above half.
         let black = flat_table([0.0; 3]);
         let full = lut::Look::new(black.clone(), 1.0).unwrap();
-        assert_eq!(finish_pixel_look(px, &global, Some(&full), &m), [0.0; 3]);
+        // To rounding: the table's change is added to the color as it
+        // came (`gamut::look_kept`).
+        let none = finish_pixel_look(px, &global, Some(&full), &m);
+        assert!(none.iter().all(|v| v.abs() < 1e-5), "{none:?}");
         let half = lut::Look::new(black, 0.5).unwrap();
         let mid = finish_pixel_look(px, &global, Some(&half), &m);
         for k in 0..3 {
@@ -3046,9 +3321,11 @@ mod tests {
         // The curve lifts mid grey about half a stop: 0.18 linear is
         // 0.46 encoded; the curve gives about 0.56.
         assert!(g[1] > 0.53 && g[1] < 0.60, "{g:?}");
-        // Past display white the curve is white; a stop under it, not.
+        // Past display white the curve is white (the gamut op's rail
+        // holds a white's luminance a ten-thousandth under one, two
+        // millionths encoded); a stop under it, not.
         let w = fp([4.0; 3], &light, &no_mix, &id, &m);
-        assert!((w[1] - 1.0).abs() < 1e-6, "{w:?}");
+        assert!((w[1] - 1.0).abs() < 1e-5, "{w:?}");
         let under = fp([DISPLAY_WHITE / 2.0; 3], &light, &no_mix, &id, &m);
         assert!(under[1] > 0.9 && under[1] < 0.99, "{under:?}");
         // Contrast leaves mid grey where it was and moves a stop above it.
@@ -3108,19 +3385,27 @@ mod tests {
             }
         }
         // And the whole finish at a stacked corner keeps a primary's
-        // dark channels where they would be with no pass at all.
+        // dark channels near where they would be with no pass at all:
+        // within 1e-5 of zero, the gamut op's rebuilding of a face color
+        // from its ray (about 1e-7 linear). A primary under the floor's
+        // onset, which whitens a brighter one by design (`gamut::floor`).
         let mut corner = Edit::default();
-        corner.light.exposure = 5.0;
         corner.light.tone.contrast = 0.5;
         corner.light.tone.whites = 2.0;
         let m = crate::export::Space::Rec2020.matrix();
-        let plain = finish_pixel(
-            [0.0, 4.2, 0.0],
-            &Baked::global(&corner, Source::SCENE),
-            &[],
-            &m,
-        );
-        assert_eq!([plain[0], plain[2]], [0.0, 0.0], "{plain:?}");
+        for green in [0.05f32, 0.15, 0.3] {
+            let plain = finish_pixel(
+                [0.0, green, 0.0],
+                &Baked::global(&corner, Source::SCENE),
+                &[],
+                &m,
+            );
+            assert!(plain[1] > 0.2, "{green}: {plain:?}");
+            assert!(
+                plain[0].abs() < 1e-5 && plain[2].abs() < 1e-5,
+                "{green}: {plain:?}"
+            );
+        }
     }
 
     /// Contrast summed under masks is held at `MIN_CONTRAST`: the
@@ -6859,7 +7144,12 @@ mod tests {
         // The same through the finish with Blacks crushing and lifting,
         // Contrast either way, the exposure either way, and the whites
         // carried by a mask over a picture at zero and at plus one: a
-        // pixel never encodes brighter as the whites goes further down.
+        // pixel never encodes brighter as the whites goes further down,
+        // but by UP: a channel of a color the
+        // gamut op brings in (its edge held to the chord by the spring)
+        // may rise by a hundredth of a level of 255 as the color
+        // darkens (an orange light, 5.8e-5 measured).
+        const UP: f32 = 1e-4;
         let to_out = crate::export::Space::Srgb.matrix();
         for (headroom, range) in [(0.0f32, [-1.7f32, 1.1f32]), (2.0, [-1.0, 6.5])] {
             let source = Source::Scene(Baseline::DEFAULT.with_headroom(headroom));
@@ -6913,7 +7203,7 @@ mod tests {
                                         );
                                         for k in 0..3 {
                                             assert!(
-                                                o[k] <= last[k] + 1e-5,
+                                                o[k] <= last[k] + UP,
                                                 "{range:?} {curve:?} {blacks} {contrast} {exposure} \
                                                  mask {by_mask:?}: pixel {x} region {g:?}: {} after {}",
                                                 o[k],

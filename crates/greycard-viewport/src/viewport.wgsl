@@ -229,6 +229,32 @@ struct Params {
     // In x 1 where the vignette acts on the picture as shown, after
     // the look table, rather than in the exposure (`vignette::Place`).
     vignette_place: vec4<f32>,
+    // The output's op (`Gamut`, `gamut_output`): the rail's on, knee,
+    // limit, and the bound's soft share; the bound's on, onset, and
+    // asymptote; the roll's knee and limit, the onset, and the early
+    // out's share.
+    g_rail: vec4<f32>,
+    g_bound: vec4<f32>,
+    g_roll: vec4<f32>,
+    // The working space to linear sRGB and back, rows: the rail's.
+    g_srgb0: vec4<f32>,
+    g_srgb1: vec4<f32>,
+    g_srgb2: vec4<f32>,
+    g_unsrgb0: vec4<f32>,
+    g_unsrgb1: vec4<f32>,
+    g_unsrgb2: vec4<f32>,
+    // The output back to the working space, and cone space to the
+    // output, rows.
+    g_from0: vec4<f32>,
+    g_from1: vec4<f32>,
+    g_from2: vec4<f32>,
+    g_lms0: vec4<f32>,
+    g_lms1: vec4<f32>,
+    g_lms2: vec4<f32>,
+    // Cone space to the look table's primaries, rows: its cube's.
+    g_cube0: vec4<f32>,
+    g_cube1: vec4<f32>,
+    g_cube2: vec4<f32>,
 };
 
 // A local adjustment: its look's parameters as the global ones are
@@ -756,7 +782,12 @@ fn fs_main(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
     } else if (p.curve > 0.5) {
         c = clamp(shaped, vec3<f32>(0.0), vec3<f32>(1.0));
     } else {
-        c = tone(shaped);
+        c = tone(gamut_floor(shaped, p.white.x));
+    }
+    // A profile's curve can leave the working cube under zero; its lower
+    // faces take the clamp's place there.
+    if (p.curve > 2.5) {
+        c = gamut_into_working(c);
     }
     // The point curves, on the encoded working-space value, before the
     // matrix, as `finish.rs` does; then the color curves.
@@ -780,9 +811,14 @@ fn fs_main(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
         c = shade(c, count, weights);
     }
     // The look table, last before the output transform, as
-    // `finish_pixel_with` has it.
+    // `finish_pixel_with` has it: read at its cube for the gamut op,
+    // clipped at its entry under AgX's rail (`Baked::agx_railed`).
     if (p.look.x > 0.0) {
-        c = look_at(c);
+        if (p.curve > 1.5 && p.curve < 2.5) {
+            c = look_at(c);
+        } else {
+            c = look_kept(c);
+        }
     }
     // The vignette on the picture as shown, as `finish_pixel_display`
     // puts it on: after the look table, before the output sharpen.
@@ -804,14 +840,21 @@ fn fs_main(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
         }
     }
     // The proof's gamut mark is looked up at the working-space color,
-    // before the output matrix clamps it into its space.
+    // before the gamut op brings it into the output: the mark is where
+    // the proof's profile cannot hold the color the edit made, which is
+    // where the op moves it, so an sRGB output proofed for sRGB still
+    // warns.
     let wide = encode(clamp(c, vec3<f32>(0.0), vec3<f32>(1.0)));
     var s = vec3<f32>(dot(p.m0.xyz, c), dot(p.m1.xyz, c), dot(p.m2.xyz, c));
     // Under AgX the output's guard rail in place of the clip's zeroing,
     // its luminance weights in the output rows' fourth lane, as
     // `finish_pixel_with` has it.
+    // AgX keeps its own; every other curve's output goes through the
+    // gamut op.
     if (p.curve > 1.5 && p.curve < 2.5) {
         s = agx_output_rail(s, vec3<f32>(p.m0.w, p.m1.w, p.m2.w));
+    } else {
+        s = gamut_unclamped(gamut_output(), c);
     }
     var e = encode(clamp(s, vec3<f32>(0.0), vec3<f32>(1.0)));
     if (p.grain0.x > 0.0) {
@@ -1852,7 +1895,7 @@ const OSHARP_BLACK: f32 = 1e-6;
 const OSHARP_AMOUNT_MAX: f32 = 2.0;
 
 // The amount over which the channels under zero are held at zero
-// whole, under it by the amount's share, as
+// whole under AgX's rail, under it by the amount's share, as
 // `output_sharpen::HOLD_RAMP` (`output_sharpen::held`).
 const OSHARP_HOLD_RAMP: f32 = 0.01;
 
@@ -1860,15 +1903,21 @@ const OSHARP_HOLD_RAMP: f32 = 0.01;
 // at none the pixel is not sharpened and stays as it came), as
 // `output_sharpen::apply`: the soft knee on the difference, the
 // encoded luminance moved by it, and the linear color scaled by what
-// that does to the linear luminance; black stays black, and a
+// that does to the linear luminance; black stays black, a channel
+// under zero is scaled as any other for the gamut op (held at zero
+// under AgX's rail, as `output_sharpen::Params::hold`), and a
 // brightening stops where the largest channel reaches white.
 fn osharp_apply(c_in: vec3<f32>, l: f32, blurred: f32, amount: f32) -> vec3<f32> {
-    // Every pixel held at zero from below, moved or not: whole from
-    // the ramp's top, by the amount's share of it under that.
-    var c = max(c_in, vec3<f32>(0.0));
-    if (amount < OSHARP_HOLD_RAMP) {
-        let f = clamp(amount / OSHARP_HOLD_RAMP, 0.0, 1.0);
-        c = select(c_in, c_in - f * c_in, c_in < vec3<f32>(0.0));
+    // Under AgX's rail every pixel held at zero from below, moved or
+    // not: whole from the ramp's top, by the amount's share of it under
+    // that.
+    var c = c_in;
+    if (p.curve > 1.5 && p.curve < 2.5) {
+        c = max(c_in, vec3<f32>(0.0));
+        if (amount < OSHARP_HOLD_RAMP) {
+            let f = clamp(amount / OSHARP_HOLD_RAMP, 0.0, 1.0);
+            c = select(c_in, c_in - f * c_in, c_in < vec3<f32>(0.0));
+        }
     }
     let d = l - blurred;
     let t = p.osharp.z;
@@ -2020,7 +2069,8 @@ fn look_sample(e: vec3<f32>) -> vec3<f32> {
 // on the CPU: into the table's primaries, clipped into them (an sRGB
 // table has nothing to say about a Rec.2020 green, and the clip is
 // the gamut map), encoded, looked up, decoded, back, and blended with
-// what came in by the strength.
+// what came in by the strength. Under AgX's rail alone (`look_kept`
+// where the gamut op follows).
 fn look_at(c: vec3<f32>) -> vec3<f32> {
     let l = vec3<f32>(dot(p.look_in0.xyz, c), dot(p.look_in1.xyz, c), dot(p.look_in2.xyz, c));
     let e = look_encode(clamp(l, vec3<f32>(0.0), vec3<f32>(1.0)));
@@ -2296,4 +2346,348 @@ fn tone_agx(scene: vec3<f32>) -> vec3<f32> {
         return agx_form_inset(inset, l);
     }
     return agx_form(back);
+}
+
+// The output's gamut op (`greycard_render::gamut`), the same arithmetic:
+// the rail under sRGB's top, the bound, and the roll at held Oklab hue,
+// each the identity under its threshold. An output is its matrix from
+// the working space, its inverse, and cone space (cubed) to it.
+struct Gamut {
+    to: mat3x3<f32>,
+    back: mat3x3<f32>,
+    lms: mat3x3<f32>,
+    // On, knee, limit.
+    rail: vec3<f32>,
+    // On, onset, asymptote.
+    bound: vec3<f32>,
+    roll: vec2<f32>,
+    onset: f32,
+    early: f32,
+    soft: f32,
+};
+const GAMUT_POWER: f32 = 1.2;
+const GAMUT_SPRING: f32 = 0.1;
+const GAMUT_BISECT: u32 = 20u;
+const GAMUT_FLOOR: f32 = 0.0166;
+const WORKING_LUMA: vec3<f32> = vec3<f32>(0.2627, 0.6780, 0.0593);
+// Oklab with a cone response under zero held at zero (`Op::lab`).
+fn gamut_lab(c: vec3<f32>) -> vec3<f32> {
+    let lms = vec3<f32>(dot(p.ok_in0.xyz, c), dot(p.ok_in1.xyz, c), dot(p.ok_in2.xyz, c));
+    return LMS_TO_LAB * pow(max(lms, vec3<f32>(0.0)), vec3<f32>(1.0 / 3.0));
+}
+fn rows3(a: vec4<f32>, b: vec4<f32>, c: vec4<f32>) -> mat3x3<f32> {
+    return transpose(mat3x3<f32>(a.xyz, b.xyz, c.xyz));
+}
+fn gamut_roll_at(r: f32, knee: f32, limit: f32) -> f32 {
+    if (r <= knee) {
+        return r;
+    }
+    if (knee >= 1.0 || limit <= 1.0 + 1e-6) {
+        return min(r, 1.0);
+    }
+    if (r >= limit) {
+        return 1.0;
+    }
+    let x = (r - knee) / (1.0 - knee);
+    let xl = (limit - knee) / (1.0 - knee);
+    let s = xl / pow(pow(xl, GAMUT_POWER) - 1.0, 1.0 / GAMUT_POWER);
+    return min(knee + (1.0 - knee) * x / pow(1.0 + pow(x / s, GAMUT_POWER), 1.0 / GAMUT_POWER), 1.0);
+}
+fn gamut_bound_at(r: f32, a: f32, b: f32) -> f32 {
+    if (r <= a) {
+        return r;
+    }
+    let x = (r - a) / (b - a);
+    return a + (b - a) * x / pow(1.0 + pow(x, GAMUT_POWER), 1.0 / GAMUT_POWER);
+}
+fn gamut_soft_max0(v: f32, w: f32) -> f32 {
+    if (v <= -w) {
+        return 0.0;
+    }
+    if (v >= w) {
+        return v;
+    }
+    return (v + w) * (v + w) / (4.0 * w);
+}
+// Each output channel along a color's ray from grey, a cubic in the
+// share of its chroma: its four terms (`Ray`).
+struct Ray {
+    p0: vec3<f32>,
+    p1: vec3<f32>,
+    p2: vec3<f32>,
+    p3: vec3<f32>,
+};
+fn gamut_ray(g: Gamut, lab: vec3<f32>) -> Ray {
+    let u = LAB_TO_LMS * vec3<f32>(lab.x, 0.0, 0.0);
+    let v = LAB_TO_LMS * vec3<f32>(0.0, lab.y, lab.z);
+    return Ray(g.lms * (u * u * u), g.lms * (3.0 * u * u * v), g.lms * (3.0 * u * v * v), g.lms * (v * v * v));
+}
+// The output's channels a share `t` of the way out.
+fn ray_at(r: Ray, t: f32) -> vec3<f32> {
+    return ((r.p3 * t + r.p2) * t + r.p1) * t + r.p0;
+}
+// A cubic, lowest power first, at u.
+fn cubic_at(h: vec4<f32>, u: f32) -> f32 {
+    return ((h.w * u + h.z) * u + h.y) * u + h.x;
+}
+// 0, where a cubic turns in (0, len), and len, ascending, in the first
+// n of the four (`gamut::turns`).
+struct Turns {
+    cuts: array<f32, 4>,
+    n: i32,
+};
+fn gamut_turns(h: vec4<f32>, len: f32) -> Turns {
+    var t = Turns(array<f32, 4>(0.0, len, len, len), 1);
+    let qa = 3.0 * h.w;
+    let qb = 2.0 * h.z;
+    let qc = h.y;
+    var r0 = -1.0;
+    var r1 = -1.0;
+    if (qa != 0.0) {
+        let disc = qb * qb - 4.0 * qa * qc;
+        if (disc > 0.0) {
+            let q = -0.5 * (qb + select(-1.0, 1.0, qb >= 0.0) * sqrt(disc));
+            let x0 = q / qa;
+            let x1 = select(0.0, qc / q, q != 0.0);
+            r0 = min(x0, x1);
+            r1 = max(x0, x1);
+        }
+    } else if (qb != 0.0) {
+        r0 = -qc / qb;
+    }
+    if (r0 > 0.0 && r0 < len) {
+        t.cuts[t.n] = r0;
+        t.n = t.n + 1;
+    }
+    if (r1 > 0.0 && r1 < len) {
+        t.cuts[t.n] = r1;
+        t.n = t.n + 1;
+    }
+    t.cuts[t.n] = len;
+    t.n = t.n + 1;
+    return t;
+}
+// The channels as cubics in the share of the way out, and where each
+// turns to the span (`gamut::depth`).
+struct Chans {
+    h: array<vec4<f32>, 3>,
+    t: array<Turns, 3>,
+};
+// How far the ray is out of the cube at e, counted from t0: past t0 the
+// deepest any channel has been under zero since, short of it the least
+// any one channel has been under zero all the way (`gamut::depth`).
+fn gamut_depth(c: Chans, t0: f32, e: f32) -> f32 {
+    let a = min(t0, e);
+    let b = max(t0, e);
+    var d = -1e30;
+    for (var k = 0; k < 3; k++) {
+        let h = c.h[k];
+        let t = c.t[k];
+        let va = cubic_at(h, a);
+        let vb = cubic_at(h, b);
+        var low = min(va, vb);
+        var high = max(va, vb);
+        for (var i = 1; i < t.n - 1; i++) {
+            let u = t.cuts[i];
+            if (u > a && u < b) {
+                let v = cubic_at(h, u);
+                low = min(low, v);
+                high = max(high, v);
+            }
+        }
+        d = max(d, select(-high, -low, e >= t0));
+    }
+    return d;
+}
+// A color's chroma over the edge's along its ray, the lower faces
+// alone, read out to the op's onset: zero nearer the axis than that.
+// The edge where the ray's depth past the faces meets a spring to the
+// chord from grey through the color (`Op::reach_of`).
+fn gamut_reach(g: Gamut, r: Ray, lab: vec3<f32>) -> f32 {
+    if (!(lab.x > 0.0 && length(lab.yz) > 1e-7)) {
+        return 0.0;
+    }
+    let span = 1.0 / g.onset;
+    let grey = r.p0.x;
+    if (!(grey > 0.0)) {
+        return 0.0;
+    }
+    let o = ray_at(r, 1.0);
+    var chord = 1e30;
+    for (var k = 0; k < 3; k++) {
+        if (o[k] < grey) {
+            chord = min(chord, grey / (grey - o[k]));
+        }
+    }
+    chord = min(chord, span);
+    let t0 = min(chord, 1.0);
+    let at = ray_at(r, t0);
+    let n = max(max(at.x, max(at.y, at.z)), grey);
+    var c: Chans;
+    for (var k = 0; k < 3; k++) {
+        c.h[k] = vec4<f32>(r.p0[k], r.p1[k], r.p2[k], r.p3[k]);
+        c.t[k] = gamut_turns(c.h[k], span);
+    }
+    if (gamut_depth(c, t0, span) / n + GAMUT_SPRING * (span - chord) <= 0.0) {
+        return 0.0;
+    }
+    var lo = 0.0;
+    var hi = span;
+    for (var i = 0u; i < GAMUT_BISECT; i++) {
+        let mid = 0.5 * (lo + hi);
+        if (gamut_depth(c, t0, mid) / n + GAMUT_SPRING * (mid - chord) > 0.0) {
+            hi = mid;
+        } else {
+            lo = mid;
+        }
+    }
+    let edge = 0.5 * (lo + hi);
+    if (edge >= span) {
+        return 0.0;
+    }
+    return 1.0 / edge;
+}
+// The rail, its channels' rise over the luminance rolled in sRGB; the
+// color, and in w whether it moved.
+fn gamut_rail(g: Gamut, c: vec3<f32>) -> vec4<f32> {
+    if (g.rail.x < 0.5) {
+        return vec4<f32>(c, 0.0);
+    }
+    // The luminance held a hair under white (`Op::rail`).
+    let y = clamp(dot(WORKING_LUMA, c), 0.0, 1.0 - 1e-4);
+    let head = 1.0 - y;
+    let to_srgb = rows3(p.g_srgb0, p.g_srgb1, p.g_srgb2);
+    let r = to_srgb * c;
+    var moved = false;
+    var q = 1.0;
+    var o = r;
+    for (var k = 0; k < 3; k++) {
+        let e = (r[k] - y) / head;
+        if (e > g.rail.y) {
+            o[k] = y + head * gamut_roll_at(e, g.rail.y, g.rail.z);
+            if (r[k] > 0.0) {
+                q = min(q, o[k] / r[k]);
+            }
+            moved = true;
+        }
+    }
+    if (!moved) {
+        return vec4<f32>(c, 0.0);
+    }
+    o = select(o, o * q, o < vec3<f32>(0.0));
+    return vec4<f32>(rows3(p.g_unsrgb0, p.g_unsrgb1, p.g_unsrgb2) * o, 1.0);
+}
+// A working-space color into the output, linear, before the final
+// clamp (`Op::unclamped`).
+fn gamut_unclamped(g: Gamut, c0: vec3<f32>) -> vec3<f32> {
+    let railed = gamut_rail(g, c0);
+    var c = railed.xyz;
+    let o = g.to * c;
+    let lo = min(o.x, min(o.y, o.z));
+    let hi = max(o.x, max(o.y, o.z));
+    if (railed.w < 0.5 && lo >= g.early * hi && hi <= 1.0) {
+        return o;
+    }
+    var lab = gamut_lab(c);
+    var ray = gamut_ray(g, lab);
+    var rho = gamut_reach(g, ray, lab);
+    if (g.bound.x > 0.5 && rho > g.bound.y) {
+        let q = (gamut_bound_at(rho, g.bound.y, g.bound.z) - 1.0) / (rho - 1.0);
+        var b = o;
+        if (g.soft > 0.0) {
+            let w = g.soft * max(hi, 1e-6);
+            for (var k = 0; k < 3; k++) {
+                b[k] = q * o[k] + (1.0 - q) * gamut_soft_max0(o[k], w);
+            }
+        } else {
+            b = select(o, o * q, o < vec3<f32>(0.0));
+        }
+        c = g.back * b;
+        lab = gamut_lab(c);
+        ray = gamut_ray(g, lab);
+        rho = gamut_reach(g, ray, lab);
+    }
+    if (rho > g.roll.x) {
+        let pt = ray_at(ray, gamut_roll_at(rho, g.roll.x, g.roll.y) / rho);
+        // What the spring leaves past a face, in to it along the line to
+        // grey (`Op::unclamped`).
+        let grey = ray.p0.x;
+        var back = 1.0;
+        for (var k = 0; k < 3; k++) {
+            if (pt[k] < 0.0) {
+                back = min(back, grey / (grey - pt[k]));
+            }
+        }
+        if (back < 1.0) {
+            return vec3<f32>(grey) + back * (pt - vec3<f32>(grey));
+        }
+        return pt;
+    }
+    return g.to * c;
+}
+// The output's op, as the CPU hands it over (`gamut::Op::shader`).
+fn gamut_output() -> Gamut {
+    return Gamut(
+        rows3(p.m0, p.m1, p.m2),
+        rows3(p.g_from0, p.g_from1, p.g_from2),
+        rows3(p.g_lms0, p.g_lms1, p.g_lms2),
+        p.g_rail.xyz,
+        p.g_bound.xyz,
+        p.g_roll.xy,
+        p.g_roll.z,
+        p.g_roll.w,
+        p.g_rail.w,
+    );
+}
+// Thresholds of one on the lower faces alone, into a cube whose cone
+// space to it is `lms`: a look table's, or the working space's.
+fn gamut_cube(to: mat3x3<f32>, lms: mat3x3<f32>) -> Gamut {
+    return Gamut(to, to, lms, vec3<f32>(0.0), vec3<f32>(0.0), vec2<f32>(1.0, 1.0), 1.0, 0.0, 0.0);
+}
+// The working cube's lower faces at held hue, after a profile's curve
+// (`gamut::into_working`).
+fn gamut_into_working(c: vec3<f32>) -> vec3<f32> {
+    if (all(c >= vec3<f32>(0.0))) {
+        return c;
+    }
+    let id = mat3x3<f32>(vec3<f32>(1.0, 0.0, 0.0), vec3<f32>(0.0, 1.0, 0.0), vec3<f32>(0.0, 0.0, 1.0));
+    let g = gamut_cube(id, rows3(p.ok_out0, p.ok_out1, p.ok_out2));
+    return max(gamut_unclamped(g, c), vec3<f32>(0.0));
+}
+// The floor before the display curve per channel (`gamut::floor`).
+fn gamut_floor(s: vec3<f32>, white: f32) -> vec3<f32> {
+    let sq = max(s, vec3<f32>(0.0));
+    let den = dot(sq, sq);
+    if (den <= 0.0) {
+        return s;
+    }
+    let n = dot(sq * sq, sq) / den;
+    let kappa = GAMUT_FLOOR * smoothstep(-1.0, 2.0, log2(n / white));
+    if (kappa <= 0.0) {
+        return s;
+    }
+    let third = 1.0 / 3.0;
+    let w0 = vec3<f32>(1.1 * third, third, 0.9 * third);
+    let w1 = vec3<f32>(third, 0.9 * third, 1.1 * third);
+    let w2 = vec3<f32>(third, third, third);
+    return vec3<f32>(
+        s.x + kappa * dot(w0, s - vec3<f32>(s.x)),
+        s.y + kappa * dot(w1, s - vec3<f32>(s.y)),
+        s.z + kappa * dot(w2, s - vec3<f32>(s.z)),
+    );
+}
+// The look table as the finish reads it (`gamut::look_kept`): read at the
+// color brought to its cube, its change added to the color as it came.
+fn look_kept(c: vec3<f32>) -> vec3<f32> {
+    let to = rows3(p.look_in0, p.look_in1, p.look_in2);
+    let unlut = rows3(p.look_out0, p.look_out1, p.look_out2);
+    let r = to * c;
+    var g = r;
+    if (any(r < vec3<f32>(0.0)) || any(r > vec3<f32>(1.0))) {
+        let top = unlut * min(r, vec3<f32>(1.0));
+        let cube = gamut_cube(to, rows3(p.g_cube0, p.g_cube1, p.g_cube2));
+        g = clamp(gamut_unclamped(cube, top), vec3<f32>(0.0), vec3<f32>(1.0));
+    }
+    let o = look_decode(look_sample(look_encode(g)));
+    return c + p.look.x * (unlut * o - unlut * g);
 }

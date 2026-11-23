@@ -1641,7 +1641,7 @@ pub(crate) fn show_looks(st: &State, chosen: &greycard_edit::look::LookLut, app:
                 &st.develop.looks,
                 chosen_name,
                 curve,
-                greycard_match::FIT_VERSION,
+                greycard_match::STALE_FIT,
             )
             .map(|text| (text, tr!("Refit...")))
             .unwrap_or_default(),

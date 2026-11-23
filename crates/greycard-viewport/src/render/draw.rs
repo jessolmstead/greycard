@@ -151,6 +151,17 @@ struct Params {
     /// the look table, rather than in the exposure
     /// (`vignette::Place`).
     vignette_place: [f32; 4],
+    /// The output's gamut op as `greycard_render::gamut::Op::shader`
+    /// hands it over, with cone space to the look table's primaries for
+    /// its cube.
+    g_rail: [f32; 4],
+    g_bound: [f32; 4],
+    g_roll: [f32; 4],
+    g_srgb: [[f32; 4]; 3],
+    g_unsrgb: [[f32; 4]; 3],
+    g_from: [[f32; 4]; 3],
+    g_lms: [[f32; 4]; 3],
+    g_cube: [[f32; 4]; 3],
 }
 
 /// What of the picture and its overlays (the clipping paint, the
@@ -333,6 +344,18 @@ impl Renderer {
         let display = greycard_render::finish::White::of(v.source, &v.light).under(profile);
         let (pro_in, pro_out) = greycard_render::profile_tone::ProfileTone::matrices();
         let agx = greycard_render::agx::shader_params(display.agx);
+        // The output's gamut op at the source's thresholds, as the export
+        // takes it (`finish_pixel_output`), and the look table's cube.
+        let wide = |m: [[f32; 3]; 3]| m.map(|r| [r[0], r[1], r[2], 0.0]);
+        let op = greycard_render::gamut::Op::for_output(
+            &m,
+            greycard_render::finish::gamut_params(v.source),
+        );
+        let (g_lanes, g_mats) = op.map_or(([[0.0; 4]; 3], [[[0.0; 3]; 3]; 4]), |op| op.shader());
+        let to_lut = self.look.to_lut.map(|r| [r[0], r[1], r[2]]);
+        let g_cube =
+            greycard_render::gamut::Op::for_output(&to_lut, greycard_render::gamut::Params::CUBE)
+                .map_or([[0.0; 3]; 3], |op| op.cone_to_output());
         let params = Params {
             view: [tw as f32, th as f32],
             image,
@@ -493,6 +516,14 @@ impl Renderer {
                 0.0,
                 0.0,
             ],
+            g_rail: g_lanes[0],
+            g_bound: g_lanes[1],
+            g_roll: g_lanes[2],
+            g_srgb: wide(g_mats[0]),
+            g_unsrgb: wide(g_mats[1]),
+            g_from: wide(g_mats[2]),
+            g_lms: wide(g_mats[3]),
+            g_cube: wide(g_cube),
         };
         // The output sharpen on the developed picture drawn whole: not
         // on the camera's JPEG, nor a compare view's tile.

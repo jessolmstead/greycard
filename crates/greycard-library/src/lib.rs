@@ -585,7 +585,8 @@ pub fn is_default_edit(edit: &greycard_edit::Edit, raw: &Path, iso: Option<Optio
     let untouched = |default: greycard_edit::Edit| {
         let mut seen = edit.clone();
         seen.noise.learned_strength = default.noise.learned_strength;
-        seen == default
+        // Made under any process: the process is no develop.
+        seen.develops_as(&default)
     };
     if greycard_core::picture::is_picture_path(raw) {
         greycard_edit::Edit::picture_defaults()

@@ -68,20 +68,32 @@ use crate::worker::ThumbCache;
 /// zero, and a mask's Sharpen there is the delta between the resized
 /// pictures, 2026-11-21. Raised here, not in `DEVELOP_RECIPE`, which
 /// also names the learned masks' rasters.
-pub const EDITED_RECIPE: u16 = 0x8003;
+///
+/// 0x8005: the gamut op at the output in the clamp's place, for every
+/// edit (`greycard_render::gamut`), 2026-11-22. Here and not in
+/// `DEVELOP_RECIPE`: a change of finish is a change of the global look,
+/// which a mask's print leaves out by design (`mask_base`), though the
+/// models' preview, made through the finish, shows it.
+pub const EDITED_RECIPE: u16 = 0x8005;
 
 /// The recipe the pictures the reduced develop made are kept under
 /// (`reduced`): the edit's too, and looked up after
 /// [`EDITED_RECIPE`]'s, but made from the binned mosaic with no capture
 /// sharpen and no denoise. The open frame's develop makes the edit's
 /// pictures under [`EDITED_RECIPE`] when the frame is opened, and they
-/// take these ones' place. 0x8004 with [`EDITED_RECIPE`]'s 0x8003.
-pub const REDUCED_RECIPE: u16 = 0x8004;
+/// take these ones' place. 0x8006 with [`EDITED_RECIPE`]'s 0x8005.
+pub const REDUCED_RECIPE: u16 = 0x8006;
+
+/// The process the edit's recipes were last raised for, and the recipe:
+/// a new process (`greycard_edit::PROCESS`) that changes the finish
+/// alone raises both recipes and this with it.
+#[cfg(test)]
+const RECIPE_FOR_PROCESS: (u32, u16) = (2, 0x8005);
 
 /// The values the two recipes held before, never used again: a picture
 /// kept under one is never asked for.
 #[cfg(test)]
-const RETIRED_RECIPES: [u16; 2] = [0x8001, 0x8002];
+const RETIRED_RECIPES: [u16; 4] = [0x8001, 0x8002, 0x8003, 0x8004];
 
 /// Both recipes of the edit's pictures, in the order they are looked
 /// up.
@@ -1431,6 +1443,12 @@ pub mod tests {
     /// so a picture kept under a retired one is never read back.
     #[test]
     fn the_edits_recipes_are_new_and_apart() {
+        // Raised for this build's process (`greycard_edit::key::PROCESS_KEYED`).
+        assert_eq!(
+            RECIPE_FOR_PROCESS,
+            (greycard_edit::PROCESS, EDITED_RECIPE),
+            "a new process: raise both recipes (or DEVELOP_RECIPE) and RECIPE_FOR_PROCESS"
+        );
         assert_ne!(EDITED_RECIPE, REDUCED_RECIPE);
         for recipe in EDIT_RECIPES {
             assert_ne!(recipe & 0x8000, 0, "{recipe:#x}");

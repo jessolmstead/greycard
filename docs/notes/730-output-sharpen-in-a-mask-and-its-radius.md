@@ -29,6 +29,7 @@ mask's edge a weight of next to nothing moved an out-of-gamut color by
 the whole hold, and two cards disagreed on which side of zero that
 weight fell. The hold now comes on with the amount, over 0 to 1%
 (`HOLD_RAMP`); from 1%, the panel's first step, nothing changed.
+Since §735 the hold is AgX's rail's alone.
 
 **The export sheet's Sharpen.** Both sharpened a smaller export, one
 on the other. The sheet's Sharpen is now skipped, frame by frame, for
