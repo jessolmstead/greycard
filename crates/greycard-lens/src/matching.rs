@@ -49,8 +49,18 @@ pub fn tokens(name: &str) -> Vec<String> {
 const NOISE: &[&str] = &["mm", "f", "lens", "the", "asph", "aspherical"];
 
 /// The maker's own tokens, dropped from a name before comparison.
-fn without_maker(mut tokens: Vec<String>, maker: &str) -> Vec<String> {
-    let maker = self::tokens(maker);
+fn without_maker(tokens: Vec<String>, maker: &str) -> Vec<String> {
+    without_makers(tokens, [maker])
+}
+
+/// The tokens of each of a maker's names, dropped from a name: a body
+/// filed under "Ricoh Imaging Company, Ltd." and named "Pentax K-1"
+/// is a K-1.
+fn without_makers<'a>(
+    mut tokens: Vec<String>,
+    makers: impl IntoIterator<Item = &'a str>,
+) -> Vec<String> {
+    let maker: Vec<String> = makers.into_iter().flat_map(self::tokens).collect();
     tokens.retain(|t| !maker.contains(t));
     tokens
 }
@@ -146,14 +156,18 @@ impl Database {
     pub fn camera(&self, make: &str, model: &str) -> Option<&Camera> {
         #[cfg(feature = "testing")]
         CAMERA_LOOKUPS.with(|n| n.set(n.get() + 1));
-        let file = without_maker(tokens(model), make);
+        let named = without_maker(tokens(model), make);
         let mut best: Option<(f32, &Camera)> = None;
         for c in &self.cameras {
-            if !same_maker(&c.maker, make) {
+            if !c.makers().any(|m| same_maker(m, make)) {
                 continue;
             }
+            // Each of the body's maker names dropped from both sides:
+            // the EXIF's "PENTAX K-1" from "RICOH IMAGING COMPANY,
+            // LTD." is the database's "Pentax K-1" filed under Ricoh.
+            let file = without_makers(named.clone(), c.makers());
             for m in &c.models {
-                let db = without_maker(tokens(m), &c.maker);
+                let db = without_makers(tokens(m), c.makers());
                 if db.is_empty() {
                     continue;
                 }
@@ -241,6 +255,11 @@ impl Database {
             {
                 continue;
             }
+            // The database's first maker name alone: another of its
+            // names dropped from both sides is a word the two no longer
+            // share, and a lens of another maker's then ties with the
+            // right one ("Meike 85mm f/1.8" against "Meike SL 85mm F1.8
+            // STM PRO", filed under "Meke").
             let file = without_maker(named.clone(), &l.maker);
             for m in &l.models {
                 let db = without_maker(tokens(m), &l.maker);
@@ -250,7 +269,7 @@ impl Database {
                 let Some(mut s) = score(&file, &db) else {
                     continue;
                 };
-                if lens_make.is_some_and(|mk| same_maker(&l.maker, mk)) {
+                if lens_make.is_some_and(|mk| l.makers().any(|m| same_maker(m, mk))) {
                     s += 0.05;
                 }
                 let better = match best {
@@ -624,6 +643,95 @@ mod tests {
         assert_eq!(db.camera("Canon", "EOS R7").unwrap().crop_factor, 1.6);
         assert!(db.camera("Canon", "EOS R6 Mark II").is_none());
         assert!(db.camera("Nikon", "EOS R6").is_none());
+    }
+
+    /// lensfun files Pentax's later bodies under "Ricoh Imaging Company,
+    /// Ltd." and names the maker "Pentax" in English; rawler calls them
+    /// "Pentax", their EXIF "RICOH IMAGING COMPANY, LTD.". Each finds
+    /// the body, a mark or a variant more is another body, and a
+    /// maker's other name lends no body to a third maker. The body then
+    /// decides the calibration: a full-frame K-1 takes the lens's
+    /// full-frame entry, a K-3 III its APS-C one.
+    #[test]
+    fn a_body_is_found_under_any_of_its_makers_names() {
+        let body = |model: &str, lang: &str, mount: &str, crop: &str| {
+            format!(
+                "<camera><maker>Ricoh Imaging Company, Ltd.</maker>\
+                 <maker lang=\"en\">Pentax</maker><model>Pentax {model}</model>\
+                 <model lang=\"en\">{lang}</model><mount>{mount}</mount>\
+                 <cropfactor>{crop}</cropfactor></camera>"
+            )
+        };
+        let macro_100 = |mount: &str, crop: &str| {
+            format!(
+                "<lens><maker>Pentax</maker>\
+                 <model>smc Pentax-D FA Macro 100mm f/2.8 WR</model>\
+                 <mount>{mount}</mount><cropfactor>{crop}</cropfactor><calibration>\
+                 <distortion model=\"poly3\" focal=\"100\" k1=\"0.001\"/>\
+                 </calibration></lens>"
+            )
+        };
+        let mut db = Database::default();
+        db.read_xml(&format!(
+            "<lensdatabase version=\"2\">\
+             <mount><name>Pentax KAF2</name><compat>Pentax KAF</compat>\
+             <compat>Pentax KAF4</compat></mount>\
+             <mount><name>Pentax KAF4</name><compat>Pentax KAF</compat>\
+             <compat>Pentax KAF2</compat></mount>\
+             {}{}{}\
+             <camera><maker>Ricoh Imaging Company, Ltd.</maker>\
+             <maker lang=\"en\">Ricoh</maker><model>GR III</model>\
+             <mount>ricohGRIII</mount><cropfactor>1.52</cropfactor></camera>\
+             {}{}</lensdatabase>",
+            body("K-3 Mark III", "K-3 III", "Pentax KAF2", "1.546"),
+            body(
+                "K-3 Mark III Monochrome",
+                "K-3 III Monochrome",
+                "Pentax KAF2",
+                "1.546"
+            ),
+            body("K-1", "K-1", "Pentax KAF4", "1"),
+            macro_100("Pentax KAF2", "1.53"),
+            macro_100("Pentax KAF", "1"),
+        ))
+        .unwrap();
+        let k3 = &db.cameras[0];
+        assert_eq!(k3.maker_aliases, ["Pentax"]);
+        assert_eq!(
+            k3.makers().collect::<Vec<_>>(),
+            ["Ricoh Imaging Company, Ltd.", "Pentax"]
+        );
+        let found = |make: &str, model: &str| db.camera(make, model).map(|c| c.models[0].as_str());
+        for (make, model, body) in [
+            ("Pentax", "K-3 Mark III", "Pentax K-3 Mark III"),
+            (
+                "RICOH IMAGING COMPANY, LTD.",
+                "PENTAX K-3 Mark III",
+                "Pentax K-3 Mark III",
+            ),
+            (
+                "Pentax",
+                "K-3 Mark III Monochrome",
+                "Pentax K-3 Mark III Monochrome",
+            ),
+            ("Pentax", "K-1", "Pentax K-1"),
+            ("RICOH IMAGING COMPANY, LTD.", "PENTAX K-1", "Pentax K-1"),
+            ("Ricoh", "GR III", "GR III"),
+        ] {
+            assert_eq!(found(make, model), Some(body), "{make} {model}");
+        }
+        assert_eq!(found("Pentax", "K-1 Mark II"), None);
+        assert_eq!(found("Pentax", "GR III"), None);
+        assert_eq!(found("Nikon", "K-1"), None);
+
+        let name = "smc PENTAX-D FA Macro 100mm F2.8 WR";
+        let on = |model: &str| {
+            let camera = db.camera("Pentax", model);
+            db.lens(camera, Some("Pentax"), name, Some(100.0))
+                .map(|l| l.crop_factor)
+        };
+        assert_eq!(on("K-1"), Some(1.0));
+        assert_eq!(on("K-3 Mark III"), Some(1.53));
     }
 
     #[test]

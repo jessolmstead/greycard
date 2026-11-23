@@ -119,6 +119,15 @@ design note behind it.
 
 ### Fixes
 
+- Pentax bodies lensfun files under Ricoh, such as the K-1 and K-3
+  III, now find their lens profiles (issue 197,
+  [§737](https://github.com/jessolmstead/greycard/blob/master/docs/notes/737-pentax-lenses-found-and-the-lens-in-an-export.md)).
+- A Pentax DNG's lens is read from its maker note, so its correction
+  applies automatically (issue 197,
+  [§737](https://github.com/jessolmstead/greycard/blob/master/docs/notes/737-pentax-lenses-found-and-the-lens-in-an-export.md)).
+- An export names the lens found or picked as LensModel when the
+  source file names none (issue 197,
+  [§737](https://github.com/jessolmstead/greycard/blob/master/docs/notes/737-pentax-lenses-found-and-the-lens-in-an-export.md)).
 - A Landscape mask no longer crashes the editor on a Mac: its menu
   opens a turn after the answer, not inside it (issue 186).
 - An archive join of a frame turned on one computer no longer lands

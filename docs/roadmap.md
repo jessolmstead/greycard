@@ -1441,8 +1441,14 @@ clears or a tester asks for it.
       needs a develop of its own, the kept Original being the edit's
 - [ ] An export that leaves out the location alone and keeps the rest
       of the metadata (discussion 147)
-- [ ] The lens found or picked by hand written as LensModel on an
-      export whose source has none, for every maker (issue 197)
+- [ ] Open Pentax's .PEF files in the editor and the library: only
+      the command line's `info`, `lenses`, and `develop` read them
+      (issue 197). Pairing, the index, import, and camera styles, as
+      .ORI took (§671)
+- [ ] An export names a lens picked by hand even with the correction
+      off, so a stand-in profile's name goes out as the lens; and a
+      source's LensMake is kept beside a LensModel we fill, where
+      they may disagree (§737). The owner's call
 - [ ] The filter bar's Kind row shown disabled, not hidden, where
       the frames hold one kind (discussion 59, 2026-11-22)
 - [ ] A `{total}` token in the import's and the export's Name, for
@@ -1833,9 +1839,11 @@ release when the wait clears.
 - [ ] The makers' embedded lens corrections, exact where a file carries
       them. Waits on rawler surfacing them (and the Panasonic lens name)
       (discussion 187)
-- [ ] Pentax's lens read from the makernote's LensType, in rawler,
-      so a K-3 III's or K-1's DNG and PEF find their lens (issue 197);
-      waits on the reporter's samples
+- [ ] rawler reads a Pentax DNG's lens from its maker note; our own
+      read (§737) goes when it does. The patch is written; waits on
+      the pull request
+- [ ] lensfun lacks the smc PENTAX-FA 35mm F2 AL, so a K-1 with it
+      finds its body and no profile (issue 197)
 - [ ] lensfun calibrates the Sigma 50mm f/1.4 DG HSM Art with a
       distortion k1 of exactly zero (made on a Canon 6D), so it gets no
       distortion correction where Adobe's profile straightens it; measure

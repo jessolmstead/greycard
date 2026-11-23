@@ -35,7 +35,11 @@ pub use store::{Progress, Store};
 /// for a first-party line, is not taken; codes are no focal lengths,
 /// and a match leaving one out needs most of the name; calibrations of
 /// one name tie to the one covering the body, 2026-11-19.
-pub const MATCHING: u32 = 2;
+///
+/// 3: a body is found under any of its maker's names (lensfun's Pentax
+/// bodies filed under Ricoh), and a Pentax DNG's lens is read from its
+/// maker note, 2026-11-22.
+pub const MATCHING: u32 = 3;
 
 use db::{DistortionModel, Lens as DbLens};
 use greycard_core::develop::lens::{

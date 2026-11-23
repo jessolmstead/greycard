@@ -695,6 +695,39 @@ pub fn with_capture_shifted(metadata: &RawMetadata, by: i64) -> RawMetadata {
     out
 }
 
+/// A lens as an export names it: who made it, when that is known, and
+/// its name.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LensName {
+    pub make: Option<String>,
+    pub model: String,
+}
+
+/// `metadata` naming `lens` where the source names no lens: the lens
+/// the engine resolved for the file, or the one picked by hand, as
+/// `LensModel`, and its maker as `LensMake` where the source has none.
+/// A source's own `LensModel` is never written over, nor its
+/// `LensMake`: the camera's word stands. Every writer of an export's
+/// tags ([`payload`], [`write_rgb16_tiff`], the linear DNG) carries the
+/// metadata's lens, so naming it here names it in each.
+pub fn name_lens(metadata: &mut RawMetadata, lens: &LensName) {
+    let blank = |s: &Option<String>| s.as_deref().is_none_or(|s| s.trim().is_empty());
+    let model = lens.model.trim();
+    if model.is_empty() || !blank(&metadata.exif.lens_model) {
+        return;
+    }
+    metadata.exif.lens_model = Some(model.to_string());
+    if blank(&metadata.exif.lens_make)
+        && let Some(make) = lens
+            .make
+            .as_deref()
+            .map(str::trim)
+            .filter(|m| !m.is_empty())
+    {
+        metadata.exif.lens_make = Some(make.to_string());
+    }
+}
+
 /// The days in month `m` (1 to 12) of year `y`, by the Gregorian rule.
 fn days_in_month(y: i64, m: u32) -> i64 {
     match m {
@@ -855,6 +888,80 @@ mod tests {
             Value::Rational(r) => assert_eq!((r[0].n, r[0].d), (1, 250)),
             other => panic!("{other:?}"),
         }
+    }
+
+    /// A source that names no lens is given the lens named: in the
+    /// payload (a JPEG's, a PNG's, a WebP's) and in a TIFF, `LensModel`
+    /// and `LensMake`. A source's own is never written over.
+    #[test]
+    fn the_lens_named_goes_where_the_source_names_none() {
+        let fa = LensName {
+            make: Some("Pentax".into()),
+            model: "smc PENTAX-FA 35mm F2 AL".into(),
+        };
+        let provenance = |m| Provenance {
+            metadata: m,
+            software: "greycard test",
+            width: 2,
+            height: 1,
+            srgb: true,
+            written: None,
+            source_name: None,
+            output: None,
+            edit: None,
+            rights: &NO_RIGHTS,
+        };
+        let lens_of = |exif: &IFD| {
+            (
+                text(exif, ExifTag::LensMake),
+                text(exif, ExifTag::LensModel),
+            )
+        };
+        let mut none = metadata();
+        none.exif.lens_model = None;
+        name_lens(&mut none, &fa);
+        let named = (
+            Some("Pentax".into()),
+            Some("smc PENTAX-FA 35mm F2 AL".into()),
+        );
+        let (_, exif) = read(&payload(&provenance(&none)).unwrap());
+        assert_eq!(lens_of(&exif), named);
+        let mut tiff = Cursor::new(Vec::new());
+        write_rgb16_tiff(&mut tiff, 2, 1, &[0; 6], None, Some(&provenance(&none))).unwrap();
+        let (_, exif) = read(&tiff.into_inner());
+        assert_eq!(lens_of(&exif), named);
+
+        // The source's lens stands, and its blank maker is not filled
+        // from another lens's.
+        let mut own = metadata();
+        name_lens(&mut own, &fa);
+        let (_, exif) = read(&payload(&provenance(&own)).unwrap());
+        assert_eq!(lens_of(&exif), (None, Some("RF50mm F1.8 STM".into())));
+        // A blank tag is no lens, and a blank name names none.
+        let mut blank = metadata();
+        blank.exif.lens_model = Some("  ".into());
+        blank.exif.lens_make = Some("Sigma".into());
+        name_lens(&mut blank, &fa);
+        assert_eq!(
+            (
+                blank.exif.lens_make.as_deref(),
+                blank.exif.lens_model.as_deref()
+            ),
+            (Some("Sigma"), Some("smc PENTAX-FA 35mm F2 AL"))
+        );
+        let mut unnamed = metadata();
+        unnamed.exif.lens_model = None;
+        name_lens(
+            &mut unnamed,
+            &LensName {
+                make: Some("Pentax".into()),
+                model: " ".into(),
+            },
+        );
+        assert_eq!(
+            (unnamed.exif.lens_make, unnamed.exif.lens_model),
+            (None, None)
+        );
     }
 
     #[test]

@@ -50,7 +50,8 @@ clear in hand.
 ### Metadata
 
 - **All**: the camera's details (camera, lens, settings, date) and the
-  edit that made the picture.
+  edit that made the picture. Where the file names no lens, the one
+  greycard found or you picked is named.
 - **No edit**: the camera's details, without your edit. Use it for a
   picture you hand on without your recipe.
 - **None**: nothing but the color profile. The camera, the time, any

@@ -918,6 +918,38 @@ mod tests {
         assert_eq!((plain.dng.noise_profile, plain.dng.merged), (None, None));
     }
 
+    /// A linear DNG of a source that names no lens names the lens
+    /// [`crate::exif::name_lens`] named, as the other exports do.
+    #[test]
+    fn a_linear_dng_names_the_lens_named() {
+        let frame = flat_frame();
+        let image = CameraImage::from_data(4, 4, vec![0.25; 48]).unwrap();
+        let mut metadata = RawMetadata {
+            make: "Test".into(),
+            model: "Cam".into(),
+            ..Default::default()
+        };
+        crate::exif::name_lens(
+            &mut metadata,
+            &crate::exif::LensName {
+                make: Some("Pentax".into()),
+                model: "smc PENTAX-FA 35mm F2 AL".into(),
+            },
+        );
+        let options = LinearDngOptions {
+            metadata: Some(&metadata),
+            ..Default::default()
+        };
+        let mut buf = Cursor::new(Vec::new());
+        write_linear_dng(&mut buf, &frame, &image, [2.0, 1.0, 4.0], &options).unwrap();
+        let back = RawlerDecoder.decode_bytes(&buf.into_inner()).unwrap();
+        assert_eq!(
+            back.shot.lens_model.as_deref(),
+            Some("smc PENTAX-FA 35mm F2 AL")
+        );
+        assert_eq!(back.shot.lens_make.as_deref(), Some("Pentax"));
+    }
+
     /// A CFA DNG reads back as the mosaic it was given, in its pattern
     /// (Bayer and X-Trans), with the levels, the white and the matrices
     /// a developer needs, and develops as the mosaic does.

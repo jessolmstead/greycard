@@ -12,6 +12,10 @@ use crate::Error;
 #[derive(Debug, Clone, PartialEq)]
 pub struct Camera {
     pub maker: String,
+    /// The maker's names in other languages: lensfun files Pentax's
+    /// later bodies under "Ricoh Imaging Company, Ltd." and names them
+    /// "Pentax" in English.
+    pub maker_aliases: Vec<String>,
     /// The model as the camera writes it, then the names given in
     /// other languages.
     pub models: Vec<String>,
@@ -71,6 +75,11 @@ pub struct VignettingCalibration {
 #[derive(Debug, Clone, PartialEq)]
 pub struct Lens {
     pub maker: String,
+    /// The maker's names in other languages, as for a [`Camera`].
+    pub maker_aliases: Vec<String>,
+    /// The maker's English name, when the database gives one apart:
+    /// "Pentax" for "Ricoh Imaging Company", "Meike" for "Meke".
+    pub maker_english: Option<String>,
     pub models: Vec<String>,
     pub mounts: Vec<String>,
     /// The crop factor of the sensor the calibrations were made on.
@@ -178,9 +187,29 @@ fn child_text<'a>(node: &roxmltree::Node<'a, 'a>, name: &str) -> Option<&'a str>
 
 /// The `<model>` texts: the untagged one first, then the languages.
 fn models(node: &roxmltree::Node) -> Vec<String> {
+    texts(node, "model")
+}
+
+/// The `<maker>` texts: the untagged one, and the others in other
+/// languages, each once.
+fn makers(node: &roxmltree::Node) -> Option<(String, Vec<String>)> {
+    let mut all = texts(node, "maker").into_iter();
+    let maker = all.next()?;
+    let mut aliases: Vec<String> = Vec::new();
+    for m in all {
+        if m != maker && !aliases.contains(&m) {
+            aliases.push(m);
+        }
+    }
+    Some((maker, aliases))
+}
+
+/// The texts of the children named `tag`: the untagged one first, then
+/// the languages.
+fn texts(node: &roxmltree::Node, tag: &str) -> Vec<String> {
     let mut out: Vec<(bool, String)> = node
         .children()
-        .filter(|n| n.has_tag_name("model"))
+        .filter(|n| n.has_tag_name(tag))
         .filter_map(|n| {
             n.text()
                 .map(str::trim)
@@ -201,8 +230,10 @@ fn camera(node: &roxmltree::Node) -> Option<Camera> {
     if models.is_empty() {
         return None;
     }
+    let (maker, maker_aliases) = makers(node)?;
     Some(Camera {
-        maker: child_text(node, "maker")?.to_string(),
+        maker,
+        maker_aliases,
         models,
         mount: child_text(node, "mount")?.to_string(),
         crop_factor: child_text(node, "cropfactor")?.parse().ok()?,
@@ -221,8 +252,16 @@ fn lens(node: &roxmltree::Node) -> Option<Lens> {
         Some("rectilinear") | None => LensType::Rectilinear,
         _ => LensType::Fisheye,
     };
+    let (maker, maker_aliases) = makers(node)?;
+    let maker_english = node
+        .children()
+        .filter(|n| n.has_tag_name("maker") && n.attribute("lang") == Some("en"))
+        .find_map(|n| n.text().map(str::trim).filter(|s| !s.is_empty()))
+        .map(String::from);
     let mut lens = Lens {
-        maker: child_text(node, "maker")?.to_string(),
+        maker,
+        maker_aliases,
+        maker_english,
         models,
         mounts: node
             .children()
@@ -342,7 +381,28 @@ fn parse_ratio(s: &str) -> Option<f32> {
     }
 }
 
+impl Camera {
+    /// The maker's names: the one the database gives first, then the
+    /// others.
+    pub fn makers(&self) -> impl Iterator<Item = &str> {
+        std::iter::once(self.maker.as_str()).chain(self.maker_aliases.iter().map(String::as_str))
+    }
+}
+
 impl Lens {
+    /// The maker's names, as [`Camera::makers`] gives a body's.
+    pub fn makers(&self) -> impl Iterator<Item = &str> {
+        std::iter::once(self.maker.as_str()).chain(self.maker_aliases.iter().map(String::as_str))
+    }
+
+    /// The maker as a reader of a file's `LensMake` expects it: the
+    /// English name where the database gives one, else its first. None
+    /// for lensfun's "Generic", which is no maker.
+    pub fn maker_name(&self) -> Option<&str> {
+        let name = self.maker_english.as_deref().unwrap_or(&self.maker);
+        (!name.eq_ignore_ascii_case("generic")).then_some(name)
+    }
+
     /// The lens's name as the database gives it first.
     pub fn name(&self) -> &str {
         &self.models[0]

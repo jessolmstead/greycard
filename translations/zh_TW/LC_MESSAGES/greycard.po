@@ -38,241 +38,241 @@ msgid "Create"
 msgstr "建立"
 
 #. The camera match sheet's Fit button; it also reads 'Fit N groups'
-#: crates/greycard-slint/ui/app.slint:2365
+#: crates/greycard-slint/ui/app.slint:2366
 msgid "Fit"
 msgstr "擬合"
 
 #. The status line as shown.
-#: crates/greycard-slint/ui/app.slint:2403
+#: crates/greycard-slint/ui/app.slint:2404
 msgid "preparing..."
 msgstr "正在準備..."
 
-#: crates/greycard-slint/ui/app.slint:2488
+#: crates/greycard-slint/ui/app.slint:2489
 msgid "Proof: {}"
 msgstr "校樣：{}"
 
-#: crates/greycard-slint/ui/app.slint:2488
+#: crates/greycard-slint/ui/app.slint:2489
 msgid "Proof: {} · gamut"
 msgstr "校樣：{} · 色域"
 
-#: crates/greycard-slint/ui/app.slint:2491
+#: crates/greycard-slint/ui/app.slint:2492
 msgid "File"
 msgstr "檔案"
 
 #. The five canvas shades, in Settings and the View menu
-#: crates/greycard-slint/ui/app.slint:2516
+#: crates/greycard-slint/ui/app.slint:2517
 msgid "Black"
 msgstr "黑色"
 
 #. The five canvas shades, in Settings and the View menu
-#: crates/greycard-slint/ui/app.slint:2516
+#: crates/greycard-slint/ui/app.slint:2517
 msgid "Dark grey"
 msgstr "深灰色"
 
 #. The five canvas shades, in Settings and the View menu
-#: crates/greycard-slint/ui/app.slint:2516
+#: crates/greycard-slint/ui/app.slint:2517
 msgid "Light grey"
 msgstr "淺灰色"
 
 #. The five canvas shades, in Settings and the View menu
-#: crates/greycard-slint/ui/app.slint:2516
+#: crates/greycard-slint/ui/app.slint:2517
 msgid "Mid grey"
 msgstr "中灰色"
 
 #. The five canvas shades, in Settings and the View menu
-#: crates/greycard-slint/ui/app.slint:2516
+#: crates/greycard-slint/ui/app.slint:2517
 msgid "White"
 msgstr "白色"
 
 #. The download ask's yes button, for a model or the lens database
-#: crates/greycard-slint/ui/app.slint:2627
+#: crates/greycard-slint/ui/app.slint:2628
 msgid "Download"
 msgstr "下載"
 
 #. The download ask's button that declines for now
-#: crates/greycard-slint/ui/app.slint:2629
+#: crates/greycard-slint/ui/app.slint:2630
 msgid "Not now"
 msgstr "以後再說"
 
 #. The models ask's button that downloads every model
-#: crates/greycard-slint/ui/app.slint:2636
+#: crates/greycard-slint/ui/app.slint:2637
 msgid "Download all"
 msgstr "全部下載"
 
-#: crates/greycard-slint/ui/app.slint:4172
+#: crates/greycard-slint/ui/app.slint:4173
 msgid "Queued for export, shown as it will export. Edit it from its folder."
 msgstr "已排入匯出佇列，顯示的是匯出後的樣子。請到它所在的資料夾中編輯。"
 
 #. The Loupe's mode button at the top of the develop panel
-#: crates/greycard-slint/ui/app.slint:4183
+#: crates/greycard-slint/ui/app.slint:4184
 msgid "Cull"
 msgstr "挑片"
 
-#: crates/greycard-slint/ui/app.slint:4188
+#: crates/greycard-slint/ui/app.slint:4189
 msgid "Cull mode"
 msgstr "挑片模式"
 
 #. Develop, Crop, Masks, and Retouch
-#: crates/greycard-slint/ui/app.slint:4207
+#: crates/greycard-slint/ui/app.slint:4208
 msgid "Panel tabs"
 msgstr "面板分頁"
 
 #. The Loupe's mode buttons at the top of the develop panel
-#: crates/greycard-slint/ui/app.slint:4210
+#: crates/greycard-slint/ui/app.slint:4211
 msgid "Crop"
 msgstr "裁切"
 
 #. The Loupe's mode buttons at the top of the develop panel
-#: crates/greycard-slint/ui/app.slint:4210
+#: crates/greycard-slint/ui/app.slint:4211
 msgid "Develop"
 msgstr "編修"
 
 #. The Loupe's mode buttons at the top of the develop panel
-#: crates/greycard-slint/ui/app.slint:4210
+#: crates/greycard-slint/ui/app.slint:4211
 msgid "Masks"
 msgstr "遮色片"
 
 #. The Loupe's mode buttons at the top of the develop panel
-#: crates/greycard-slint/ui/app.slint:4210
+#: crates/greycard-slint/ui/app.slint:4211
 msgid "Retouch"
 msgstr "修飾"
 
 #. View menu
-#: crates/greycard-slint/ui/app.slint:5413
+#: crates/greycard-slint/ui/app.slint:5415
 msgid "Full screen"
 msgstr "全螢幕"
 
 #. View menu
-#: crates/greycard-slint/ui/app.slint:5413
+#: crates/greycard-slint/ui/app.slint:5415
 msgid "Full screen (F11)"
 msgstr "全螢幕 (F11)"
 
 #. File menu
-#: crates/greycard-slint/ui/app.slint:5421
+#: crates/greycard-slint/ui/app.slint:5423
 msgid "Export..."
 msgstr "匯出..."
 
 #. File menu
-#: crates/greycard-slint/ui/app.slint:5421
+#: crates/greycard-slint/ui/app.slint:5423
 msgid "Stop export"
 msgstr "停止匯出"
 
 #. View menu
-#: crates/greycard-slint/ui/app.slint:5552
+#: crates/greycard-slint/ui/app.slint:5554
 msgid "Right panel"
 msgstr "右側面板"
 
 #. View menu
-#: crates/greycard-slint/ui/app.slint:5554
+#: crates/greycard-slint/ui/app.slint:5556
 msgid "Hide panel"
 msgstr "隱藏面板"
 
 #. View menu
-#: crates/greycard-slint/ui/app.slint:5554
+#: crates/greycard-slint/ui/app.slint:5556
 msgid "Show panel"
 msgstr "顯示面板"
 
 #. View menu: the filmstrip
-#: crates/greycard-slint/ui/app.slint:5591
+#: crates/greycard-slint/ui/app.slint:5593
 msgid "Filmstrip"
 msgstr "底片列"
 
 #. View menu: the filmstrip
-#: crates/greycard-slint/ui/app.slint:5593
+#: crates/greycard-slint/ui/app.slint:5595
 msgid "Hide filmstrip"
 msgstr "隱藏底片列"
 
 #. View menu: the filmstrip
-#: crates/greycard-slint/ui/app.slint:5593
+#: crates/greycard-slint/ui/app.slint:5595
 msgid "Show filmstrip"
 msgstr "顯示底片列"
 
 #. The view button at the top left: the grid
-#: crates/greycard-slint/ui/app.slint:5796
+#: crates/greycard-slint/ui/app.slint:5798
 msgid "Library"
 msgstr "圖庫"
 
-#: crates/greycard-slint/ui/app.slint:5800
+#: crates/greycard-slint/ui/app.slint:5802
 msgid "Library view"
 msgstr "圖庫檢視"
 
 #. The view button at the top left: one frame
-#: crates/greycard-slint/ui/app.slint:5814
+#: crates/greycard-slint/ui/app.slint:5816
 msgid "Loupe"
 msgstr "放大檢視"
 
-#: crates/greycard-slint/ui/app.slint:5818
+#: crates/greycard-slint/ui/app.slint:5820
 msgid "Loupe view"
 msgstr "放大檢視"
 
 #. File menu
-#: crates/greycard-slint/ui/app.slint:5906
+#: crates/greycard-slint/ui/app.slint:5908
 msgid "Open folder..."
 msgstr "開啟資料夾..."
 
 #. File menu
-#: crates/greycard-slint/ui/app.slint:5939
+#: crates/greycard-slint/ui/app.slint:5941
 msgid "Import..."
 msgstr "匯入..."
 
-#: crates/greycard-slint/ui/app.slint:5962
+#: crates/greycard-slint/ui/app.slint:5964
 msgid "Stop import"
 msgstr "停止匯入"
 
-#: crates/greycard-slint/ui/app.slint:5962
+#: crates/greycard-slint/ui/app.slint:5964
 msgid "Stopping..."
 msgstr "正在停止..."
 
-#: crates/greycard-slint/ui/app.slint:5963
+#: crates/greycard-slint/ui/app.slint:5965
 msgid "Importing the catalog..."
 msgstr "正在匯入目錄..."
 
 #. File menu, under Import
-#: crates/greycard-slint/ui/app.slint:5984
+#: crates/greycard-slint/ui/app.slint:5986
 msgid "From a card or folder..."
 msgstr "從記憶卡或資料夾..."
 
 #. File menu, under Import
-#: crates/greycard-slint/ui/app.slint:5989
+#: crates/greycard-slint/ui/app.slint:5991
 msgid "A Lightroom catalog..."
 msgstr "Lightroom 目錄..."
 
 #. Help menu: a newer version is out; {} is its number
-#: crates/greycard-slint/ui/app.slint:6348
+#: crates/greycard-slint/ui/app.slint:6350
 msgid "{} is available"
 msgstr "{} 已推出"
 
 #. Help menu: under the version note
-#: crates/greycard-slint/ui/app.slint:6357
+#: crates/greycard-slint/ui/app.slint:6359
 msgid "Not now: do not offer {} again"
 msgstr "以後再說：不再提示 {}"
 
-#: crates/greycard-slint/ui/app.slint:6365
+#: crates/greycard-slint/ui/app.slint:6367
 msgid "Settings..."
 msgstr "設定..."
 
-#: crates/greycard-slint/ui/app.slint:6373
+#: crates/greycard-slint/ui/app.slint:6375
 msgid "Help"
 msgstr "說明"
 
-#: crates/greycard-slint/ui/app.slint:6376
+#: crates/greycard-slint/ui/app.slint:6378
 msgid "Help menu"
 msgstr "說明選單"
 
 #. Help menu: the keys sheet, with the key that opens it
-#: crates/greycard-slint/ui/app.slint:6397
+#: crates/greycard-slint/ui/app.slint:6399
 msgid "Keys (?)"
 msgstr "快速鍵 (?)"
 
-#: crates/greycard-slint/ui/app.slint:6401
+#: crates/greycard-slint/ui/app.slint:6403
 msgid "User guide"
 msgstr "使用者指南"
 
-#: crates/greycard-slint/ui/app.slint:6406
+#: crates/greycard-slint/ui/app.slint:6408
 msgid "Report a problem..."
 msgstr "回報問題..."
 
-#: crates/greycard-slint/ui/app.slint:6476
+#: crates/greycard-slint/ui/app.slint:6478
 msgid "Left panel"
 msgstr "左側面板"
 
@@ -2171,199 +2171,199 @@ msgstr "貼上遮色片"
 msgid "New mask"
 msgstr "新增遮色片"
 
-#: crates/greycard-slint/ui/panel/mask.slint:367
+#: crates/greycard-slint/ui/panel/mask.slint:369
 msgid "MASK"
 msgstr "遮色片"
 
 #. Spoken by a screen reader: the mask's name field
-#: crates/greycard-slint/ui/panel/mask.slint:398
+#: crates/greycard-slint/ui/panel/mask.slint:400
 msgid "Mask name"
 msgstr "遮色片名稱"
 
-#: crates/greycard-slint/ui/panel/mask.slint:417
+#: crates/greycard-slint/ui/panel/mask.slint:419
 msgid "Invert"
 msgstr "反轉"
 
-#: crates/greycard-slint/ui/panel/mask.slint:424
+#: crates/greycard-slint/ui/panel/mask.slint:426
 msgid "Refine edge"
 msgstr "調整邊緣"
 
-#: crates/greycard-slint/ui/panel/mask.slint:455
+#: crates/greycard-slint/ui/panel/mask.slint:457
 msgid "Shapes"
 msgstr "形狀"
 
-#: crates/greycard-slint/ui/panel/mask.slint:542
+#: crates/greycard-slint/ui/panel/mask.slint:544
 msgid "Invert this shape"
 msgstr "反轉此形狀"
 
-#: crates/greycard-slint/ui/panel/mask.slint:598
+#: crates/greycard-slint/ui/panel/mask.slint:600
 msgid "Remove this shape"
 msgstr "移除此形狀"
 
 #. Luminance range: the fade at the dark end
-#: crates/greycard-slint/ui/panel/mask.slint:712
+#: crates/greycard-slint/ui/panel/mask.slint:714
 msgid "Low fade"
 msgstr "暗部過渡"
 
 #. Luminance range: the fade at the light end
-#: crates/greycard-slint/ui/panel/mask.slint:740
+#: crates/greycard-slint/ui/panel/mask.slint:742
 msgid "High fade"
 msgstr "亮部過渡"
 
 #. Color range: the button that reads a color off the picture
-#: crates/greycard-slint/ui/panel/mask.slint:768
+#: crates/greycard-slint/ui/panel/mask.slint:770
 msgid "Sample"
 msgstr "取樣"
 
 #. Color range: the fade
-#: crates/greycard-slint/ui/panel/mask.slint:813
+#: crates/greycard-slint/ui/panel/mask.slint:815
 msgid "Hue fade"
 msgstr "色相過渡"
 
 #. Color range: the fade
-#: crates/greycard-slint/ui/panel/mask.slint:843
+#: crates/greycard-slint/ui/panel/mask.slint:845
 msgid "Chroma fade"
 msgstr "色度過渡"
 
 #. Add a shape: a brush; once one exists its button says Paint
-#: crates/greycard-slint/ui/panel/mask.slint:907
+#: crates/greycard-slint/ui/panel/mask.slint:909
 msgid "Brush"
 msgstr "筆刷"
 
 #. Brush: what a stroke does
-#: crates/greycard-slint/ui/panel/mask.slint:910
+#: crates/greycard-slint/ui/panel/mask.slint:912
 msgid "Add"
 msgstr "加入"
 
 #. Brush: what a stroke does
-#: crates/greycard-slint/ui/panel/mask.slint:910
+#: crates/greycard-slint/ui/panel/mask.slint:912
 msgid "Erase"
 msgstr "擦除"
 
 #. Brush: what a stroke does
-#: crates/greycard-slint/ui/panel/mask.slint:910
+#: crates/greycard-slint/ui/panel/mask.slint:912
 msgid "Subtract"
 msgstr "減去"
 
-#: crates/greycard-slint/ui/panel/mask.slint:919
+#: crates/greycard-slint/ui/panel/mask.slint:921
 msgid "Add a shape"
 msgstr "加入形狀"
 
 #. Spoken by a screen reader: the shape mode row
-#: crates/greycard-slint/ui/panel/mask.slint:944
+#: crates/greycard-slint/ui/panel/mask.slint:946
 msgid "Next shape mode"
 msgstr "下一種形狀模式"
 
 #. Shape mode: the shape cuts the mask down to where both are
-#: crates/greycard-slint/ui/panel/mask.slint:947
+#: crates/greycard-slint/ui/panel/mask.slint:949
 msgid "Intersect"
 msgstr "交集"
 
 #. Add a shape: the kinds
-#: crates/greycard-slint/ui/panel/mask.slint:954
+#: crates/greycard-slint/ui/panel/mask.slint:956
 msgid "Linear"
 msgstr "線性漸層"
 
 #. Add a shape: the kinds
-#: crates/greycard-slint/ui/panel/mask.slint:961
+#: crates/greycard-slint/ui/panel/mask.slint:963
 msgid "Radial"
 msgstr "放射狀漸層"
 
 #. Add a shape: a brush; once one exists its button says Paint
-#: crates/greycard-slint/ui/panel/mask.slint:968
+#: crates/greycard-slint/ui/panel/mask.slint:970
 msgid "Paint"
 msgstr "繪製"
 
-#: crates/greycard-slint/ui/panel/mask.slint:977
+#: crates/greycard-slint/ui/panel/mask.slint:979
 msgid "Subject"
 msgstr "主體"
 
-#: crates/greycard-slint/ui/panel/mask.slint:984
+#: crates/greycard-slint/ui/panel/mask.slint:986
 msgid "Background"
 msgstr "背景"
 
-#: crates/greycard-slint/ui/panel/mask.slint:993
+#: crates/greycard-slint/ui/panel/mask.slint:995
 msgid "Sky"
 msgstr "天空"
 
-#: crates/greycard-slint/ui/panel/mask.slint:1010
+#: crates/greycard-slint/ui/panel/mask.slint:1021
 msgid "Landscape"
 msgstr "風景"
 
-#: crates/greycard-slint/ui/panel/mask.slint:1029
+#: crates/greycard-slint/ui/panel/mask.slint:1040
 msgid "Object"
 msgstr "物件"
 
-#: crates/greycard-slint/ui/panel/mask.slint:1048
+#: crates/greycard-slint/ui/panel/mask.slint:1059
 msgid "People"
 msgstr "人物"
 
-#: crates/greycard-slint/ui/panel/mask.slint:1060
+#: crates/greycard-slint/ui/panel/mask.slint:1071
 msgid "Whole person"
 msgstr "整個人"
 
-#: crates/greycard-slint/ui/panel/mask.slint:1062
+#: crates/greycard-slint/ui/panel/mask.slint:1073
 msgid "Face"
 msgstr "臉部"
 
-#: crates/greycard-slint/ui/panel/mask.slint:1064
+#: crates/greycard-slint/ui/panel/mask.slint:1075
 msgid "Facial skin"
 msgstr "臉部皮膚"
 
-#: crates/greycard-slint/ui/panel/mask.slint:1065
+#: crates/greycard-slint/ui/panel/mask.slint:1076
 msgid "Eyebrows"
 msgstr "眉毛"
 
-#: crates/greycard-slint/ui/panel/mask.slint:1066
+#: crates/greycard-slint/ui/panel/mask.slint:1077
 msgid "Eyes"
 msgstr "眼睛"
 
-#: crates/greycard-slint/ui/panel/mask.slint:1067
+#: crates/greycard-slint/ui/panel/mask.slint:1078
 msgid "Iris"
 msgstr "虹膜"
 
-#: crates/greycard-slint/ui/panel/mask.slint:1068
+#: crates/greycard-slint/ui/panel/mask.slint:1079
 msgid "Lips"
 msgstr "嘴唇"
 
-#: crates/greycard-slint/ui/panel/mask.slint:1069
+#: crates/greycard-slint/ui/panel/mask.slint:1080
 msgid "Teeth"
 msgstr "牙齒"
 
-#: crates/greycard-slint/ui/panel/mask.slint:1071
+#: crates/greycard-slint/ui/panel/mask.slint:1082
 msgid "Body"
 msgstr "身體"
 
-#: crates/greycard-slint/ui/panel/mask.slint:1072
+#: crates/greycard-slint/ui/panel/mask.slint:1083
 msgid "Skin"
 msgstr "皮膚"
 
-#: crates/greycard-slint/ui/panel/mask.slint:1073
+#: crates/greycard-slint/ui/panel/mask.slint:1084
 msgid "Hair"
 msgstr "頭髮"
 
-#: crates/greycard-slint/ui/panel/mask.slint:1074
+#: crates/greycard-slint/ui/panel/mask.slint:1085
 msgid "Hands"
 msgstr "手"
 
-#: crates/greycard-slint/ui/panel/mask.slint:1076
+#: crates/greycard-slint/ui/panel/mask.slint:1087
 msgid "Clothing"
 msgstr "衣服"
 
-#: crates/greycard-slint/ui/panel/mask.slint:1077
+#: crates/greycard-slint/ui/panel/mask.slint:1088
 msgctxt "clothing"
 msgid "Top"
 msgstr "上衣"
 
-#: crates/greycard-slint/ui/panel/mask.slint:1078
+#: crates/greycard-slint/ui/panel/mask.slint:1089
 msgid "Bottoms"
 msgstr "下身"
 
-#: crates/greycard-slint/ui/panel/mask.slint:1079
+#: crates/greycard-slint/ui/panel/mask.slint:1090
 msgid "Shoes"
 msgstr "鞋子"
 
-#: crates/greycard-slint/ui/panel/mask.slint:1080
+#: crates/greycard-slint/ui/panel/mask.slint:1091
 msgid "All clothing"
 msgstr "所有衣服"
 

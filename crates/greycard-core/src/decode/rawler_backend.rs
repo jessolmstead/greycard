@@ -969,9 +969,7 @@ fn decode_source(source: &RawSource) -> Result<(RawFrame, RawMetadata)> {
     let image = decoder
         .raw_image(source, &params, false)
         .map_err(decoder_error)?;
-    let metadata = decoder
-        .raw_metadata(source, &params)
-        .map_err(decoder_error)?;
+    let metadata = metadata_of(decoder.as_ref(), source, &params).map_err(decoder_error)?;
     let active_area = image.active_area.map(|r| Rect {
         x: r.p.x,
         y: r.p.y,
@@ -1323,6 +1321,145 @@ pub(crate) fn shot_of(metadata: &RawMetadata) -> Shot {
         camera_frame: None,
         focus_point: None,
     }
+}
+
+/// The decoder's metadata for `source`, with the lens a Pentax DNG
+/// names only in its maker note ([`with_maker_note_lens`]).
+fn metadata_of(
+    decoder: &dyn ::rawler::decoders::Decoder,
+    source: &RawSource,
+    params: &RawDecodeParams,
+) -> ::rawler::Result<RawMetadata> {
+    let mut metadata = decoder.raw_metadata(source, params)?;
+    with_maker_note_lens(decoder, &mut metadata);
+    Ok(metadata)
+}
+
+/// The lens of a Pentax DNG put into its metadata as rawler puts a
+/// PEF's: the camera writes no `LensModel`, only the maker note's
+/// `LensRec` in `DNGPrivateData`, which rawler's PEF decoder reads and
+/// its DNG decoder does not. We read the tag and look it up in rawler's
+/// own lens table, as its PEF decoder does, until rawler's DNG decoder
+/// does the same (a change offered upstream; this goes when it lands).
+/// A DNG whose EXIF names a lens, or any other file, is left as it is.
+fn with_maker_note_lens(decoder: &dyn ::rawler::decoders::Decoder, metadata: &mut RawMetadata) {
+    use ::rawler::decoders::{FormatHint, WellKnownIFD};
+    let named = |s: &Option<String>| s.as_deref().is_some_and(|s| !s.trim().is_empty());
+    if decoder.format_hint() != FormatHint::DNG
+        || metadata.lens.is_some()
+        || named(&metadata.exif.lens_model)
+    {
+        return;
+    }
+    let Some(root) = decoder.ifd(WellKnownIFD::Root).ok().flatten() else {
+        return;
+    };
+    let Some(lens) = pentax_dng_lens(&root, &metadata.make, &metadata.model) else {
+        return;
+    };
+    log::debug!("lens {} from the DNG's Pentax maker note", lens.lens_name);
+    let exif = &mut metadata.exif;
+    exif.lens_spec = Some([
+        lens.focal_range[0],
+        lens.focal_range[1],
+        lens.aperture_range[0],
+        lens.aperture_range[1],
+    ]);
+    exif.lens_make = Some(lens.lens_make.clone());
+    exif.lens_model = Some(lens.lens_model.clone());
+    metadata.lens = Some(lens.clone());
+}
+
+/// The lens a Pentax DNG's maker note names ([`pentax_lens_rec`]) in
+/// rawler's table of K-mount lenses. A first byte of 0 to 2 is a lens
+/// with no id of its own (none, a K or M lens, an A lens), as rawler's
+/// PEF decoder reads it.
+fn pentax_dng_lens(
+    root: &::rawler::formats::tiff::IFD,
+    make: &str,
+    model: &str,
+) -> Option<&'static ::rawler::lens::LensDescription> {
+    use ::rawler::formats::tiff::Value;
+    use ::rawler::tags::DngTag;
+    let data = match &root.get_entry(DngTag::DNGPrivateData)?.value {
+        Value::Byte(d) | Value::Undefined(d) => d,
+        _ => return None,
+    };
+    let (kind, id) = pentax_lens_rec(data)?;
+    if kind <= 2 {
+        return None;
+    }
+    ::rawler::lens::LensResolver::new()
+        .with_camera_make(make)
+        .with_camera_model(model)
+        .with_lens_id((u32::from(kind), u32::from(id)))
+        .with_mounts(&["k-mount".into()])
+        .resolve()
+}
+
+/// The most bytes a `LensRec` is taken at: Pentax writes four.
+const LENS_REC_MAX: usize = 64;
+
+/// The first two bytes of the `LensRec` (0x003f) of the Pentax maker
+/// note a Pentax DNG keeps in `DNGPrivateData`: "PENTAX \0", the byte
+/// order, then an IFD whose offsets count from the data's start. Read
+/// by hand, not through rawler's IFD reader, which allocates what an
+/// entry's count says before it finds the data short: the entries are
+/// walked only as far as the data holds them, and the tag is taken only
+/// as BYTE or UNDEFINED of 2 to [`LENS_REC_MAX`] bytes, inline or
+/// wholly inside the data.
+fn pentax_lens_rec(data: &[u8]) -> Option<(u8, u8)> {
+    const HEADER: &[u8] = b"PENTAX \0";
+    const LENS_REC: u16 = 0x003f;
+    // The header, the byte order, and the entry count.
+    const FIRST: usize = 12;
+    const ENTRY: usize = 12;
+    if !data.starts_with(HEADER) {
+        return None;
+    }
+    let little = match data.get(8..10)? {
+        b"II" => true,
+        b"MM" => false,
+        _ => return None,
+    };
+    let u16_at = |at: usize| -> Option<u16> {
+        let b: [u8; 2] = data.get(at..at.checked_add(2)?)?.try_into().ok()?;
+        Some(if little {
+            u16::from_le_bytes(b)
+        } else {
+            u16::from_be_bytes(b)
+        })
+    };
+    let u32_at = |at: usize| -> Option<u32> {
+        let b: [u8; 4] = data.get(at..at.checked_add(4)?)?.try_into().ok()?;
+        Some(if little {
+            u32::from_le_bytes(b)
+        } else {
+            u32::from_be_bytes(b)
+        })
+    };
+    let count = usize::from(u16_at(10)?);
+    let fit = data.len().saturating_sub(FIRST) / ENTRY;
+    for i in 0..count.min(fit) {
+        let at = FIRST + i * ENTRY;
+        if u16_at(at)? != LENS_REC {
+            continue;
+        }
+        let kind = u16_at(at + 2)?;
+        let n = usize::try_from(u32_at(at + 4)?).ok()?;
+        // BYTE or UNDEFINED.
+        if !matches!(kind, 1 | 7) || !(2..=LENS_REC_MAX).contains(&n) {
+            return None;
+        }
+        let bytes = if n <= 4 {
+            data.get(at + 8..at + 8 + n)?
+        } else {
+            let from = usize::try_from(u32_at(at + 8)?).ok()?;
+            data.get(from..from.checked_add(n)?)?
+        };
+        return Some((bytes[0], bytes[1]));
+    }
+    None
 }
 
 /// The ISO speed, from whichever tag the camera filled. `ISOSpeedRatings`
@@ -2326,6 +2463,161 @@ mod tests {
         decoder
             .raw_image(&source, &RawDecodeParams::default(), false)
             .unwrap()
+    }
+
+    /// A Pentax maker note as a Pentax DNG keeps it in
+    /// `DNGPrivateData`, in byte order `ii` (or big-endian): the header,
+    /// the order, and one IFD of a `LensRec` of `rec` and a long kept
+    /// out of line, so the note's offsets count from the data's start.
+    fn pentax_note(rec: [u8; 4], ii: bool) -> Vec<u8> {
+        let u16b = |v: u16| if ii { v.to_le_bytes() } else { v.to_be_bytes() };
+        let u32b = |v: u32| if ii { v.to_le_bytes() } else { v.to_be_bytes() };
+        let mut note = b"PENTAX \0".to_vec();
+        note.extend(if ii { b"II" } else { b"MM" });
+        note.extend(u16b(2));
+        // 0x003f, BYTE, four of them, in the entry.
+        note.extend(u16b(0x003f));
+        note.extend(u16b(1));
+        note.extend(u32b(4));
+        note.extend(rec);
+        // 0x0200, LONG, two of them, out of line at the end.
+        note.extend(u16b(0x0200));
+        note.extend(u16b(4));
+        note.extend(u32b(2));
+        note.extend(u32b(10 + 2 + 2 * 12 + 4));
+        note.extend(u32b(0));
+        note.extend(u32b(64));
+        note.extend(u32b(64));
+        note
+    }
+
+    /// A mosaic DNG with `note` as its `DNGPrivateData` and `lens` as
+    /// its `LensModel` when given, through rawler's metadata and ours.
+    fn pentax_dng_metadata(note: Option<Vec<u8>>, lens: Option<&str>) -> RawMetadata {
+        use ::rawler::formats::tiff::Value;
+        use ::rawler::tags::{DngTag, ExifTag};
+        let raw = a_mosaic(::rawler::rawimage::BlackLevel::new(&[100u16], 1, 1, 1));
+        let bytes = dng_bytes(&raw, |root| {
+            if let Some(note) = note {
+                root.add_tag(DngTag::DNGPrivateData, Value::Byte(note));
+            }
+            if let Some(lens) = lens {
+                root.add_tag(ExifTag::LensModel, lens);
+            }
+        });
+        let source = RawSource::new_from_slice(&bytes);
+        let decoder = ::rawler::get_decoder(&source).unwrap();
+        metadata_of(decoder.as_ref(), &source, &RawDecodeParams::default()).unwrap()
+    }
+
+    /// A Pentax DNG's lens is the one its maker note's `LensRec` names
+    /// in rawler's table, as a PEF's is: the EXIF names none.
+    #[test]
+    fn a_pentax_dngs_lens_is_read_from_its_maker_note() {
+        for ii in [true, false] {
+            let m = pentax_dng_metadata(Some(pentax_note([7, 58, 0, 0], ii)), None);
+            assert_eq!(
+                m.exif.lens_model.as_deref(),
+                Some("smc PENTAX-D FA Macro 100mm F2.8 WR"),
+                "little-endian {ii}"
+            );
+            assert_eq!(m.exif.lens_make.as_deref(), Some("Pentax"));
+            let shot = shot_of(&m);
+            assert_eq!(
+                shot.lens_model.as_deref(),
+                Some("smc PENTAX-D FA Macro 100mm F2.8 WR")
+            );
+            assert_eq!(shot.lens_make.as_deref(), Some("Pentax"));
+        }
+    }
+
+    /// The EXIF's lens stands over the note's; a lens with no id of its
+    /// own (a first byte of 0 to 2), an id the table lacks, a note of
+    /// another maker's, or one cut short, names none and fails nothing.
+    #[test]
+    fn a_dngs_maker_note_lens_yields_to_the_exif_and_to_nonsense() {
+        let named = |m: &RawMetadata| m.exif.lens_model.clone();
+        let m = pentax_dng_metadata(Some(pentax_note([7, 58, 0, 0], true)), Some("My Lens 50mm"));
+        assert_eq!(named(&m).as_deref(), Some("My Lens 50mm"));
+        assert!(m.lens.is_none());
+        for rec in [[0, 0, 0, 0], [1, 7, 0, 0], [2, 58, 0, 0], [7, 255, 255, 0]] {
+            let m = pentax_dng_metadata(Some(pentax_note(rec, true)), None);
+            assert_eq!(named(&m), None, "{rec:?}");
+        }
+        let mut other = pentax_note([7, 58, 0, 0], true);
+        other[..6].copy_from_slice(b"RICOH\0");
+        assert_eq!(named(&pentax_dng_metadata(Some(other), None)), None);
+        let mut cut = pentax_note([7, 58, 0, 0], true);
+        cut.truncate(14);
+        assert_eq!(named(&pentax_dng_metadata(Some(cut), None)), None);
+        assert_eq!(named(&pentax_dng_metadata(None, None)), None);
+    }
+
+    /// A maker note's entries as a hostile file may give them, read
+    /// without a large allocation and without a panic: a count of four
+    /// billion bytes, a value past the data's end, more entries counted
+    /// than the data holds, a type that is not bytes, too short a tag.
+    /// A well-formed note with its tag out of line or after another
+    /// entry reads.
+    #[test]
+    fn a_maker_notes_lens_rec_is_read_within_its_data() {
+        // One entry of `tag`, `kind`, `count`, `value`, big-endian, then
+        // `tail`, after an entry count of `entries`.
+        let note = |entries: u16, tag: u16, kind: u16, count: u32, value: [u8; 4], tail: &[u8]| {
+            let mut n = b"PENTAX \0MM".to_vec();
+            n.extend(entries.to_be_bytes());
+            n.extend(tag.to_be_bytes());
+            n.extend(kind.to_be_bytes());
+            n.extend(count.to_be_bytes());
+            n.extend(value);
+            n.extend(tail);
+            n
+        };
+        let rec = [7, 58, 0, 0];
+        assert_eq!(
+            pentax_lens_rec(&note(1, 0x3f, 1, 4, rec, &[])),
+            Some((7, 58))
+        );
+        assert_eq!(
+            pentax_lens_rec(&note(1, 0x3f, 7, 4, rec, &[])),
+            Some((7, 58))
+        );
+        // Out of line, at 28, past the entry and four bytes more.
+        let at = 28u32.to_be_bytes();
+        assert_eq!(
+            pentax_lens_rec(&note(1, 0x3f, 1, 6, at, &[0, 0, 0, 0, 7, 58, 1, 2, 3, 4])),
+            Some((7, 58))
+        );
+        // The hostile ones.
+        for (what, n) in [
+            ("a LONG of 4G", note(1, 0x3f, 4, u32::MAX, rec, &[])),
+            ("BYTEs of 4G", note(1, 0x3f, 1, u32::MAX, rec, &[])),
+            (
+                "past the end",
+                note(1, 0x3f, 1, 8, 24u32.to_be_bytes(), &[0; 4]),
+            ),
+            (
+                "at u32::MAX",
+                note(1, 0x3f, 1, 8, u32::MAX.to_be_bytes(), &[]),
+            ),
+            ("one byte", note(1, 0x3f, 1, 1, rec, &[])),
+            ("a SHORT", note(1, 0x3f, 3, 2, rec, &[])),
+            ("another tag", note(1, 0x40, 1, 4, rec, &[])),
+            ("counted, not there", note(u16::MAX, 0x40, 1, 4, rec, &[])),
+        ] {
+            assert_eq!(pentax_lens_rec(&n), None, "{what}");
+        }
+        // A count past the data, the tag in the one entry there is.
+        assert_eq!(
+            pentax_lens_rec(&note(u16::MAX, 0x3f, 1, 4, rec, &[])),
+            Some((7, 58))
+        );
+        // Cut anywhere, nothing panics.
+        let whole = pentax_note([7, 58, 0, 0], false);
+        for end in 0..whole.len() {
+            let _ = pentax_lens_rec(&whole[..end]);
+        }
+        assert_eq!(pentax_lens_rec(&whole), Some((7, 58)));
     }
 
     /// A linear DNG's image, three samples a pixel, 8 by 6.
@@ -4570,9 +4862,7 @@ fn probe_and_mosaic_source(
 ) -> Result<(Probe, std::result::Result<MosaicRead, String>)> {
     let decoder = ::rawler::get_decoder(source).map_err(decoder_error)?;
     let params = RawDecodeParams::default();
-    let metadata = decoder
-        .raw_metadata(source, &params)
-        .map_err(decoder_error)?;
+    let metadata = metadata_of(decoder.as_ref(), source, &params).map_err(decoder_error)?;
     let probe = Probe::from_metadata(&metadata);
     let mosaic = described(|| {
         if is_dng(path) {
@@ -4822,8 +5112,7 @@ fn probe_unguarded(path: &Path) -> Result<Probe> {
 
 fn probe_source(source: &RawSource) -> Result<Probe> {
     let decoder = ::rawler::get_decoder(source).map_err(decoder_error)?;
-    let metadata = decoder
-        .raw_metadata(source, &RawDecodeParams::default())
+    let metadata = metadata_of(decoder.as_ref(), source, &RawDecodeParams::default())
         .map_err(decoder_error)?;
     Ok(Probe::from_metadata(&metadata))
 }
@@ -5002,9 +5291,7 @@ fn cr3_ends(
 fn probe_and_stance_source(source: &RawSource, path: &Path) -> Result<(Probe, RawStance)> {
     let decoder = ::rawler::get_decoder(source).map_err(decoder_error)?;
     let params = RawDecodeParams::default();
-    let metadata = decoder
-        .raw_metadata(source, &params)
-        .map_err(decoder_error)?;
+    let metadata = metadata_of(decoder.as_ref(), source, &params).map_err(decoder_error)?;
     let probe = Probe::from_metadata(&metadata);
     let described = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         decoder.raw_image(source, &params, true)

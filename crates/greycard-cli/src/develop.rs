@@ -1126,9 +1126,14 @@ fn run_develop(
         return Ok(());
     }
     let db = lens_database(lens)?;
-    let (frame, metadata) = RawlerDecoder
+    let (frame, mut metadata) = RawlerDecoder
         .decode_path_with_metadata(file)
         .with_context(|| format!("decoding {}", file.display()))?;
+    // The outputs name the lens where the file names none.
+    let identity = (frame.make.as_str(), frame.model.as_str(), &frame.shot, true);
+    if let Some(name) = greycard_engine::lens::named(identity, lens, db.as_ref()) {
+        greycard_core::exif::name_lens(&mut metadata, &name);
+    }
     let settings = &DevelopSettings {
         demosaic: demosaic_for(&frame.layout, demosaic_asked)?,
         // A DCP's look table is read where the editor's default
@@ -1393,6 +1398,10 @@ fn run_develop_picture(
         p.image.width,
         p.image.height
     );
+    let identity = (p.make.as_str(), p.model.as_str(), &p.shot, false);
+    if let Some(name) = greycard_engine::lens::named(identity, lens, db.as_ref()) {
+        greycard_core::exif::name_lens(&mut p.metadata, &name);
+    }
     let clip_level = p.clip_level();
     let stats = correct_and_sharpen(
         &mut p.image,

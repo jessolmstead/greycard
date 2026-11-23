@@ -263,6 +263,52 @@ pub fn left_out_in(
         .then(|| format!("the lens {name}: no profile for it here; written without one"))
 }
 
+/// The lens an export names where its source names none
+/// ([`greycard_core::exif::name_lens`]): the one picked by hand, a
+/// lens of the database's (with its maker) or an Adobe profile's (by
+/// the lens it names), or else the one the file's own tags gave the
+/// decoder. None when there is none to name; a compact's lens taken
+/// from its body is not named, the body says it. Named whether the
+/// correction is on or not: the glass is the same.
+pub fn named(
+    identity: Identity,
+    lens: &greycard_edit::Lens,
+    db: Option<&Database>,
+) -> Option<greycard_core::exif::LensName> {
+    named_in(
+        identity,
+        lens,
+        db,
+        greycard_edit_io::profiles::store_dir().as_deref(),
+    )
+}
+
+/// [`named`] with the profile directory named.
+pub fn named_in(
+    (make, model, shot, _): Identity,
+    lens: &greycard_edit::Lens,
+    db: Option<&Database>,
+    profiles: Option<&Path>,
+) -> Option<greycard_core::exif::LensName> {
+    use greycard_core::exif::LensName;
+    match &lens.chosen {
+        LensChoice::FromFile => shot.lens_model.clone().map(|model| LensName {
+            make: shot.lens_make.clone(),
+            model,
+        }),
+        LensChoice::Database(name) => Some(LensName {
+            make: db
+                .and_then(|db| db.lens_named(db.camera(make, model), name))
+                .and_then(|l| l.maker_name().map(String::from)),
+            model: name.clone(),
+        }),
+        LensChoice::Lcp(file) => lcp::row_in(profiles?, file).map(|row| LensName {
+            make: None,
+            model: row.lens,
+        }),
+    }
+}
+
 /// [`profile_correction`] with the profile directory named.
 pub fn profile_correction_in(
     (width, height): (usize, usize),
@@ -911,6 +957,99 @@ mod tests {
             ..Default::default()
         };
         assert!(left_out_in(other, &b, None, Some(&dir)).is_some());
+        crate::testing::remove_dir_retry(&dir);
+    }
+
+    /// The lens an export names: the file's, as the decoder gave it;
+    /// a lens picked by hand from the database, with its maker; an
+    /// Adobe profile's lens by its name, its maker unknown. Nothing for
+    /// a file that names none, or a profile that is not there.
+    #[test]
+    fn an_export_names_the_lens_found_or_picked() {
+        use greycard_core::exif::LensName;
+        let dir = crate::testing::scratch_dir("lens-named");
+        std::fs::write(dir.join("c.lcp"), lcp("Canon EOS R6", true)).unwrap();
+        let mut db = Database::default();
+        db.read_xml(&format!(
+            "<lensdatabase version=\"2\"><camera><maker>Canon</maker>\
+             <model>Canon EOS R6</model><mount>Canon RF</mount>\
+             <cropfactor>1</cropfactor></camera>{}{}{}{}</lensdatabase>",
+            db_lens("Canon", "Canon RF 50mm F1.8 STM", "Canon RF"),
+            db_lens(
+                "Meke</maker><maker lang=\"de\">Meke GmbH</maker><maker lang=\"en\">Meike",
+                "MEKE 85mm F1.8",
+                "Canon RF"
+            ),
+            db_lens(
+                "Ricoh Imaging Company</maker><maker lang=\"en\">Pentax",
+                "Pentax 645 55mm",
+                "Pentax 645AF2"
+            ),
+            db_lens(
+                "Generic</maker><maker lang=\"de\">Generisch",
+                "Generic 50mm",
+                "Generic"
+            ),
+        ))
+        .unwrap();
+        let named = |shot: &Shot, chosen: LensChoice, profile: bool| {
+            let lens = greycard_edit::Lens {
+                chosen,
+                profile,
+                ..Default::default()
+            };
+            named_in(
+                ("Canon", "EOS R6", shot, true),
+                &lens,
+                Some(&db),
+                Some(&dir),
+            )
+        };
+        let bare = Shot::default();
+        let own = Shot {
+            lens_make: Some("Canon".into()),
+            lens_model: Some("RF50mm F1.8 STM".into()),
+            ..Default::default()
+        };
+        let name = |make: Option<&str>, model: &str| {
+            Some(LensName {
+                make: make.map(String::from),
+                model: model.into(),
+            })
+        };
+        assert_eq!(named(&bare, LensChoice::FromFile, true), None);
+        assert_eq!(
+            named(&own, LensChoice::FromFile, true),
+            name(Some("Canon"), "RF50mm F1.8 STM")
+        );
+        let pick = LensChoice::Database("Canon RF 50mm F1.8 STM".into());
+        for profile in [true, false] {
+            assert_eq!(
+                named(&bare, pick.clone(), profile),
+                name(Some("Canon"), "Canon RF 50mm F1.8 STM")
+            );
+        }
+        // The maker as a reader expects it: the English name where the
+        // database gives one, and none for lensfun's "Generic".
+        for (model, make) in [
+            ("MEKE 85mm F1.8", Some("Meike")),
+            ("Pentax 645 55mm", Some("Pentax")),
+            ("Generic 50mm", None),
+        ] {
+            assert_eq!(
+                named(&bare, LensChoice::Database(model.into()), true),
+                name(make, model)
+            );
+        }
+        assert_eq!(
+            named(&bare, LensChoice::Database("Not Here 1mm".into()), true),
+            name(None, "Not Here 1mm")
+        );
+        assert_eq!(
+            named(&bare, LensChoice::Lcp("c.lcp".into()), true),
+            name(None, "Hand 35mm")
+        );
+        assert_eq!(named(&bare, LensChoice::Lcp("gone.lcp".into()), true), None);
         crate::testing::remove_dir_retry(&dir);
     }
 
