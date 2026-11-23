@@ -895,7 +895,9 @@ fn save_keeps_a_branch_and_is_not_offered_over_a_collection() {
 /// opened again: its id.
 fn version_of_x(s: &mut Setup, name: &str) -> String {
     let x = &s.files[0];
-    let mut sidecar = greycard_edit::Sidecar::load(x).unwrap().unwrap_or_default();
+    let mut sidecar = greycard_edit::Sidecar::load_as_file(x)
+        .unwrap()
+        .unwrap_or_default();
     let id = sidecar.new_version(None, Some(name)).unwrap();
     sidecar.save(x).unwrap();
     s.writer
@@ -1050,7 +1052,9 @@ fn a_version_gone_from_its_sidecar_is_missing_and_forgettable() {
         id
     };
     // Deleted on another machine, the sidecar synced over.
-    let mut sidecar = greycard_edit::Sidecar::load(&s.files[0]).unwrap().unwrap();
+    let mut sidecar = greycard_edit::Sidecar::load_as_file(&s.files[0])
+        .unwrap()
+        .unwrap();
     assert!(sidecar.delete_version(&warm).is_some());
     sidecar.save(&s.files[0]).unwrap();
     s.writer

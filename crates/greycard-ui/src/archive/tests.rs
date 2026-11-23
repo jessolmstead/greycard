@@ -17,7 +17,10 @@ pub fn scratch(what: &str) -> PathBuf {
 
 /// A rated sidecar on `frame`, saved `times` times, in `placement`.
 fn rate(frame: &Path, stars: u8, times: u32, placement: Placement) {
-    let mut s = Sidecar::load(frame).ok().flatten().unwrap_or_default();
+    let mut s = Sidecar::load_as_file(frame)
+        .ok()
+        .flatten()
+        .unwrap_or_default();
     s.meta.rating = stars;
     for _ in 0..times {
         s.save_in(frame, placement).unwrap();
@@ -280,7 +283,7 @@ fn a_newer_sidecar_goes_across_in_either_direction_and_a_bare_frame_is_named() {
     assert_eq!(plan.theirs_newer(), [files[0].as_path()]);
     let report = run(&plan, &quiet_hooks(&cancel, &bytes));
     assert_eq!((report.sidecars_only, report.sidecar_files), (2, 2));
-    let read = |f: &Path| Sidecar::load(f).unwrap().unwrap().meta.rating;
+    let read = |f: &Path| Sidecar::load_as_file(f).unwrap().unwrap().meta.rating;
     assert_eq!(read(&there.join("b.tif")), 5);
     assert_eq!(
         read(&there.join("c.tif")),
@@ -343,7 +346,9 @@ fn a_pair_edited_on_both_sides_is_joined_by_back_up_and_the_same_to_bring_back()
     // each on from the backup's copy.
     rate(&files[1], 5, 1, Placement::Beside);
     {
-        let mut theirs = Sidecar::load(&there.join("b.tif")).unwrap().unwrap();
+        let mut theirs = Sidecar::load_as_file(&there.join("b.tif"))
+            .unwrap()
+            .unwrap();
         theirs.meta.rating = 4;
         theirs.meta.label = greycard_edit::meta::Label::Blue;
         theirs
@@ -380,8 +385,10 @@ fn a_pair_edited_on_both_sides_is_joined_by_back_up_and_the_same_to_bring_back()
     let report = run(&plan, &quiet_hooks(&cancel, &bytes));
     assert!(report.failed.is_empty(), "{report:?}");
     assert_eq!((report.sidecars_only, report.sidecar_files), (2, 3));
-    let here = Sidecar::load(&files[1]).unwrap().unwrap();
-    let copy = Sidecar::load(&there.join("b.tif")).unwrap().unwrap();
+    let here = Sidecar::load_as_file(&files[1]).unwrap().unwrap();
+    let copy = Sidecar::load_as_file(&there.join("b.tif"))
+        .unwrap()
+        .unwrap();
     assert_eq!(compare(&here, &copy), Compared::Same, "{here:?}\n{copy:?}");
     // The join holds both edits: the label set there alone, and
     // the rating, set on both sides, the later save's.
@@ -395,7 +402,7 @@ fn a_pair_edited_on_both_sides_is_joined_by_back_up_and_the_same_to_bring_back()
         "both branches' revisions, and the join's"
     );
     assert_eq!(
-        Sidecar::load(&there.join("c.tif"))
+        Sidecar::load_as_file(&there.join("c.tif"))
             .unwrap()
             .unwrap()
             .meta
@@ -423,7 +430,9 @@ fn a_pair_edited_on_both_sides_is_joined_by_back_up_and_the_same_to_bring_back()
     // frame here is the saved side.
     rate(&files[1], 2, 1, Placement::Beside);
     {
-        let mut theirs = Sidecar::load(&there.join("b.tif")).unwrap().unwrap();
+        let mut theirs = Sidecar::load_as_file(&there.join("b.tif"))
+            .unwrap()
+            .unwrap();
         theirs.meta.label = greycard_edit::meta::Label::Red;
         theirs
             .save_in_stamped(
@@ -440,8 +449,10 @@ fn a_pair_edited_on_both_sides_is_joined_by_back_up_and_the_same_to_bring_back()
     assert_eq!(plan.sidecars_only(), 1, "{plan:?}");
     let report = run(&plan, &quiet_hooks(&cancel, &bytes));
     assert!(report.failed.is_empty(), "{report:?}");
-    let here = Sidecar::load(&files[1]).unwrap().unwrap();
-    let copy = Sidecar::load(&there.join("b.tif")).unwrap().unwrap();
+    let here = Sidecar::load_as_file(&files[1]).unwrap().unwrap();
+    let copy = Sidecar::load_as_file(&there.join("b.tif"))
+        .unwrap()
+        .unwrap();
     assert_eq!(compare(&here, &copy), Compared::Same);
     assert_eq!(
         (here.meta.rating, here.meta.label),
@@ -467,7 +478,9 @@ fn a_save_between_the_plan_and_the_run_is_kept() {
     run(&plan(&ask, &no_beat()), &quiet_hooks(&cancel, &bytes));
     let there = nas.join("local").join("shoot");
     {
-        let mut theirs = Sidecar::load(&there.join("b.tif")).unwrap().unwrap();
+        let mut theirs = Sidecar::load_as_file(&there.join("b.tif"))
+            .unwrap()
+            .unwrap();
         theirs.meta.label = greycard_edit::meta::Label::Blue;
         theirs
             .save_in_stamped(
@@ -487,12 +500,14 @@ fn a_save_between_the_plan_and_the_run_is_kept() {
     rate(&files[1], 5, 1, Placement::Beside);
     let report = run(&planned, &quiet_hooks(&cancel, &bytes));
     assert!(report.failed.is_empty(), "{report:?}");
-    let here = Sidecar::load(&files[1]).unwrap().unwrap();
+    let here = Sidecar::load_as_file(&files[1]).unwrap().unwrap();
     assert_eq!(
         (here.meta.rating, here.meta.label),
         (5, greycard_edit::meta::Label::Blue)
     );
-    let copy = Sidecar::load(&there.join("b.tif")).unwrap().unwrap();
+    let copy = Sidecar::load_as_file(&there.join("b.tif"))
+        .unwrap()
+        .unwrap();
     assert_eq!(here, copy);
     greycard_render::testing::remove_dir_retry(&dir);
 }
@@ -878,7 +893,7 @@ fn a_newer_xmp_over_there_is_kept_while_the_newer_gcd_goes() {
     std::fs::create_dir_all(&nas).unwrap();
     let files = shoot(&local);
     let b = &files[1];
-    let mut meta = Sidecar::load(b).unwrap().unwrap().meta;
+    let mut meta = Sidecar::load_as_file(b).unwrap().unwrap().meta;
     greycard_edit_io::xmp::save(b, &meta, None).unwrap();
     let db = dir.join("library.sqlite");
     index(&db, &[&local, &nas]);
@@ -911,7 +926,10 @@ fn a_newer_xmp_over_there_is_kept_while_the_newer_gcd_goes() {
     assert!(plan.theirs_newer().contains(&b.as_path()));
     let report = run(&plan, &quiet_hooks(&cancel, &bytes));
     assert!(report.theirs_newer.contains(b));
-    assert_eq!(Sidecar::load(&there).unwrap().unwrap().meta.rating, 5);
+    assert_eq!(
+        Sidecar::load_as_file(&there).unwrap().unwrap().meta.rating,
+        5
+    );
     assert_eq!(std::fs::read(&xmps_there[0]).unwrap(), theirs_before);
 
     // The other way, the same rule: the archive's newer XMP is the
@@ -921,6 +939,39 @@ fn a_newer_xmp_over_there_is_kept_while_the_newer_gcd_goes() {
     assert_eq!(back.len(), 1);
     assert_eq!(back[0].to, greycard_edit_io::xmp::paths_of(b)[0]);
     assert!(back[0].replace);
+    greycard_render::testing::remove_dir_retry(&dir);
+}
+
+/// Back up and Bring back leave a pair alone when either side is a
+/// newer greycard's (§724): held and named, nothing copied or joined.
+#[test]
+fn a_newer_build_s_sidecar_on_either_side_holds_the_pair() {
+    let dir = scratch("newer-pair");
+    let mine = dir.join("mine").join("IMG_0001.CR3");
+    let theirs = dir.join("theirs").join("IMG_0001.CR3");
+    for f in [&mine, &theirs] {
+        std::fs::create_dir_all(f.parent().unwrap()).unwrap();
+    }
+    let mut ours = Sidecar::default();
+    ours.meta.rating = 2;
+    ours.save(&mine).unwrap();
+    let newer = r#"{"floors": {"read": 10, "write": 11}, "meta": {"rating": 4}}"#;
+    std::fs::write(Sidecar::path_for(&theirs), newer).unwrap();
+    for (a, b) in [(&mine, &theirs), (&theirs, &mine)] {
+        let (sends, held, join) = compare_sidecars(a, b);
+        assert!(held);
+        assert!(
+            sends
+                .iter()
+                .all(|s| s.from.extension().is_none_or(|x| x != "gcd")),
+            "{sends:?}"
+        );
+        assert!(join.is_none());
+    }
+    assert_eq!(
+        std::fs::read_to_string(Sidecar::path_for(&theirs)).unwrap(),
+        newer
+    );
     greycard_render::testing::remove_dir_retry(&dir);
 }
 

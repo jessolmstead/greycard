@@ -42,7 +42,11 @@ fn the_neighbors_are_the_frames_the_arrow_keys_reach() {
     let mut st = state.borrow_mut();
     st.views.shown = vec![0, 1, 3, 4];
     st.sidecars[3].turn = 1;
-    st.line_mut(3).expect("a line").current.light.exposure = 0.5;
+    {
+        let mut e = st.line_mut(3).expect("a line").current().clone();
+        e.light.exposure = 0.5;
+        st.line_mut(3).expect("a line").record(e);
+    }
     let near = neighbors_of(&st, 1);
     let got: Vec<_> = near
         .iter()
@@ -79,7 +83,7 @@ fn the_neighbors_are_the_frames_the_arrow_keys_reach() {
     st.from_row = (0..5).map(|_| crate::rows::FromRow::read()).collect();
     st.from_row[3] = stand_in(false, (3, false));
     st.from_row[0] = stand_in(true, (0, false));
-    st.line_mut(3).expect("a line").current = Edit::default();
+    st.line_mut(3).expect("a line").record(Edit::default());
     let near = neighbors_of(&st, 1);
     assert_eq!(near.len(), 3);
     assert_eq!(near[2].path, files[4]);
@@ -1666,12 +1670,10 @@ fn a_frame_without_its_own_develop_does_not_borrow_the_last_ones_shape() {
         None,
         "the last frame's shape is not this one's"
     );
-    // Its thumbnail arrives, portrait: that is what answers, and
-    // the frame's own turn goes on top of it.
+    // Its thumbnail arrives: a picture of the frame is never its shape
+    // (§724), so nothing is claimed still.
     st.views.thumb_base[1] = Some((400, 600, Vec::new()));
-    assert_eq!(frame_aspect(&mut st, 1), Some(400.0 / 600.0));
-    st.sidecars[1].turn = 1;
-    assert_eq!(frame_aspect(&mut st, 1), Some(600.0 / 400.0));
+    assert_eq!(frame_aspect(&mut st, 1), None);
 }
 
 /// The frame's own turn: a bracket either way, unmodified, and
@@ -1906,7 +1908,7 @@ fn a_frame_rated_but_never_developed_still_gets_its_iso_blend() {
     // And one rated in a picture that is not a raw, which has no
     // learned denoiser to seed.
     let mut sidecar = Sidecar {
-        line: greycard_edit::Line::of(Edit::for_picture()),
+        line: greycard_edit::Line::of(Edit::for_picture(), 0).unwrap(),
         ..Sidecar::default()
     };
     sidecar.meta.set_rating(1);
@@ -2008,6 +2010,7 @@ fn sidecars_for_the_numbers() {
             Some(greycard_edit::Placement::Beside),
             Default::default(),
             None,
+            greycard_edit_io::on_disk::frame_shape,
         );
         let parallel = t.elapsed().as_secs_f64();
         assert_eq!(one.len(), pool.len());
@@ -2977,4 +2980,337 @@ fn a_file_moved_onto_a_gone_files_path_inherits_nothing() {
     assert!(!st.develop.mosaics.contains_key(&to));
     assert!(!st.develop.monochromes.contains(&to));
     assert!(!st.views.reframed.contains(&to));
+}
+
+/// A turn from the window writes no state (§724): four quarter turns of
+/// a frame with a crop and a mask on it, its shape known, leave every
+/// state as it was written, show the mask turned with the frame, and
+/// show each state as written again once round. A frame with a mask that
+/// nothing can measure is not turned at all, rather than leave its mask
+/// a quarter turn off, and the status line says why.
+#[test]
+fn a_turn_from_the_window_changes_no_written_state_and_needs_the_shape() {
+    use greycard_edit::mask::{Component, Mask, Shape};
+    let app = window(2);
+    let (state, worker) = crate::testing::state_for(&app, crate::testing::folder(2));
+    let mut placed = greycard_edit::Edit::default();
+    placed.geometry.crop = Some(greycard_edit::geometry::Crop::of([0.1, 0.2, 0.5, 0.6]));
+    placed.adjustments.push(greycard_edit::Adjustment {
+        id: 1,
+        mask: Mask {
+            components: vec![Component {
+                shape: Shape::Radial {
+                    center: [0.3, 0.4],
+                    radius: [0.1, 0.05],
+                    angle: 10.0,
+                    feather: 0.5,
+                },
+                ..Component::default()
+            }],
+            ..Mask::default()
+        },
+        ..Default::default()
+    });
+    for f in 0..2 {
+        assert!(state.borrow_mut().sidecar_mut(f).record(placed.clone()));
+    }
+    // Frame 0's shape is known; nothing can measure frame 1, whose file
+    // is not there.
+    state.borrow_mut().sidecar_mut(0).frame_known(1.5);
+    let written = |f: usize| state.borrow().sidecar(f).current_written().into_owned();
+    let before = [written(0), written(1)];
+    for k in 1..=4u8 {
+        turn_frames(&mut state.borrow_mut(), &app, &worker, &[0, 1], 1);
+        for (f, was) in before.iter().enumerate() {
+            assert_eq!(written(f), *was, "frame {f}, turn {k}");
+        }
+        let st = state.borrow();
+        // Turned, its mask with it by the shape.
+        assert_eq!(st.sidecar(0).turn, k % 4, "turn {k}");
+        assert!(!st.sidecar(0).needs_frame());
+        assert_eq!(
+            st.sidecar(0).current().adjustments == placed.adjustments,
+            k % 4 == 0,
+            "turn {k}"
+        );
+        // Not turned at all: a mask a quarter turn off is worse.
+        assert_eq!(st.sidecar(1).turn, 0, "turn {k}");
+        assert_eq!(*st.sidecar(1).current(), placed, "turn {k}");
+        assert_eq!(
+            app.get_status().as_str(),
+            "Read-only: IMG_0001.CR3's masks cannot be placed until its raw is reachable",
+            "turn {k}"
+        );
+    }
+    for f in 0..2 {
+        assert_eq!(*state.borrow().sidecar(f).current(), placed);
+    }
+}
+
+/// A frame with a mask on it whose XMP, from another program, says it
+/// is turned: the window's read makes the turn by the frame's header, as
+/// the library's pass does, so the cell stands as its row does and does
+/// not flip when the sidecar loads (§724). A sidecar read with the turn
+/// owed (by a reader that measured nothing) has it made as soon as the
+/// window measures the frame.
+#[test]
+fn an_xmp_turn_on_a_frame_with_a_mask_is_made_in_the_window() {
+    use greycard_core::raw::Orientation;
+    use greycard_edit::mask::{Component, Mask, Shape};
+    let dir = std::env::temp_dir().join(format!("greycard-xmp-window-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let raw = dir.join("IMG_0000.tif");
+    greycard_library::fixture::write_frame_of(
+        &raw,
+        &greycard_library::fixture::R5,
+        6,
+        4,
+        &[0; 6 * 4 * 3],
+    );
+    let mut placed = Edit::default();
+    placed.adjustments.push(greycard_edit::Adjustment {
+        id: 1,
+        mask: Mask {
+            components: vec![Component {
+                shape: Shape::Radial {
+                    center: [0.3, 0.4],
+                    radius: [0.1, 0.05],
+                    angle: 10.0,
+                    feather: 0.5,
+                },
+                ..Component::default()
+            }],
+            ..Mask::default()
+        },
+        ..Default::default()
+    });
+    let mut s = Sidecar::default();
+    assert!(s.record(placed));
+    s.save(&raw).unwrap();
+    std::fs::write(
+        xmp::long_path(&raw),
+        xmp::fresh(
+            &Meta::default(),
+            Some(xmp::Turn::new(Orientation::Rotate90, 0)),
+        ),
+    )
+    .unwrap();
+    let mut lib = greycard_library::Library::open_in_memory().unwrap();
+    lib.index_folder(&dir, &mut |_| {}).unwrap();
+    let row = lib.by_path(&raw).unwrap().unwrap().turns;
+    assert_ne!(row, 0, "the library's row turns it");
+    // The window's own read, on its thread: the cell as the row has it.
+    let held = crate::rows::from_disk(
+        &raw,
+        Some(greycard_edit::Placement::Beside),
+        Default::default(),
+    );
+    let shown =
+        |s: &Sidecar| greycard_library::pack_turns(s.current().geometry.shown_turns(s.turn));
+    assert_eq!(shown(&held.sidecar), row);
+    assert_eq!(held.sidecar.turn_owed, None);
+    let turn = held.sidecar.turn;
+    assert_ne!(turn, 0);
+    // Read by one that measured nothing: owed, then made by the window.
+    let owed = greycard_library::held::from_disk(
+        &raw,
+        Some(greycard_edit::Placement::Beside),
+        Default::default(),
+        |_, _| None,
+    )
+    .sidecar;
+    assert_eq!((owed.turn, owed.turn_owed), (0, Some(turn)));
+    let app = window(1);
+    let (state, _worker) = crate::testing::state_for(&app, vec![raw.clone()]);
+    state.borrow_mut().sidecars[0] = owed;
+    migrate_frame(&mut state.borrow_mut(), 0);
+    {
+        let st = state.borrow();
+        assert_eq!(
+            (st.sidecars[0].turn, st.sidecars[0].turn_owed),
+            (turn, None)
+        );
+        assert_eq!(shown(&st.sidecars[0]), row, "the cell does not flip");
+        assert_eq!(st.sidecars[0].current(), held.sidecar.current());
+    }
+    drop(lib);
+    crate::testing::remove_scratch(state, &dir);
+}
+
+/// A selection turned with the open frame in it and a frame nothing can
+/// measure: the open frame develops turned, and the status line keeps
+/// the words for the one not turned, over "developing..." and through
+/// the develop's landing (§724).
+#[test]
+fn a_refused_turn_in_a_selection_keeps_its_words_over_the_develop() {
+    use greycard_edit::mask::{Component, Mask, Shape};
+    let app = window(2);
+    let (state, worker) = crate::testing::state_for(&app, crate::testing::folder(2));
+    let mut placed = Edit::default();
+    placed.adjustments.push(greycard_edit::Adjustment {
+        id: 1,
+        mask: Mask {
+            components: vec![Component {
+                shape: Shape::Radial {
+                    center: [0.3, 0.4],
+                    radius: [0.1, 0.05],
+                    angle: 10.0,
+                    feather: 0.5,
+                },
+                ..Component::default()
+            }],
+            ..Mask::default()
+        },
+        ..Default::default()
+    });
+    assert!(state.borrow_mut().sidecar_mut(1).record(placed));
+    app.invoke_select(0);
+    turn_frames(&mut state.borrow_mut(), &app, &worker, &[0, 1], 1);
+    let words = "Read-only: IMG_0001.CR3's masks cannot be placed until its raw is reachable";
+    assert_eq!(state.borrow().sidecar(0).turn, 1, "the open frame turned");
+    assert_eq!(state.borrow().sidecar(1).turn, 0, "the other not");
+    assert_eq!(app.get_status().as_str(), words);
+    let landed = crate::testing::land_develop(
+        &app,
+        &state,
+        crate::worker::LearnedReport::Off,
+        crate::worker::FillReport::default(),
+    );
+    assert_eq!(landed, words);
+}
+
+/// The open frame with a mask on it, its XMP's turn owed (its header
+/// would not read when it opened), and its develop landed: the window,
+/// the frame's raw, and the edit placed on it.
+fn owed_under_the_panel(name: &str) -> (App, Rc<crate::Shared>, Rc<Worker>, PathBuf, Edit) {
+    use greycard_edit::mask::{Component, Mask, Shape};
+    let dir = crate::testing::scratch_dir(name);
+    let raw = dir.join("IMG_0000.CR3");
+    std::fs::write(&raw, b"not a raw").unwrap();
+    let mut placed = Edit::default();
+    placed.adjustments.push(greycard_edit::Adjustment {
+        id: 1,
+        mask: Mask {
+            components: vec![Component {
+                shape: Shape::Radial {
+                    center: [0.3, 0.4],
+                    radius: [0.1, 0.05],
+                    angle: 10.0,
+                    feather: 0.5,
+                },
+                ..Component::default()
+            }],
+            ..Mask::default()
+        },
+        ..Default::default()
+    });
+    let app = window(1);
+    let (state, worker) = crate::testing::state_for(&app, vec![raw.clone()]);
+    {
+        let mut st = state.borrow_mut();
+        st.window.write_sidecars = true;
+        assert!(st.sidecar_mut(0).record(placed.clone()));
+        st.sidecar_mut(0).turn_owed = Some(1);
+    }
+    app.invoke_select(0);
+    let mut st = state.borrow_mut();
+    assert_eq!(st.sidecar(0).turn_owed, Some(1), "nothing measured it");
+    // Its develop lands: the open frame is measured by it.
+    st.develop.source_size = (60, 40);
+    drop(st);
+    (app, state, worker, raw, placed)
+}
+
+/// Turn pressed on the open frame whose XMP's turn is owed: the frame
+/// ends where the XMP's turn and the press say together, nothing is
+/// recorded, the mask is carried round by both, and the file says so.
+/// Before, the owed turn was made under the panel and the panel's edit,
+/// still shown under the turn before, was then recorded a quarter turn
+/// off (§724).
+#[test]
+fn turn_on_an_open_frame_with_a_turn_owed_makes_both_and_records_nothing() {
+    let (app, state, worker, raw, placed) = owed_under_the_panel("owed-under-panel-turn");
+    let steps = state.borrow().line(0).unwrap().history.len();
+    turn_frames(&mut state.borrow_mut(), &app, &worker, &[0], 1);
+    let mut expected = Sidecar::default();
+    assert!(expected.record(placed));
+    expected.frame_known(1.5);
+    expected.turn_by(2, Some(1.5)).unwrap();
+    {
+        let st = state.borrow();
+        let s = st.sidecar(0);
+        assert_eq!((s.turn, s.turn_owed), (2, None));
+        assert_eq!(s.history.len(), steps, "a turn records nothing");
+        assert_eq!(s.current(), expected.current(), "the mask carried round");
+        assert_eq!(st.develop.edit, *expected.current(), "the panel's too");
+        assert_eq!(st.develop.source_size, (60, 40), "two quarters");
+    }
+    let file = Sidecar::load_as_file(&raw).unwrap().unwrap();
+    assert_eq!((file.turn, file.turn_owed), (2, None));
+    assert_eq!(file.history.len(), steps);
+    let dir = raw.parent().unwrap().to_path_buf();
+    crate::testing::remove_scratch(state, &dir);
+}
+
+/// An export pressed over that open frame takes the panel's edit with
+/// the turn the panel shows it under: the owed turn is not made under
+/// the panel, so the pair is the picture on screen, and nothing is
+/// recorded (§724).
+#[test]
+fn an_export_over_an_open_frame_with_a_turn_owed_takes_the_picture_shown() {
+    let (app, state, _worker, raw, placed) = owed_under_the_panel("owed-under-panel-export");
+    let steps = state.borrow().line(0).unwrap().history.len();
+    let frames = crate::panel::deliver::set_frames_of(&mut state.borrow_mut(), &app, &[0]);
+    assert_eq!(frames.len(), 1);
+    let (_, edit, turn, _, _) = &frames[0];
+    assert_eq!((edit, *turn), (&placed, 0), "the picture on screen");
+    let st = state.borrow();
+    assert_eq!((st.sidecar(0).turn, st.sidecar(0).turn_owed), (0, Some(1)));
+    assert_eq!(st.line(0).unwrap().history.len(), steps);
+    drop(st);
+    let dir = raw.parent().unwrap().to_path_buf();
+    crate::testing::remove_scratch(state, &dir);
+}
+
+/// Frames read together for a press, on the pool while the window waits,
+/// are measured by the window's mapped header read, never the unmapped
+/// one that reads a raw whole (§724).
+#[test]
+fn frames_read_while_the_window_waits_are_measured_by_the_mapped_header() {
+    let dir = crate::testing::scratch_dir("load-frames-header");
+    let files: Vec<PathBuf> = (0..2)
+        .map(|i| dir.join(format!("IMG_{i:04}.tif")))
+        .collect();
+    for f in &files {
+        greycard_library::fixture::write_frame_of(
+            f,
+            &greycard_library::fixture::R5,
+            6,
+            4,
+            &[0; 6 * 4 * 3],
+        );
+        crate::testing::waiting_sidecar().save(f).unwrap();
+    }
+    let app = window(2);
+    let (state, _worker) = crate::testing::state_for(&app, files.clone());
+    let mut st = state.borrow_mut();
+    st.window.write_sidecars = true;
+    st.from_row = (0..2)
+        .map(|_| crate::rows::FromRow {
+            read: false,
+            ..crate::rows::FromRow::read()
+        })
+        .collect();
+    let kept = crate::rows::load_frames(&mut st, &app, &[0, 1]);
+    assert_eq!(kept, [0, 1]);
+    let asked = HEADER_READS
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .clone();
+    for (c, f) in files.iter().enumerate() {
+        assert!(asked.contains_key(f), "{}", f.display());
+        assert!(!st.sidecar(c).current_waits(), "measured");
+    }
+    drop(st);
+    crate::testing::remove_scratch(state, &dir);
 }

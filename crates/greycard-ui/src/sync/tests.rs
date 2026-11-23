@@ -90,7 +90,7 @@ fn opened(
         st.views.library.roots = roots;
         st.views.library.file = Some(file);
         for f in st.files.clone() {
-            if let Ok(Some(s)) = Sidecar::load(&f) {
+            if let Ok(Some(s)) = Sidecar::load_as_file(&f) {
                 let i = st.files.iter().position(|x| *x == f).unwrap();
                 st.sidecars[i] = s;
             }
@@ -119,8 +119,8 @@ fn exposed(stops: f32) -> greycard_edit::Edit {
 fn exposures_of(s: &Sidecar) -> Vec<f32> {
     s.history
         .iter()
-        .map(|h| h.edit.light.exposure)
-        .chain(std::iter::once(s.current.light.exposure))
+        .map(|h| h.edit().light.exposure)
+        .chain(std::iter::once(s.current().light.exposure))
         .collect()
 }
 
@@ -143,7 +143,7 @@ fn save(state: &Rc<Shared>, stops: f32) {
 /// The laptop saved the copy: on from what is there, at a time of
 /// its own.
 fn laptop_saves(copy: &Path, stops: f32) -> Sidecar {
-    let mut theirs = Sidecar::load(copy).unwrap().unwrap_or_default();
+    let mut theirs = Sidecar::load_as_file(copy).unwrap().unwrap_or_default();
     theirs.record(exposed(stops));
     theirs
         .save_in_stamped(
@@ -232,7 +232,7 @@ fn a_write_goes_to_the_copy_checks_what_stands_there_and_waits_when_it_cannot() 
     };
     let out = write_through(&write(&sidecar), &db, &no_beat());
     assert!(matches!(out[..], [Outcome::Written { .. }]), "{out:?}");
-    let there = Sidecar::load(&copy).unwrap().unwrap();
+    let there = Sidecar::load_as_file(&copy).unwrap().unwrap();
     assert_eq!(compare(&sidecar, &there), Compared::Same);
     let lib = Library::open_read_only(&db).unwrap();
     let w = lib.archive_write(&hash, &nas, &copy).unwrap().unwrap();
@@ -244,10 +244,10 @@ fn a_write_goes_to_the_copy_checks_what_stands_there_and_waits_when_it_cannot() 
     let out = write_through(&write(&sidecar), &db, &no_beat());
     assert!(matches!(out[..], [Outcome::Written { .. }]), "{out:?}");
     assert_eq!(
-        Sidecar::load(&copy)
+        Sidecar::load_as_file(&copy)
             .unwrap()
             .unwrap()
-            .current
+            .current()
             .light
             .exposure,
         1.0
@@ -256,16 +256,16 @@ fn a_write_goes_to_the_copy_checks_what_stands_there_and_waits_when_it_cannot() 
     laptop_saves(&copy, 2.0);
     let out = write_through(&write(&sidecar), &db, &no_beat());
     match &out[..] {
-        [Outcome::Take { theirs, .. }] => assert_eq!(theirs.current.light.exposure, 2.0),
+        [Outcome::Take { theirs, .. }] => assert_eq!(theirs.current().light.exposure, 2.0),
         other => panic!("{other:?}"),
     }
     let p = pending_for(&db, &nas);
     assert_eq!((p.len(), p[0].reason.as_str()), (1, "to join"));
     assert_eq!(
-        Sidecar::load(&copy)
+        Sidecar::load_as_file(&copy)
             .unwrap()
             .unwrap()
-            .current
+            .current()
             .light
             .exposure,
         2.0
@@ -308,8 +308,8 @@ fn an_edit_saved_here_is_written_through_and_both_sidecars_are_equal() {
     state.borrow_mut().window.xmp_sidecars = true;
     state.borrow_mut().sidecars[0].meta.rating = 3;
     save(&state, 0.75);
-    let here = Sidecar::load(&files[0]).unwrap().unwrap();
-    assert_eq!(here.current.light.exposure, 0.75);
+    let here = Sidecar::load_as_file(&files[0]).unwrap().unwrap();
+    assert_eq!(here.current().light.exposure, 0.75);
     save(&state, 0.8);
     save(&state, 0.9);
     {
@@ -320,9 +320,9 @@ fn an_edit_saved_here_is_written_through_and_both_sidecars_are_equal() {
     let landed = land_sent(&state, &app, &worker);
     assert_eq!(landed, 2, "the first write, then the latest");
     let copy = nas.join("shoot").join("a.tif");
-    let here = Sidecar::load(&files[0]).unwrap().unwrap();
-    let there = Sidecar::load(&copy).unwrap().unwrap();
-    assert_eq!(there.current.light.exposure, 0.9);
+    let here = Sidecar::load_as_file(&files[0]).unwrap().unwrap();
+    let there = Sidecar::load_as_file(&copy).unwrap().unwrap();
+    assert_eq!(there.current().light.exposure, 0.9);
     assert_eq!(compare(&here, &there), Compared::Same);
     assert_eq!(here, there);
     assert!(
@@ -361,7 +361,7 @@ fn with_the_archive_away_the_write_waits_and_the_catch_up_converges() {
     land_sent(&state, &app, &worker);
     let copy = nas.join("shoot").join("a.tif");
     assert!(
-        Sidecar::load(&copy).unwrap().is_none(),
+        Sidecar::load_as_file(&copy).unwrap().is_none(),
         "nothing written while away"
     );
     assert_eq!(pending_for(&db, &nas).len(), 1);
@@ -386,15 +386,15 @@ fn with_the_archive_away_the_write_waits_and_the_catch_up_converges() {
         assert_eq!(st.work.sync.in_flight.len(), 2);
     }
     land_sent(&state, &app, &worker);
-    let here = Sidecar::load(&files[0]).unwrap().unwrap();
-    let there = Sidecar::load(&copy).unwrap().unwrap();
+    let here = Sidecar::load_as_file(&files[0]).unwrap().unwrap();
+    let there = Sidecar::load_as_file(&copy).unwrap().unwrap();
     assert_eq!(compare(&here, &there), Compared::Same);
     let b_copy = nas.join("shoot").join("b.tif");
     assert_eq!(
-        Sidecar::load(&b_copy)
+        Sidecar::load_as_file(&b_copy)
             .unwrap()
             .unwrap()
-            .current
+            .current()
             .light
             .exposure,
         -0.6
@@ -426,8 +426,8 @@ fn a_copy_saved_elsewhere_is_joined_here_and_written_back() {
     laptop_saves(&copy, -1.0);
     save(&state, 2.0);
     land_sent(&state, &app, &worker);
-    let here = Sidecar::load(&files[0]).unwrap().unwrap();
-    let there = Sidecar::load(&copy).unwrap().unwrap();
+    let here = Sidecar::load_as_file(&files[0]).unwrap().unwrap();
+    let there = Sidecar::load_as_file(&copy).unwrap().unwrap();
     assert_eq!(compare(&here, &there), Compared::Same, "{here:?}");
     let exposures = exposures_of(&here);
     assert!(
@@ -435,12 +435,40 @@ fn a_copy_saved_elsewhere_is_joined_here_and_written_back() {
         "{exposures:?}"
     );
     assert!(
-        here.current_label
-            .as_deref()
+        here.current_label()
             .is_some_and(|l| l.starts_with("Reconciled"))
     );
     assert_eq!(state.borrow().sidecars[0], here);
     assert!(pending_for(&db, &nas).is_empty());
+    crate::testing::remove_scratch(state, &dir);
+}
+
+/// The archive's copy saved by a newer greycard (§724): the sync
+/// writes neither copy, the newer one left as it is and the reason
+/// noted; the save here is the window's own.
+#[test]
+fn a_copy_a_newer_build_saved_is_left_and_so_is_ours() {
+    let dir = scratch("newer");
+    let (local, nas, files, db) = two_places(&dir);
+    let app = window(2);
+    let (state, worker) = opened(&app, &dir, files.clone(), &local, &nas, &db);
+    save(&state, 0.5);
+    land_sent(&state, &app, &worker);
+    let copy = nas.join("shoot").join("a.tif");
+    let path = Sidecar::find(&copy).unwrap();
+    let newer = r#"{"floors": {"read": 10, "write": 11}, "current": {"version": 11, "light": {"exposure": -1.0}}, "saved": 99}"#;
+    std::fs::write(&path, newer).unwrap();
+    save(&state, 2.0);
+    land_sent(&state, &app, &worker);
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), newer);
+    let here = Sidecar::load_as_file(&files[0]).unwrap().unwrap();
+    assert_eq!(here.current().light.exposure, 2.0);
+    assert!(!here.read_only());
+    let pending = pending_for(&db, &nas);
+    assert!(
+        pending.iter().any(|p| p.reason.contains("read-only")),
+        "{pending:?}"
+    );
     crate::testing::remove_scratch(state, &dir);
 }
 
@@ -467,7 +495,7 @@ fn a_copy_without_the_version_takes_its_cell_and_writes_nothing_back() {
     land_sent(&state, &app, &worker);
     let copy = nas.join("shoot").join("a.tif");
     assert!(
-        Sidecar::load(&copy)
+        Sidecar::load_as_file(&copy)
             .unwrap()
             .unwrap()
             .version(&id)
@@ -476,7 +504,7 @@ fn a_copy_without_the_version_takes_its_cell_and_writes_nothing_back() {
     );
     // The laptop, with every save of ours in hand, deletes Warm and
     // saves on.
-    let mut theirs = Sidecar::load(&copy).unwrap().unwrap();
+    let mut theirs = Sidecar::load_as_file(&copy).unwrap().unwrap();
     theirs.delete_version(&id).unwrap();
     theirs.record(exposed(-1.0));
     theirs
@@ -489,7 +517,7 @@ fn a_copy_without_the_version_takes_its_cell_and_writes_nothing_back() {
             },
         )
         .unwrap();
-    let theirs = Sidecar::load(&copy).unwrap().unwrap();
+    let theirs = Sidecar::load_as_file(&copy).unwrap().unwrap();
     // The version's cell on screen when the copy lands.
     {
         let mut st = state.borrow_mut();
@@ -509,8 +537,8 @@ fn a_copy_without_the_version_takes_its_cell_and_writes_nothing_back() {
         assert_eq!(cells, [0, 1], "its cell went");
         assert_eq!(st.current, Some(0), "the file's own cell in its place");
     }
-    let here = Sidecar::load(&files[0]).unwrap().unwrap();
-    let there = Sidecar::load(&copy).unwrap().unwrap();
+    let here = Sidecar::load_as_file(&files[0]).unwrap().unwrap();
+    let there = Sidecar::load_as_file(&copy).unwrap().unwrap();
     assert!(here.version(&id).is_none());
     assert!(there.version(&id).is_none(), "nothing written back");
     assert_eq!(compare(&here, &there), Compared::Same);
@@ -533,8 +561,8 @@ fn a_copy_ahead_keeps_a_local_file_another_writer_saved() {
     let copy = nas.join("shoot").join("a.tif");
     let theirs = laptop_saves(&copy, -1.0);
     // The other writer here, a minute back.
-    let mut cli = Sidecar::load(&files[0]).unwrap().unwrap();
-    let mut grain = cli.current.clone();
+    let mut cli = Sidecar::load_as_file(&files[0]).unwrap().unwrap();
+    let mut grain = cli.current().clone();
     grain.grain.amount = 0.4;
     cli.record_as(grain, Some("Preset: Fine Grain".into()));
     cli.meta.rating = 4;
@@ -554,13 +582,14 @@ fn a_copy_ahead_keeps_a_local_file_another_writer_saved() {
         assert!(crate::panel::history::show_settled_pending(&mut st, &app, &worker) >= 1);
     }
     land_sent(&state, &app, &worker);
-    let here = Sidecar::load(&files[0]).unwrap().unwrap();
+    let here = Sidecar::load_as_file(&files[0]).unwrap().unwrap();
     assert!(exposures_of(&here).contains(&-1.0));
     assert_eq!(state.borrow().sidecars[0], here);
-    let kept = Sidecar::read(&Sidecar::path_for(&files[0]).with_extension("gcd.other")).unwrap();
+    let kept =
+        Sidecar::read_as_file(&Sidecar::path_for(&files[0]).with_extension("gcd.other")).unwrap();
     assert_eq!(kept.meta.rating, 4);
-    assert!(kept.current.grain.amount == 0.4);
-    let there = Sidecar::load(&copy).unwrap().unwrap();
+    assert!(kept.current().grain.amount == 0.4);
+    let there = Sidecar::load_as_file(&copy).unwrap().unwrap();
     assert_eq!(compare(&here, &there), Compared::Same, "written through");
     crate::testing::remove_scratch(state, &dir);
 }
@@ -577,21 +606,21 @@ fn a_take_landing_after_newer_saves_keeps_them() {
     save(&state, 0.5);
     land_sent(&state, &app, &worker);
     let copy = nas.join("shoot").join("a.tif");
-    let theirs = Sidecar::load(&copy).unwrap().unwrap();
+    let theirs = Sidecar::load_as_file(&copy).unwrap().unwrap();
     save(&state, 0.8);
     save(&state, 0.9);
     // The landing of a job that compared the 0.5 snapshot and found
     // ours behind the copy's.
     settle(&state, &app, &worker, &files[0], &nas, &copy, theirs);
     land_sent(&state, &app, &worker);
-    let here = Sidecar::load(&files[0]).unwrap().unwrap();
+    let here = Sidecar::load_as_file(&files[0]).unwrap().unwrap();
     assert!(
         exposures_of(&here).contains(&0.9),
         "{:?}",
         exposures_of(&here)
     );
-    assert_eq!(here.current.light.exposure, 0.9);
-    let there = Sidecar::load(&copy).unwrap().unwrap();
+    assert_eq!(here.current().light.exposure, 0.9);
+    let there = Sidecar::load_as_file(&copy).unwrap().unwrap();
     assert_eq!(compare(&here, &there), Compared::Same);
     crate::testing::remove_scratch(state, &dir);
 }
@@ -637,10 +666,10 @@ fn a_quit_with_a_write_out_leaves_it_pending_and_the_next_launch_catches_up() {
     land_sent(&state, &app, &worker);
     let copy = nas.join("shoot").join("a.tif");
     assert_eq!(
-        Sidecar::load(&copy)
+        Sidecar::load_as_file(&copy)
             .unwrap()
             .unwrap()
-            .current
+            .current()
             .light
             .exposure,
         0.6
@@ -682,9 +711,9 @@ fn a_write_set_aside_keeps_the_frame_in_flight_and_the_newer_one_goes_after() {
     }
     land_sent(&state, &app, &worker);
     let copy = nas.join("shoot").join("a.tif");
-    let there = Sidecar::load(&copy).unwrap().unwrap();
-    let here = Sidecar::load(&files[0]).unwrap().unwrap();
-    assert_eq!(there.current.light.exposure, 0.9);
+    let there = Sidecar::load_as_file(&copy).unwrap().unwrap();
+    let here = Sidecar::load_as_file(&files[0]).unwrap().unwrap();
+    assert_eq!(there.current().light.exposure, 0.9);
     assert_eq!(compare(&here, &there), Compared::Same);
     assert!(pending_for(&db, &nas).is_empty());
     assert_eq!(app.get_sync_note(), "");
@@ -731,7 +760,7 @@ fn two_frames_with_one_hash_keep_their_own_edits() {
         p[0].reason
     );
     assert!(
-        Sidecar::load(&nas.join("shoot").join("a.tif"))
+        Sidecar::load_as_file(&nas.join("shoot").join("a.tif"))
             .unwrap()
             .is_none()
     );
@@ -754,7 +783,7 @@ fn two_frames_with_one_hash_keep_their_own_edits() {
     save(&state, 1.5);
     land_sent(&state, &app, &worker);
     let show = |p: &Path| {
-        Sidecar::load(p)
+        Sidecar::load_as_file(p)
             .unwrap()
             .map(|s| exposures_of(&s))
             .unwrap_or_default()
@@ -803,10 +832,10 @@ fn a_catch_up_racing_a_save_queues_behind_it() {
     land_sent(&state, &app, &worker);
     let copy = nas.join("shoot").join("a.tif");
     assert_eq!(
-        Sidecar::load(&copy)
+        Sidecar::load_as_file(&copy)
             .unwrap()
             .unwrap()
-            .current
+            .current()
             .light
             .exposure,
         0.4
@@ -848,7 +877,7 @@ fn the_frame_on_screen_follows_to_the_archives_copy_once_the_copy_is_settled() {
     // The check found the laptop's save: taken into the window,
     // written to the copy (the same, recorded), and the frame
     // followed once that landed.
-    let there = Sidecar::load(&copy).unwrap().unwrap();
+    let there = Sidecar::load_as_file(&copy).unwrap().unwrap();
     assert!(
         exposures_of(&there).contains(&-1.0),
         "{:?}",
@@ -886,18 +915,18 @@ fn the_frame_on_screen_follows_to_the_archives_copy_once_the_copy_is_settled() {
     // laptop's branch stays.
     save(&state, 0.7);
     land_sent(&state, &app, &worker);
-    let there = Sidecar::load(&copy).unwrap().unwrap();
-    assert_eq!(there.current.light.exposure, 0.7);
+    let there = Sidecar::load_as_file(&copy).unwrap().unwrap();
+    assert_eq!(there.current().light.exposure, 0.7);
     assert!(exposures_of(&there).contains(&-1.0));
     assert_eq!(compare(&state.borrow().sidecars[0], &there), Compared::Same);
     assert!(pending_for(&db, &nas).is_empty());
     assert_eq!(app.get_sync_note(), "");
     greycard_core::testing::rename_retry(&away, &local);
     assert_eq!(
-        Sidecar::load(&files[0])
+        Sidecar::load_as_file(&files[0])
             .unwrap()
             .unwrap()
-            .current
+            .current()
             .light
             .exposure,
         0.5,
@@ -915,8 +944,8 @@ fn the_frame_on_screen_follows_to_the_archives_copy_once_the_copy_is_settled() {
         );
     }
     land_sent(&state, &app, &worker);
-    let home = Sidecar::load(&files[0]).unwrap().unwrap();
-    assert_eq!(home.current.light.exposure, 0.7);
+    let home = Sidecar::load_as_file(&files[0]).unwrap().unwrap();
+    assert_eq!(home.current().light.exposure, 0.7);
     assert!(exposures_of(&home).contains(&-1.0));
     assert_eq!(compare(&home, &state.borrow().sidecars[0]), Compared::Same);
     assert_eq!(state.borrow().files[0], copy, "still followed");
@@ -978,10 +1007,10 @@ fn a_save_with_no_window_open_is_noted_and_the_next_window_writes_it() {
     land_sent(&state, &app, &worker);
     let copy = nas.join("shoot").join("b.tif");
     assert_eq!(
-        Sidecar::load(&copy)
+        Sidecar::load_as_file(&copy)
             .unwrap()
             .unwrap()
-            .current
+            .current()
             .light
             .exposure,
         3.0
@@ -1033,10 +1062,10 @@ fn a_save_at_the_quit_is_noted_and_the_next_window_writes_it() {
     heard_from(&mut state.borrow_mut(), &app, &nas, true);
     land_sent(&state, &app, &worker);
     let exposure = |name: &str| {
-        Sidecar::load(&nas.join("shoot").join(name))
+        Sidecar::load_as_file(&nas.join("shoot").join(name))
             .unwrap()
             .unwrap()
-            .current
+            .current()
             .light
             .exposure
     };
@@ -1076,8 +1105,8 @@ fn a_followed_frames_save_at_the_quit_reaches_its_copy() {
     assert_eq!(state.borrow().files[0], copy, "followed");
     save(&state, 0.7);
     land_sent(&state, &app, &worker);
-    let on_copy = || Sidecar::load(&copy).unwrap().unwrap();
-    assert_eq!(on_copy().current.light.exposure, 0.7);
+    let on_copy = || Sidecar::load_as_file(&copy).unwrap().unwrap();
+    assert_eq!(on_copy().current().light.exposure, 0.7);
     let recorded = || {
         let lib = Library::open_read_only(&db).unwrap();
         let hash = lib.by_path(&copy).unwrap().unwrap().hash;
@@ -1099,7 +1128,7 @@ fn a_followed_frames_save_at_the_quit_reaches_its_copy() {
         QuitWrites { ended: 1, noted: 0 }
     );
     assert!(SENT.with(|s| s.borrow().is_empty()), "no job: written");
-    assert_eq!(on_copy().current.light.exposure, 0.9);
+    assert_eq!(on_copy().current().light.exposure, 0.9);
     assert_eq!(
         compare(&state.borrow().sidecars[0], &on_copy()),
         Compared::Same
@@ -1148,7 +1177,7 @@ fn a_followed_frames_save_at_the_quit_reaches_its_copy() {
         assert!(start.elapsed() < Duration::from_secs(20), "never written");
         std::thread::sleep(Duration::from_millis(20));
     }
-    assert_eq!(on_copy().current.light.exposure, 1.4);
+    assert_eq!(on_copy().current().light.exposure, 1.4);
     assert!(exposures_of(&on_copy()).contains(&1.2));
     assert!(pending_for(&db, &nas).is_empty());
     // Another machine saved the copy meanwhile: the quit's save is
@@ -1210,7 +1239,7 @@ fn a_followed_frames_save_at_the_quit_reaches_its_copy() {
 fn cull_from(state: &Rc<Shared>, app: &App, c: usize) {
     let mut st = state.borrow_mut();
     st.current = Some(c);
-    let edit = st.sidecars[c].current.clone();
+    let edit = st.sidecars[c].current().clone();
     crate::panel::edit::show_edit(&st, &edit, app, None);
     st.develop.edit = edit;
     st.culling.cull_move_on = false;
@@ -1253,7 +1282,7 @@ fn a_quit_from_culling_still_writes_a_followed_frames_copy() {
     assert!(app.invoke_meta_key("3".into()));
     assert_eq!(state.borrow().sidecars[0].meta.rating, 3);
     assert!(state.borrow().work.sync.in_flight.contains(&copy));
-    let on_copy = || Sidecar::load(&copy).unwrap().unwrap();
+    let on_copy = || Sidecar::load_as_file(&copy).unwrap().unwrap();
     assert_eq!(on_copy().meta.rating, 0);
     state.borrow_mut().views.index_reader = None;
     assert_eq!(
@@ -1292,7 +1321,7 @@ fn a_quit_from_culling_still_writes_a_followed_frames_copy() {
         std::thread::sleep(Duration::from_millis(20));
     }
     assert_eq!(on_copy().meta.rating, 3);
-    assert_eq!(on_copy().current.light.exposure, 0.5);
+    assert_eq!(on_copy().current().light.exposure, 0.5);
     assert!(!exposures_of(&on_copy()).contains(&2.0), "not the panel's");
     greycard_core::testing::rename_retry(&away, &local);
     crate::testing::remove_scratch(state, &dir);
@@ -1356,10 +1385,10 @@ fn a_save_made_on_disk_reaches_the_archive_from_the_file() {
     land_sent(&state, &app, &worker);
     let copy = nas.join("shoot").join("b.tif");
     assert_eq!(
-        Sidecar::load(&copy)
+        Sidecar::load_as_file(&copy)
             .unwrap()
             .unwrap()
-            .current
+            .current()
             .light
             .exposure,
         4.0
@@ -1409,7 +1438,7 @@ fn hash_of(db: &Path, f: &Path) -> String {
 }
 
 fn show(p: &Path) -> Vec<f32> {
-    Sidecar::load(p)
+    Sidecar::load_as_file(p)
         .unwrap()
         .map(|s| exposures_of(&s))
         .unwrap_or_default()
@@ -1458,10 +1487,10 @@ fn a_catch_up_keeps_the_row_of_a_frame_whose_disk_is_away() {
     assert!(pending_for(&db, &nas).is_empty());
     let copy = nas.join("shoot").join("a.tif");
     assert_eq!(
-        Sidecar::load(&copy)
+        Sidecar::load_as_file(&copy)
             .unwrap()
             .unwrap()
-            .current
+            .current()
             .light
             .exposure,
         0.5
@@ -1595,9 +1624,9 @@ fn a_window_save_after_a_settle_job_joins_rather_than_writes_over() {
     ));
     laptop_saves(&copy, -1.0);
     // The window reads the file now.
-    let mut window_s = Sidecar::load(&a).unwrap().unwrap();
+    let mut window_s = Sidecar::load_as_file(&a).unwrap().unwrap();
     // The Settle job: the catch-up's Take on a frame not held.
-    let theirs = Sidecar::read(&Sidecar::find(&copy).unwrap()).unwrap();
+    let theirs = Sidecar::read_as_file(&Sidecar::find(&copy).unwrap()).unwrap();
     // The file here is behind the copy: taken whole, and recorded.
     let out = write_through(&w(Source::Settle(Box::new(theirs))), &db, &no_beat());
     assert!(matches!(out[..], [Outcome::Same { .. }]), "{out:?}");
@@ -1666,10 +1695,10 @@ fn a_save_before_the_reader_opens_is_queued_when_it_does() {
     land_sent(&state, &app, &worker);
     let copy = nas.join("shoot").join("a.tif");
     assert_eq!(
-        Sidecar::load(&copy)
+        Sidecar::load_as_file(&copy)
             .unwrap()
             .unwrap()
-            .current
+            .current()
             .light
             .exposure,
         0.4
@@ -1721,7 +1750,7 @@ fn a_frame_gone_from_a_present_folder_has_its_row_dropped() {
     );
     assert_eq!(app.get_sync_note(), "");
     assert!(
-        Sidecar::load(&nas.join("shoot").join("a.tif"))
+        Sidecar::load_as_file(&nas.join("shoot").join("a.tif"))
             .unwrap()
             .is_none()
     );
@@ -1750,7 +1779,7 @@ fn bringing_home_leaves_a_local_sidecar_that_went_its_own_way() {
     save(&state, 0.7);
     land_sent(&state, &app, &worker);
     // The local file edited on its own while the frame was followed.
-    let mut there = Sidecar::load(&files[0]).unwrap().unwrap();
+    let mut there = Sidecar::load_as_file(&files[0]).unwrap().unwrap();
     there.record(exposed(-3.0));
     there.save(&files[0]).unwrap();
     {
@@ -1759,7 +1788,7 @@ fn bringing_home_leaves_a_local_sidecar_that_went_its_own_way() {
         heard_over(&mut st, &app, &HashSet::new());
     }
     land_sent(&state, &app, &worker);
-    let home = Sidecar::load(&files[0]).unwrap().unwrap();
+    let home = Sidecar::load_as_file(&files[0]).unwrap().unwrap();
     assert!(
         exposures_of(&home).contains(&-3.0),
         "the local edit was written over"

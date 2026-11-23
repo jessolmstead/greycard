@@ -19,7 +19,7 @@ fn an_edit_during_a_picks_read_is_refused_and_said() {
     open_view(&state, &app, &worker, View::Roots(None));
     land_all(&state, &app, &worker);
     let moved = {
-        let mut e = state.borrow().sidecars[1].current.clone();
+        let mut e = state.borrow().sidecars[1].current().clone();
         e.light.exposure += 1.0;
         e
     };
@@ -34,7 +34,7 @@ fn an_edit_during_a_picks_read_is_refused_and_said() {
         );
         assert!(st.sidecars[1].history.is_empty(), "nothing on the stand-in");
         // Unmoved, nothing to say.
-        let stand_in = st.sidecars[1].current.clone();
+        let stand_in = st.sidecars[1].current().clone();
         assert!(!crate::panel::edit::save_edit(&mut st, stand_in));
     }
     assert_eq!(crate::rows::land_pending(&state, &app, &worker), 1);
@@ -42,9 +42,10 @@ fn an_edit_during_a_picks_read_is_refused_and_said() {
         let st = state.borrow();
         assert!(st.from_row[1].read);
         assert_eq!(st.sidecars[1].history.len(), 1, "the sidecar's own");
-        assert_eq!(st.sidecars[1].current.geometry.turns, 1);
+        assert_eq!(st.sidecars[1].current().geometry.turns, 1);
         assert_eq!(
-            st.develop.edit, st.sidecars[1].current,
+            st.develop.edit,
+            st.sidecars[1].current().clone(),
             "the panel is the sidecar's"
         );
     }
@@ -79,8 +80,8 @@ fn an_edit_during_a_picks_read_is_refused_and_said() {
 #[test]
 fn the_command_lines_mask_reaches_a_first_file_read_after_its_pick() {
     let (dir, files, writer, app, state, worker) = rated_under_a_root("rows-pick-show-mask");
-    let mut s = Sidecar::load(&files[1]).unwrap().unwrap();
-    let mut e = s.current.clone();
+    let mut s = Sidecar::load_as_file(&files[1]).unwrap().unwrap();
+    let mut e = s.current().clone();
     e.adjustments.push(greycard_edit::Adjustment::default());
     s.record(e);
     s.save(&files[1]).unwrap();
@@ -216,7 +217,7 @@ fn an_export_landing_in_culling_takes_each_frames_own_edit() {
             )
         })
         .collect();
-    let y = &st.sidecars[1].current;
+    let y = &st.sidecars[1].current();
     assert_eq!(
         got,
         vec![
@@ -259,7 +260,7 @@ fn a_failed_read_keeps_the_stand_in() {
             app.get_status()
         );
         assert_eq!(st.sidecars[1].meta.keywords, ["Harbor"], "the row's meta");
-        let mut moved = st.sidecars[1].current.clone();
+        let mut moved = st.sidecars[1].current().clone();
         moved.light.exposure += 1.0;
         assert!(crate::panel::edit::save_edit(&mut st, moved));
         assert_eq!(
@@ -326,7 +327,7 @@ fn a_pick_whose_read_was_discarded_is_read_again() {
     assert!(st.views.pick_pending.is_none());
     assert!(st.from_row[1].read);
     assert_eq!(st.sidecars[1].history.len(), 1);
-    assert_eq!(st.develop.edit, st.sidecars[1].current);
+    assert_eq!(st.develop.edit, st.sidecars[1].current().clone());
     drop(st);
     state.borrow_mut().views.index_reader = None;
     drop(state);
@@ -372,9 +373,9 @@ fn a_frame_loaded_after_the_give_up_takes_its_own_edit_onto_the_panel() {
         e.light.exposure = 0.8;
         assert!(!save_edit(&mut st, e), "kept");
     }
-    let on_disk = Sidecar::load(&files[1]).unwrap().unwrap();
-    assert_eq!(on_disk.current.geometry.turns, 1);
-    assert_eq!(on_disk.current.light.exposure, 0.8);
+    let on_disk = Sidecar::load_as_file(&files[1]).unwrap().unwrap();
+    assert_eq!(on_disk.current().geometry.turns, 1);
+    assert_eq!(on_disk.current().light.exposure, 0.8);
     assert_eq!(on_disk.history.len(), 2, "its own step, then the slider");
     assert_eq!(on_disk.meta.rating, 2);
     state.borrow_mut().views.index_reader = None;
@@ -417,18 +418,19 @@ fn a_preset_on_a_given_up_pick_goes_over_its_own_edit() {
         assert!(st.from_row[1].read);
         assert!(st.views.panel_stand_in.is_none());
         assert_eq!(
-            st.sidecars[1].current.geometry.turns, 1,
+            st.sidecars[1].current().geometry.turns,
+            1,
             "its own turn kept"
         );
-        assert_eq!(st.sidecars[1].current.light.exposure, 1.0);
+        assert_eq!(st.sidecars[1].current().light.exposure, 1.0);
         assert_eq!(
             st.sidecars[1].history.len(),
             2,
             "its own step, then the preset"
         );
     }
-    let on_disk = Sidecar::load(&files[1]).unwrap().unwrap();
-    assert_eq!(on_disk.current.geometry.turns, 1);
+    let on_disk = Sidecar::load_as_file(&files[1]).unwrap().unwrap();
+    assert_eq!(on_disk.current().geometry.turns, 1);
     assert_eq!(on_disk.history.len(), 2);
     crate::rows::land_pending(&state, &app, &worker);
     state.borrow_mut().views.index_reader = None;
@@ -662,7 +664,7 @@ fn a_turn_on_a_view_frame_reads_its_sidecar_then_writes_it() {
         assert_eq!(crate::panel::browser::thumb_turns(&st, &app, 0), (3, false));
         assert_eq!(disk_reads_under(&dir), 1);
     }
-    let on_disk = Sidecar::load(&files[0]).unwrap().unwrap();
+    let on_disk = Sidecar::load_as_file(&files[0]).unwrap().unwrap();
     assert_eq!(on_disk.turn, 1, "written");
     assert_eq!(on_disk.meta.rating, 3);
     state.borrow_mut().views.index_reader = None;
@@ -718,7 +720,7 @@ fn an_offline_frame_is_no_source_for_a_copy_a_sync_or_a_preset() {
         assert_eq!(st.current, Some(1));
         assert!(!st.from_row[1].read);
         assert_eq!(st.sidecars[0].history.len(), 1);
-        assert_eq!(st.sidecars[0].current.light.exposure, 0.7);
+        assert_eq!(st.sidecars[0].current().light.exposure, 0.7);
         x_before = std::fs::read(Sidecar::path_for(&x)).unwrap();
         // The frames are pictures: a picture's default stands in.
         assert_eq!(
@@ -764,7 +766,10 @@ fn an_offline_frame_is_no_source_for_a_copy_a_sync_or_a_preset() {
             crate::panel::sync::probe,
         );
         assert_eq!(st.sidecars[0].history.len(), 1);
-        assert_eq!(st.sidecars[1].current, greycard_edit::Edit::for_picture());
+        assert_eq!(
+            *st.sidecars[1].current(),
+            greycard_edit::Edit::for_picture()
+        );
         assert!(
             app.get_status().contains("is offline"),
             "{}",
@@ -1041,7 +1046,14 @@ fn a_key_during_a_pick_s_read_reaches_the_pick_alone() {
         assert_eq!(st.sidecars[0].meta.rating, 3);
         assert!(st.views.loads.queue.is_empty());
     }
-    assert_eq!(Sidecar::load(&files[1]).unwrap().unwrap().meta.rating, 5);
+    assert_eq!(
+        Sidecar::load_as_file(&files[1])
+            .unwrap()
+            .unwrap()
+            .meta
+            .rating,
+        5
+    );
     assert_eq!(
         std::fs::read(Sidecar::path_for(&files[0])).unwrap(),
         x_before,
@@ -1076,7 +1088,7 @@ fn a_preset_lands_on_the_frames_it_was_pressed_on() {
     let st = state.borrow();
     for (f, s) in st.sidecars[..50].iter().enumerate() {
         assert_eq!(s.history.len(), 1, "frame {f} took the preset");
-        assert_eq!(s.current.light.exposure, 1.5, "frame {f}");
+        assert_eq!(s.current().light.exposure, 1.5, "frame {f}");
     }
     assert_eq!(st.sidecars[50].history.len(), 0, "not chosen");
     assert_eq!(
@@ -1126,7 +1138,7 @@ fn two_keys_during_one_read_both_apply_in_order() {
         );
         assert_eq!(st.sidecars[0].meta.rating, 3);
     }
-    let on_disk = Sidecar::load(&files[1]).unwrap().unwrap();
+    let on_disk = Sidecar::load_as_file(&files[1]).unwrap().unwrap();
     assert_eq!(
         (on_disk.meta.rating, on_disk.meta.flag),
         (2, meta::Flag::Pick)
@@ -1241,7 +1253,11 @@ fn a_purple_label_and_no_label_reach_an_unloaded_frame() {
     crate::rows::land_pending(&state, &app, &worker);
     assert_eq!(state.borrow().sidecars[2].meta.label, meta::Label::Purple);
     assert_eq!(
-        Sidecar::load(&files[2]).unwrap().unwrap().meta.label,
+        Sidecar::load_as_file(&files[2])
+            .unwrap()
+            .unwrap()
+            .meta
+            .label,
         meta::Label::Purple
     );
     // Another frame, still to be read, and no label asked of it: a
@@ -1263,7 +1279,11 @@ fn a_purple_label_and_no_label_reach_an_unloaded_frame() {
     crate::rows::land_pending(&state, &app, &worker);
     assert_eq!(state.borrow().sidecars[1].meta.label, meta::Label::None);
     assert_eq!(
-        Sidecar::load(&files[1]).unwrap().unwrap().meta.label,
+        Sidecar::load_as_file(&files[1])
+            .unwrap()
+            .unwrap()
+            .meta
+            .label,
         meta::Label::None
     );
     state.borrow_mut().views.index_reader = None;
@@ -1281,7 +1301,12 @@ fn an_export_record_reaches_a_frame_that_became_a_stand_in() {
     let (dir, files, writer, app, state, worker) = rated_under_a_root("rows-export");
     open_view(&state, &app, &worker, View::Roots(None));
     land_all(&state, &app, &worker);
-    let edit = Sidecar::load(&files[1]).unwrap().unwrap().line.current;
+    let edit = Sidecar::load_as_file(&files[1])
+        .unwrap()
+        .unwrap()
+        .line
+        .current()
+        .clone();
     {
         let mut st = state.borrow_mut();
         assert!(!st.from_row[1].read, "a stand-in");
@@ -1300,7 +1325,7 @@ fn an_export_record_reaches_a_frame_that_became_a_stand_in() {
         );
         assert!(st.sidecars[1].current_exports.is_empty());
     }
-    let on_disk = Sidecar::load(&files[1]).unwrap().unwrap();
+    let on_disk = Sidecar::load_as_file(&files[1]).unwrap().unwrap();
     assert_eq!(on_disk.current_exports.len(), 1);
     assert!(on_disk.current_exports[0].file.ends_with("y.jpg"));
     assert_eq!(on_disk.history.len(), 1, "its develop kept");
@@ -1343,8 +1368,22 @@ fn culling_s_move_on_steps_at_the_press_and_each_key_finds_its_frame() {
         assert_eq!(st.current, Some(2));
         assert!(st.views.loads.queue.is_empty());
     }
-    assert_eq!(Sidecar::load(&files[0]).unwrap().unwrap().meta.rating, 4);
-    assert_eq!(Sidecar::load(&files[1]).unwrap().unwrap().meta.rating, 2);
+    assert_eq!(
+        Sidecar::load_as_file(&files[0])
+            .unwrap()
+            .unwrap()
+            .meta
+            .rating,
+        4
+    );
+    assert_eq!(
+        Sidecar::load_as_file(&files[1])
+            .unwrap()
+            .unwrap()
+            .meta
+            .rating,
+        2
+    );
     state.borrow_mut().views.index_reader = None;
     drop(state);
     drop(writer);
@@ -1374,7 +1413,11 @@ fn culling_s_move_on_steps_at_the_press_and_each_key_finds_its_frame() {
         let f = usize::from(k);
         assert_eq!(st.sidecars[f].meta.rating, k % 5 + 1, "frame {f}");
         assert_eq!(
-            Sidecar::load(&files[f]).unwrap().unwrap().meta.rating,
+            Sidecar::load_as_file(&files[f])
+                .unwrap()
+                .unwrap()
+                .meta
+                .rating,
             k % 5 + 1
         );
     }
@@ -1409,7 +1452,7 @@ fn a_read_from_an_older_list_fills_no_stand_in_of_the_new() {
     land_all(&state, &app, &worker);
     assert!(!state.borrow().from_row[1].read);
     // y written meanwhile.
-    let mut s = Sidecar::load(&files[1]).unwrap().unwrap();
+    let mut s = Sidecar::load_as_file(&files[1]).unwrap().unwrap();
     s.meta.rating = 5;
     s.save(&files[1]).unwrap();
     // The old read lands: nothing taken.
@@ -1418,7 +1461,14 @@ fn a_read_from_an_older_list_fills_no_stand_in_of_the_new() {
         !state.borrow().from_row[1].read,
         "the older read filled nothing"
     );
-    assert_eq!(Sidecar::load(&files[1]).unwrap().unwrap().meta.rating, 5);
+    assert_eq!(
+        Sidecar::load_as_file(&files[1])
+            .unwrap()
+            .unwrap()
+            .meta
+            .rating,
+        5
+    );
     // A key on y now: its own read, of the newer bytes, then the key.
     state.borrow_mut().current = Some(1);
     state.borrow_mut().views.picked = vec![1];
@@ -1429,7 +1479,7 @@ fn a_read_from_an_older_list_fills_no_stand_in_of_the_new() {
         meta::Change::Flag(meta::Flag::Pick)
     ));
     crate::rows::land_pending(&state, &app, &worker);
-    let on_disk = Sidecar::load(&files[1]).unwrap().unwrap();
+    let on_disk = Sidecar::load_as_file(&files[1]).unwrap().unwrap();
     assert_eq!(
         (on_disk.meta.rating, on_disk.meta.flag),
         (5, meta::Flag::Pick)
@@ -1525,7 +1575,14 @@ fn a_frame_gone_before_its_request_ran_is_said() {
         app.get_status(),
         "y.tif moved or is gone; the rating key was not applied to it"
     );
-    assert_eq!(Sidecar::load(&files[1]).unwrap().unwrap().meta.rating, 0);
+    assert_eq!(
+        Sidecar::load_as_file(&files[1])
+            .unwrap()
+            .unwrap()
+            .meta
+            .rating,
+        0
+    );
     drop(st);
     state.borrow_mut().views.index_reader = None;
     drop(state);
@@ -1777,8 +1834,22 @@ fn culling_s_undo_takes_back_the_last_key_pressed_not_the_last_landed() {
             app.get_status()
         );
     }
-    assert_eq!(Sidecar::load(&files[0]).unwrap().unwrap().meta.rating, 5);
-    assert_eq!(Sidecar::load(&files[1]).unwrap().unwrap().meta.rating, 0);
+    assert_eq!(
+        Sidecar::load_as_file(&files[0])
+            .unwrap()
+            .unwrap()
+            .meta
+            .rating,
+        5
+    );
+    assert_eq!(
+        Sidecar::load_as_file(&files[1])
+            .unwrap()
+            .unwrap()
+            .meta
+            .rating,
+        0
+    );
     // Redo brings the 1 back, at once now.
     app.invoke_redo();
     assert_eq!(state.borrow().sidecars[1].meta.rating, 1);
@@ -1797,7 +1868,7 @@ fn an_undo_out_of_culling_waits_for_the_pick_s_open() {
     let (dir, files, writer, app, state, worker) = many_under_a_root("rows-undo-develop", 3);
     // f01 has a step on disk to undo.
     let mut s = Sidecar::default();
-    let mut e = s.current.clone();
+    let mut e = s.current().clone();
     e.light.exposure = 0.5;
     s.record(e);
     s.save(&files[1]).unwrap();
@@ -1916,7 +1987,7 @@ fn a_held_undo_meets(what: &str, mark_kept: bool, meanwhile: fn(&App, &Rc<Shared
     let (dir, files, writer, app, state, worker) =
         many_under_a_root(&format!("rows-undo-held-{what}"), 3);
     let mut s = Sidecar::default();
-    let mut e = s.current.clone();
+    let mut e = s.current().clone();
     e.light.exposure = 0.5;
     s.record(e);
     s.save(&files[1]).unwrap();
@@ -1980,7 +2051,7 @@ fn a_held_undo_in_the_queue_view_is_dropped() {
 fn a_held_undo_in_develop_passes_over_another_frame_s_mark() {
     let (dir, files, writer, app, state, worker) = many_under_a_root("rows-undo-held-other", 3);
     let mut s = Sidecar::default();
-    let mut e = s.current.clone();
+    let mut e = s.current().clone();
     e.light.exposure = 0.5;
     s.record(e);
     s.save(&files[1]).unwrap();

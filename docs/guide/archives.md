@@ -158,9 +158,9 @@ Some things stay where they were made:
 
 Keep both computers' clocks right, and both on the same version of
 greycard. The clocks decide which edit is on top when both changed.
-An older version can't read a newer one's edits and leaves them
-alone: its own saves to those frames wait in the status line, and
-**Back up** skips them.
+A frame edited by a newer version opens read-only and says so, and
+**Back up** holds it. 0.12 and older can't read 0.13's edits at all,
+and leave them alone.
 
 ## One frame in two places
 
@@ -197,10 +197,6 @@ If a frame has two copies on the archive and greycard can't tell which
 is its own, the note adds "can't tell which copy is its own". Back up
 that frame's folder once, so greycard knows where it goes.
 
-A frame turned a quarter on one computer and changed on the other can
-come out of a join with its crop, masks, and retouch a quarter turn
-off. Check such a frame after a join.
-
 ## Remove rejects from an archive
 
 A shoot is often backed up before it is culled, so the archive keeps
@@ -236,4 +232,5 @@ and use **Delete rejects folder...** there.
 
 Once greycard 0.4 has opened your library, an older version refuses
 to open the library and leaves it as it is. Your raws and sidecars
-are not affected.
+are not affected. A sidecar that 0.13 has saved with an edit can't be
+read by 0.12 or older, which leave it alone.

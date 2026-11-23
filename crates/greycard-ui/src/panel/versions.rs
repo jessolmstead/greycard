@@ -50,7 +50,7 @@ fn refused(st: &mut State, app: &App, c: usize) -> Option<String> {
 
 /// [`refused`] less culling: a version's delete touches no panel, and
 /// under compare it is how the loser goes.
-fn unready(st: &mut State, app: &App, c: usize) -> Option<String> {
+pub(crate) fn unready(st: &mut State, app: &App, c: usize) -> Option<String> {
     if crate::panel::delete::held(st, c) {
         return Some(tr!("a delete is under way"));
     }
@@ -59,6 +59,9 @@ fn unready(st: &mut State, app: &App, c: usize) -> Option<String> {
             crate::rows::refused(st, c, &tr!("no version is made"))
                 .unwrap_or_else(|| tr!("no version is made")),
         );
+    }
+    if st.sidecar_at(c).is_some_and(|s| s.read_only()) {
+        return Some(crate::panel::browser::newer_words());
     }
     None
 }
@@ -98,7 +101,7 @@ pub(crate) fn new_version(
         } else {
             Edit::default()
         };
-        Some(st.sidecars[file].new_version_from_original(default, None))
+        st.sidecars[file].new_version_from_original(default, None)
     } else {
         let from = st.version_of(c).map(str::to_string);
         st.sidecars[file].new_version(from.as_deref(), None)

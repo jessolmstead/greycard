@@ -7,6 +7,36 @@ use greycard_edit::{DisplayCurve, Edit, Preset, Section};
 use slint::Model;
 use slint::platform::Key;
 
+/// A newer greycard's sidecar (§724) is never written by the rename's
+/// thread: the frame fails, and the file is as it was.
+#[test]
+fn a_rename_writes_no_newer_build_s_sidecar() {
+    let dir = std::env::temp_dir().join(format!("greycard-rename-newer-{}", std::process::id()));
+    crate::testing::remove_dir_retry(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let raw = dir.join("IMG_0001.CR3");
+    let path = greycard_edit::Sidecar::path_for(&raw);
+    let newer = r#"{"floors": {"read": 10, "write": 11}, "current": {"version": 11, "look_lut": {"lut": "Neon", "strength": 1.0}}}"#;
+    std::fs::write(&path, newer).unwrap();
+    let frame = JobFrame {
+        path: raw,
+        memory: None,
+    };
+    let stop = AtomicBool::new(false);
+    assert!(matches!(
+        one(
+            frame,
+            "Neon",
+            "Glow",
+            greycard_edit::Placement::Beside,
+            &stop
+        ),
+        Outcome::Failed(_)
+    ));
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), newer);
+    crate::testing::remove_dir_retry(&dir);
+}
+
 thread_local! {
     pub(super) static SENT: RefCell<Vec<(u64, Job)>> = const { RefCell::new(Vec::new()) };
 }
@@ -249,15 +279,15 @@ fn a_rename_stopped_midway_leaves_nothing_missing() {
     }
     let every_look_is_there = || {
         for f in &frames {
-            let s = Sidecar::load(f).unwrap().unwrap();
+            let s = Sidecar::load_as_file(f).unwrap().unwrap();
             assert!(
-                greycard_edit_io::looks::is_there_in(&store, &s.current.look_lut),
+                greycard_edit_io::looks::is_there_in(&store, &s.current().look_lut),
                 "{}",
                 f.display()
             );
             for curve in DisplayCurve::ALL {
                 assert!(
-                    greycard_edit_io::looks::look_under_in(&store, &s.current.look_lut, curve)
+                    greycard_edit_io::looks::look_under_in(&store, &s.current().look_lut, curve)
                         .is_some(),
                     "{} under {curve:?}",
                     f.display()
@@ -274,7 +304,7 @@ fn a_rename_stopped_midway_leaves_nothing_missing() {
     link_all(&pairs).unwrap();
     every_look_is_there();
     for f in &frames[..2] {
-        let mut s = Sidecar::load(f).unwrap().unwrap();
+        let mut s = Sidecar::load_as_file(f).unwrap().unwrap();
         assert!(s.rename_look("Neon", "Glow"));
         s.save(f).unwrap();
     }
@@ -282,7 +312,7 @@ fn a_rename_stopped_midway_leaves_nothing_missing() {
     // The rest, then the last stage: every edit names Glow, and Neon
     // is gone.
     for f in &frames[2..] {
-        let mut s = Sidecar::load(f).unwrap().unwrap();
+        let mut s = Sidecar::load_as_file(f).unwrap().unwrap();
         s.rename_look("Neon", "Glow");
         s.save(f).unwrap();
     }
@@ -493,7 +523,7 @@ fn the_sheet_renames_a_look_and_everything_of_the_folder_that_names_it() {
     );
     // Frame 1's sidecar is turned elsewhere after the window read it.
     {
-        let mut outside = Sidecar::load(&files[1]).unwrap().unwrap();
+        let mut outside = Sidecar::load_as_file(&files[1]).unwrap().unwrap();
         outside.turn = 1;
         outside.save(&files[1]).unwrap();
     }
@@ -506,7 +536,11 @@ fn the_sheet_renames_a_look_and_everything_of_the_folder_that_names_it() {
     assert!(app.get_look_rename_open());
     // The open picture's is written already.
     assert_eq!(
-        Sidecar::load(&files[0]).unwrap().unwrap().current.look_lut,
+        Sidecar::load_as_file(&files[0])
+            .unwrap()
+            .unwrap()
+            .current()
+            .look_lut,
         named("Glow")
     );
     run_sent(&state, &app);
@@ -524,13 +558,13 @@ fn the_sheet_renames_a_look_and_everything_of_the_folder_that_names_it() {
         ["Glow.agx.cube", "Glow.cube", "Mono.cube", "Neon Film.cube"]
     );
     // The sidecars on disk.
-    let read = |i: usize| Sidecar::load(&files[i]).unwrap().unwrap();
-    assert_eq!(read(0).current.look_lut, named("Glow"));
-    assert_eq!(read(1).current.look_lut, named("Mono"));
+    let read = |i: usize| Sidecar::load_as_file(&files[i]).unwrap().unwrap();
+    assert_eq!(read(0).current().look_lut, named("Glow"));
+    assert_eq!(read(1).current().look_lut, named("Mono"));
     assert_eq!(read(1).snapshots[0].edit.look_lut, named("Glow"));
-    assert_eq!(read(2).current.look_lut, named("Neon Film"));
-    assert_eq!(read(3).current.look_lut, named("Mono"));
-    assert_eq!(read(3).history[1].edit.look_lut, named("Glow"));
+    assert_eq!(read(2).current().look_lut, named("Neon Film"));
+    assert_eq!(read(3).current().look_lut, named("Mono"));
+    assert_eq!(read(3).history[1].edit().look_lut, named("Glow"));
     assert!(!(0..4).any(|i| read(i).names_look("Neon")));
     // The turn made elsewhere is kept, on disk and in the window: the
     // file was renamed, not the window's copy written over it.
@@ -620,7 +654,11 @@ fn a_sidecar_that_cannot_be_written_keeps_the_old_files() {
         ]
     );
     assert_eq!(
-        Sidecar::load(&files[0]).unwrap().unwrap().current.look_lut,
+        Sidecar::load_as_file(&files[0])
+            .unwrap()
+            .unwrap()
+            .current()
+            .look_lut,
         named("Glow")
     );
     STORE.with(|s| *s.borrow_mut() = None);
@@ -801,7 +839,7 @@ fn a_read_out_when_the_rename_began_is_caught_up() {
     let (app, state, files) = two_on_neon(&dir, &store);
     let before: Vec<Sidecar> = files
         .iter()
-        .map(|f| Sidecar::load(f).unwrap().unwrap())
+        .map(|f| Sidecar::load_as_file(f).unwrap().unwrap())
         .collect();
     // Both frames' reads are out; frame 0's panel stands in.
     {
@@ -840,7 +878,7 @@ fn a_read_out_when_the_rename_began_is_caught_up() {
     let st = state.borrow();
     for (i, f) in files.iter().enumerate() {
         assert!(!st.sidecars[i].names_look("Neon"), "{i}");
-        let disk = Sidecar::load(f).unwrap().unwrap();
+        let disk = Sidecar::load_as_file(f).unwrap().unwrap();
         assert!(!disk.names_look("Neon"), "{i}");
         // The window holds what the file holds.
         assert_eq!(st.sidecars[i].revisions, disk.revisions, "{i}");
@@ -872,7 +910,7 @@ fn a_read_not_out_when_the_rename_began_is_left_alone() {
             // A new Neon, used on frame 1 (a sidecar written by hand, as
             // another folder's would be).
             table(&store, "Neon.cube", &[]);
-            let mut s = Sidecar::load(&files[1]).unwrap().unwrap();
+            let mut s = Sidecar::load_as_file(&files[1]).unwrap().unwrap();
             s.record(Edit {
                 look_lut: named("Neon"),
                 ..exposed(1.0)
@@ -883,9 +921,9 @@ fn a_read_not_out_when_the_rename_began_is_left_alone() {
         {
             let mut st = state.borrow_mut();
             st.from_row[1].read = false;
-            let read = Sidecar::load(&files[1]).unwrap().unwrap();
+            let read = Sidecar::load_as_file(&files[1]).unwrap().unwrap();
             assert!(crate::rows::land_read(&mut st, &app, 1, read));
-            assert!(st.sidecars[1].current.look_lut.names("Neon"));
+            assert!(st.sidecars[1].current().look_lut.names("Neon"));
         }
         assert_eq!(std::fs::read(Sidecar::path_for(&files[1])).unwrap(), bytes);
         STORE.with(|s| *s.borrow_mut() = None);
@@ -921,7 +959,7 @@ fn a_late_write_after_a_stop_is_taken_and_holds_the_next_rename() {
     );
     assert!(matches!(stopped, Outcome::Failed(_)));
     assert!(
-        Sidecar::load(&files[1])
+        Sidecar::load_as_file(&files[1])
             .unwrap()
             .unwrap()
             .names_look("Neon")
@@ -965,7 +1003,7 @@ fn a_late_write_after_a_stop_is_taken_and_holds_the_next_rename() {
     assert!(!st.sidecars[1].names_look("Neon"));
     assert_eq!(
         st.sidecars[1].revisions,
-        Sidecar::load(&files[1]).unwrap().unwrap().revisions
+        Sidecar::load_as_file(&files[1]).unwrap().unwrap().revisions
     );
     // The old files stay: the outcome said was that it was stopped.
     assert!(store.join("Neon.cube").exists());
@@ -1019,14 +1057,14 @@ fn a_copy_moved_by_a_sync_during_the_rename_is_kept_and_renamed() {
         let status = app.get_status().to_string();
         assert!(status.starts_with("renamed Neon to Glow"), "{status}");
         let st = state.borrow();
-        let disk = Sidecar::load(&files[1]).unwrap().unwrap();
+        let disk = Sidecar::load_as_file(&files[1]).unwrap().unwrap();
         for s in [&st.sidecars[1], &disk] {
             assert!(!s.names_look("Neon"), "diverged {diverged}");
             let exposures: Vec<f32> = s
                 .history
                 .iter()
-                .map(|h| h.edit.light.exposure)
-                .chain(std::iter::once(s.current.light.exposure))
+                .map(|h| h.edit().light.exposure)
+                .chain(std::iter::once(s.current().light.exposure))
                 .collect();
             assert!(exposures.contains(&2.0), "{exposures:?}");
             if diverged {
@@ -1102,7 +1140,7 @@ fn a_stall_or_a_stop_lands_what_was_done_and_keeps_the_old_files() {
         assert!(store.join("Neon.cube").exists() && store.join("Glow.cube").exists());
         let renamed = (1..4)
             .filter(|&i| {
-                !Sidecar::load(&files[i])
+                !Sidecar::load_as_file(&files[i])
                     .unwrap()
                     .unwrap()
                     .names_look("Neon")

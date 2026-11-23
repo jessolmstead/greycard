@@ -58,6 +58,7 @@ impl Method {
 #[serde(default)]
 pub struct Patch {
     pub id: u64,
+    #[serde(deserialize_with = "crate::meta::newer_loose")]
     pub method: Method,
     pub points: Vec<Pos>,
     pub radius: f32,
@@ -289,6 +290,11 @@ impl Patch {
     /// The first stroke's radius made `radius` and every other's
     /// scaled with it: the Size slider on a repair of several strokes
     /// keeps them in proportion.
+    ///
+    /// The source stays, and a source chosen by the engine is then
+    /// recorded with the patch as if placed by hand (§724): the person
+    /// sees it stay with the spot, and what is written is what they
+    /// saw.
     pub fn resize(&mut self, radius: f32) {
         if self.radius > 0.0 && radius != self.radius {
             let k = radius / self.radius;
@@ -299,7 +305,9 @@ impl Patch {
         self.radius = radius;
     }
 
-    /// The patch moved so its first point is at `to`.
+    /// The patch moved so its first point is at `to`. The source moves
+    /// with it, and one the engine chose is recorded with it as if
+    /// placed by hand (§724), as [`Self::resize`] has it.
     pub fn moved_to(&self, to: Pos) -> Self {
         let Some(first) = self.points.first().copied() else {
             return self.clone();

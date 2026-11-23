@@ -526,7 +526,7 @@ fn a_click_on_a_folder_sends_the_title_typed_to_its_own_frame() {
     slint::platform::update_timers_and_animations();
     land_sent(&state, &app, &worker);
     assert_eq!(listed(&state), ["r.tif"], "the click opened it");
-    let s = greycard_edit::Sidecar::load(&d1)
+    let s = greycard_edit::Sidecar::load_as_file(&d1)
         .unwrap()
         .expect("d1's sidecar");
     assert_eq!(s.meta.title, "Dusk");

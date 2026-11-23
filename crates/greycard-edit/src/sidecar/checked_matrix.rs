@@ -33,7 +33,8 @@ fn aspect_at(turn: u8) -> f32 {
 fn turn_real(s: &mut Sidecar, q: i32) {
     for _ in 0..q.rem_euclid(4) {
         let a = aspect_at(s.turn);
-        s.turn_by(1, Some(a));
+        s.frame_known(a);
+        s.turn_by(1, None);
     }
 }
 
@@ -139,7 +140,7 @@ fn refs(turn: u8) -> Vec<Vec<f32>> {
         .iter()
         .map(|c| {
             let mut s = Sidecar {
-                line: crate::Line::of(base(0.0, *c)),
+                line: crate::Line::of(base(0.0, *c), 0).unwrap(),
                 ..Sidecar::default()
             };
             turn_real(&mut s, i32::from(turn));
@@ -155,6 +156,14 @@ fn close(a: &[f32], b: &[f32]) -> bool {
 /// Invariant (i): every edit's geometry and placed work agree with the
 /// sidecar's turn. Lists where it does not.
 fn geometry_bad(s: &Sidecar) -> Vec<String> {
+    // A sidecar read from its file shows a state placed under another
+    // turn once it knows the frame's shape, which the window's read
+    // asks the raw for (`on_disk`); here the frame is ASPECT0's.
+    let mut s = s.clone();
+    if s.needs_frame() {
+        s.frame_known(aspect_at(s.turn));
+    }
+    let s = &s;
     let want = refs(s.turn);
     let mut bad = Vec::new();
     let mut check = |what: String, e: &Edit| {
@@ -256,7 +265,7 @@ fn win_ops() -> Vec<(&'static str, WinOp, WinCheck, bool)> {
             "vc-edit",
             |s| {
                 let id = vc(s).unwrap();
-                let l = s.line_mut(Some(&id)).unwrap();
+                let mut l = s.line_mut(Some(&id)).unwrap();
                 let mut e = l.current.clone();
                 e.light.exposure = 2.0;
                 l.record(e);
@@ -284,7 +293,7 @@ fn win_ops() -> Vec<(&'static str, WinOp, WinCheck, bool)> {
                 turn_real(s, 1);
                 let mut e = base(1.0, C1);
                 let mut t = Sidecar {
-                    line: crate::Line::of(e.clone()),
+                    line: crate::Line::of(e.clone(), 0).unwrap(),
                     ..Sidecar::default()
                 };
                 turn_real(&mut t, 1);
@@ -389,7 +398,7 @@ fn other_ops() -> Vec<(&'static str, OtherOp, bool)> {
                 Some(other_saves(raw, Placement::Beside, 150, |o| {
                     turn_real(o, 1);
                     let mut t = Sidecar {
-                        line: crate::Line::of(base(0.9, C1)),
+                        line: crate::Line::of(base(0.9, C1), 0).unwrap(),
                         ..Sidecar::default()
                     };
                     turn_real(&mut t, 1);
@@ -493,7 +502,7 @@ fn other_ops() -> Vec<(&'static str, OtherOp, bool)> {
         (
             "moved",
             |raw, _| {
-                let mut o = Sidecar::load(raw).unwrap().unwrap();
+                let mut o = Sidecar::load_as_file(raw).unwrap().unwrap();
                 o.meta.rating = 2;
                 o.save_in_stamped(raw, Placement::Folder, &stamp(150))
                     .unwrap();
@@ -540,14 +549,15 @@ fn start(name: &str) -> (PathBuf, PathBuf, Sidecar, Vec<u8>) {
     s.save_in_stamped(&raw, Placement::Beside, &stamp(100))
         .unwrap();
     let bytes = std::fs::read(Sidecar::path_for(&raw)).unwrap();
-    let read = Sidecar::read(&Sidecar::path_for(&raw)).unwrap();
+    let read = Sidecar::read_as_file(&Sidecar::path_for(&raw)).unwrap();
     (dir, raw, read, bytes)
 }
 
+/// `s` as the file holds it: the redo stack written as undone (§724).
 fn strip(s: &Sidecar) -> Sidecar {
     let mut s = s.clone();
     for l in s.lines_mut() {
-        l.redo.clear();
+        l.leave_redo();
     }
     s
 }
@@ -589,9 +599,9 @@ fn every_cell_keeps_both_sides_whole() {
             let file_before = std::fs::read(&path)
                 .ok()
                 .or_else(|| std::fs::read(Sidecar::path_in(&raw, Placement::Folder)).ok());
-            let theirs = file_before
-                .as_ref()
-                .and_then(|b| Sidecar::from_json(std::str::from_utf8(b).ok()?).ok());
+            let theirs = file_before.as_ref().and_then(|b| {
+                Sidecar::from_json(std::str::from_utf8(b).ok()?, &crate::Edit::default()).ok()
+            });
             let at = now(0);
             let res = s.save_checked_said(&raw, Placement::Beside, &at);
             let mut say = |what: String| bad.push(format!("{wn} x {on}: {what}"));
@@ -607,7 +617,7 @@ fn every_cell_keeps_both_sides_whole() {
                 }
             };
             *counts.entry(format!("{:?}", saved.checked)).or_default() += 1;
-            let file = Sidecar::load(&raw).unwrap().unwrap();
+            let file = Sidecar::load_as_file(&raw).unwrap().unwrap();
             if file.to_json() != s.to_json() {
                 say("the file is not what the window holds".into());
             }
@@ -708,7 +718,7 @@ fn a_turn_without_geometry_leaves_the_lines_print() {
     s.record(crate::testing::exposed(0.25));
     s.fill_ids();
     let mut t = s.clone();
-    t.turn_by(1, None);
+    t.turn_by(1, Some(ASPECT0));
     assert_eq!(
         lines_print(s.to_json().as_bytes()),
         lines_print(t.to_json().as_bytes())
@@ -721,7 +731,9 @@ fn a_turn_without_geometry_leaves_the_lines_print() {
 #[test]
 fn turn_cells_without_geometry() {
     let act = |x: &mut Sidecar, what: &str| match what {
-        "turn" => x.turn_by(1, None),
+        "turn" => {
+            x.turn_by(1, Some(aspect_at(x.turn)));
+        }
         "rating" => x.meta.rating = 3,
         "slider" => {
             x.record(crate::testing::exposed(-1.0));
@@ -743,7 +755,7 @@ fn turn_cells_without_geometry() {
         s.record(crate::testing::exposed(0.25));
         s.save_in_stamped(&raw, Placement::Beside, &stamp(100))
             .unwrap();
-        let mut s = Sidecar::read(&Sidecar::path_for(&raw)).unwrap();
+        let mut s = Sidecar::read_as_file(&Sidecar::path_for(&raw)).unwrap();
         if there != "nothing" {
             other_saves(&raw, Placement::Beside, 150, |o| act(o, there));
         }
@@ -751,7 +763,7 @@ fn turn_cells_without_geometry() {
         let c = s
             .save_checked(&raw, Placement::Beside, &stamp(200))
             .unwrap();
-        let file = Sidecar::load(&raw).unwrap().unwrap();
+        let file = Sidecar::load_as_file(&raw).unwrap().unwrap();
         greycard_core::testing::remove_dir_retry(&dir);
         assert_eq!(
             (c, file.turn, file.meta.rating),

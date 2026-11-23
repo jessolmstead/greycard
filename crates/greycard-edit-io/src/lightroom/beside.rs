@@ -140,7 +140,7 @@ pub fn path_for(raw: &Path) -> Option<PathBuf> {
 /// `Edit::raw_defaults`) but for the learned blend an open seeds from
 /// the ISO. Its meta is not an edit.
 pub fn no_edit_of_ours(sidecar: &Sidecar) -> bool {
-    let mut current = sidecar.line.current.clone();
+    let mut current = sidecar.line.current().clone();
     current.noise.learned_strength = Edit::default().noise.learned_strength;
     sidecar.versions.is_empty()
         && sidecar.line.history.is_empty()
@@ -338,7 +338,12 @@ fn take_over(raw: &Path, sidecar: &mut Sidecar, disk: &Meta) -> Option<Taken> {
     if let Cropped::Carried { .. } = cropped {
         unmapped.retain(|n| n != "crop");
     }
-    sidecar.line.current = starting;
+    // A line nobody developed (`no_edit_of_ours`) holds no state
+    // (§724): the import's start is its start, recorded as the root
+    // under the import's step. One with its untouched start recorded
+    // keeps it as the root, never changed under its id, and the import
+    // goes on top.
+    sidecar.line.seed(|e| *e = starting);
     sidecar.record_as(
         edit,
         Some(greycard_edit::history::import_label("Lightroom")),
@@ -449,9 +454,14 @@ pub fn take_and_save(raw: &Path, sidecar: &mut Sidecar, setting: Placement) -> O
         return None;
     }
     let _held = Holding::of(raw);
-    let ours = match Sidecar::load(raw) {
-        Ok(Some(there)) if !no_edit_of_ours(&there) => {
+    // Started at the reader's start, as the copy in hand was (§724).
+    let ours = match Sidecar::load(raw, &sidecar.start) {
+        // A newer build's is read and never written over (§724).
+        Ok(Some(there)) if !no_edit_of_ours(&there) || there.read_only() => {
+            // The frame's shape is the frame's, whichever copy said it.
+            let shape = sidecar.shape;
             *sidecar = there;
+            sidecar.take_shape(shape);
             return None;
         }
         Ok(Some(there)) => there.meta,
@@ -496,7 +506,12 @@ pub(crate) mod tests {
         f: &Path,
         sidecars: Option<Placement>,
     ) -> (Sidecar, Option<crate::on_disk::Trouble>) {
-        crate::on_disk::load_sidecar_said(f, sidecars, Fresh::default())
+        crate::on_disk::load_sidecar_said(
+            f,
+            sidecars,
+            Fresh::default(),
+            crate::on_disk::frame_shape,
+        )
     }
 
     /// Sidecars written beside the frame, as the editor's setting
@@ -571,7 +586,7 @@ pub(crate) mod tests {
     }
 
     fn label(s: &Sidecar) -> Option<&str> {
-        s.line.current_label.as_deref()
+        s.line.current_label()
     }
 
     #[test]
@@ -583,7 +598,21 @@ pub(crate) mod tests {
         assert_eq!(trouble, None, "written, so not missing");
         assert_eq!(sidecar.line.history.len(), 1);
         assert_eq!(label(&sidecar), Some("Imported from Lightroom"));
-        assert!((sidecar.line.current.light.exposure - 1.0).abs() < 1e-6);
+        assert!((sidecar.line.current().light.exposure - 1.0).abs() < 1e-6);
+        // The import's start is the root, recorded whole under an id made
+        // from it, never changed under one (§724).
+        let root = &sidecar.line.history[0];
+        assert_eq!(
+            root.id(),
+            Some(
+                greycard_edit::sync::state_id(
+                    greycard_edit::sync::ZERO_ID,
+                    &root.written(),
+                    root.label()
+                )
+                .as_str()
+            )
+        );
         assert_eq!(sidecar.meta.rating, 3);
         assert_eq!(sidecar.meta.label, greycard_edit::meta::Label::Red);
         assert_eq!(sidecar.meta.title, "Harbor");
@@ -594,11 +623,13 @@ pub(crate) mod tests {
             Some(&["Places/Scotland/Skye".to_string()][..])
         );
         // On disk, and taken once: a second open finds our edit.
-        let saved = Sidecar::load(&raw).unwrap().expect("a .gcd written");
+        let saved = Sidecar::load_as_file(&raw)
+            .unwrap()
+            .expect("a .gcd written");
         assert_eq!(saved.line.history.len(), 1);
         let (again, _) = load_sidecar_said(&raw, BESIDE);
         assert_eq!(again.line.history.len(), 1);
-        assert_eq!(again.line.current, sidecar.line.current);
+        assert_eq!(again.line.current(), sidecar.line.current());
         // Sidecars off: nothing read, nothing taken.
         let other = raw_in(&dir, "IMG_0002.CR3");
         std::fs::write(xmp::short_path(&other), PACKET).unwrap();
@@ -625,7 +656,7 @@ pub(crate) mod tests {
         std::fs::write(xmp::long_path(&raw), PACKET).unwrap();
         let (sidecar, _) = load_sidecar_said(&raw, BESIDE);
         assert_eq!(sidecar.line.history.len(), 1);
-        assert_eq!(sidecar.line.current.light.exposure, -0.5);
+        assert_eq!(sidecar.line.current().light.exposure, -0.5);
         assert_eq!(label(&sidecar), None);
         // A frame only rated here, which took this XMP's word before
         // (its mark), still takes the develop, and keeps its own meta;
@@ -639,7 +670,7 @@ pub(crate) mod tests {
         stars.save(&rated).unwrap();
         let (sidecar, _) = load_sidecar_said(&rated, BESIDE);
         assert_eq!(label(&sidecar), Some("Imported from Lightroom"));
-        assert!((sidecar.line.current.light.exposure - 1.0).abs() < 1e-6);
+        assert!((sidecar.line.current().light.exposure - 1.0).abs() < 1e-6);
         assert_eq!(
             (sidecar.meta.rating, &sidecar.meta.keywords[..]),
             (1, &["Mine".to_string()][..]),
@@ -658,12 +689,32 @@ pub(crate) mod tests {
             },
             "what came from the XMP, recorded"
         );
-        let saved = Sidecar::load(&rated).unwrap().unwrap();
+        let saved = Sidecar::load_as_file(&rated).unwrap().unwrap();
         assert_eq!(saved.meta, sidecar.meta);
         assert_eq!(saved.lightroom, sidecar.lightroom);
         // And a later open does not lay the XMP's over it.
         let (again, _) = load_sidecar_said(&rated, BESIDE);
         assert_eq!(again.meta, sidecar.meta);
+        greycard_core::testing::remove_dir_retry(&dir);
+    }
+
+    /// A newer greycard's `.gcd` (§724), with no state of ours a take
+    /// would keep: read, and never written over by the XMP's develop.
+    #[test]
+    fn a_newer_build_s_sidecar_is_not_taken_over() {
+        let dir = folder("newer");
+        let raw = raw_in(&dir, "IMG_0001.CR3");
+        let newer = r#"{"floors": {"read": 10, "write": 11}, "meta": {"rating": 2}}"#;
+        std::fs::write(Sidecar::path_for(&raw), newer).unwrap();
+        std::fs::write(xmp::long_path(&raw), PACKET).unwrap();
+        let (sidecar, _) = load_sidecar_said(&raw, BESIDE);
+        assert!(sidecar.read_only());
+        assert_eq!(label(&sidecar), None, "the develop not taken");
+        assert_eq!(sidecar.meta.rating, 2);
+        assert_eq!(
+            std::fs::read_to_string(Sidecar::path_for(&raw)).unwrap(),
+            newer
+        );
         greycard_core::testing::remove_dir_retry(&dir);
     }
 
@@ -690,7 +741,10 @@ pub(crate) mod tests {
         assert_eq!(laid.caption.as_deref(), Some("From the catalog"));
         assert_eq!(laid.title.as_deref(), Some("Harbor"), "the XMP's, laid");
         assert_eq!(laid.label, Some(greycard_edit::meta::Label::Red));
-        assert_eq!(Sidecar::load(&raw).unwrap().unwrap().lightroom, *laid);
+        assert_eq!(
+            Sidecar::load_as_file(&raw).unwrap().unwrap().lightroom,
+            *laid
+        );
         greycard_core::testing::remove_dir_retry(&dir);
     }
 
@@ -710,7 +764,7 @@ pub(crate) mod tests {
         assert_eq!(sidecar.meta.rating, 3, "the XMP's word");
         assert_eq!(sidecar.lightroom.rating, Some(3));
         assert_eq!(sidecar.meta.keywords, ["Places/Scotland/Skye"]);
-        let saved = Sidecar::load(&raw).unwrap().unwrap();
+        let saved = Sidecar::load_as_file(&raw).unwrap().unwrap();
         assert_eq!(saved.meta.rating, 3);
         assert!(saved.xmp.is_some(), "marked as taken");
         greycard_core::testing::remove_dir_retry(&dir);

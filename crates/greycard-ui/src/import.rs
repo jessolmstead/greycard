@@ -1707,7 +1707,7 @@ fn import_one(run: &mut Run<'_>, item: &Item, seq: usize, report: &mut Report) -
     // A Lightroom develop in the XMP that came with it, taken before the
     // preset, which goes over it.
     if let Some(placement) = opts.placement {
-        let mut sidecar = greycard_edit::Sidecar::load(&frame)
+        let mut sidecar = greycard_edit::Sidecar::load_as_file(&frame)
             .ok()
             .flatten()
             .unwrap_or_default();
@@ -1727,13 +1727,28 @@ fn import_one(run: &mut Run<'_>, item: &Item, seq: usize, report: &mut Report) -
             );
             report.profile_left_off += 1;
         }
-        let mut sidecar = greycard_edit::Sidecar::load(&frame)
-            .ok()
-            .flatten()
-            .unwrap_or_default();
-        crate::preset_fit::preset_at_start(&mut sidecar, None, &frame, &preset, Some(placement));
-        if sidecar.current_label.is_some() {
-            report.preset += 1;
+        // A `.gcd` that will not read is never written over, nor a newer
+        // build's (§724): the preset is not laid on it.
+        match greycard_edit::Sidecar::load_as_file(&frame) {
+            Ok(sidecar) => {
+                let mut sidecar = sidecar.unwrap_or_default();
+                crate::preset_fit::preset_at_start(
+                    &mut sidecar,
+                    None,
+                    &frame,
+                    &preset,
+                    Some(placement),
+                );
+                if sidecar.current_label().is_some() && !sidecar.read_only() {
+                    report.preset += 1;
+                }
+            }
+            Err(e) => {
+                tracing::warn!(
+                    "import: {}: sidecar: {e}; the preset is not laid",
+                    name_of(&frame)
+                );
+            }
         }
     }
     report.frames += 1;

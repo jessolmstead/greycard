@@ -39,7 +39,9 @@ struct CropAsWritten {
 
 /// `Geometry::crop` read: a crop whose every side is a finite number,
 /// else none.
-fn crop_or_none<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Option<Crop>, D::Error> {
+pub(crate) fn crop_or_none<'de, D: serde::Deserializer<'de>>(
+    d: D,
+) -> Result<Option<Crop>, D::Error> {
     let written = Option::<CropAsWritten>::deserialize(d)?;
     Ok(written.and_then(|c| match (c.x, c.y, c.w, c.h) {
         (Some(x), Some(y), Some(w), Some(h)) if [x, y, w, h].iter().all(|v| v.is_finite()) => {
@@ -167,6 +169,7 @@ pub struct Geometry {
     /// frame size, is no crop, rather than a frame that will not open.
     #[serde(deserialize_with = "crop_or_none")]
     pub crop: Option<Crop>,
+    #[serde(deserialize_with = "crate::meta::newer_loose")]
     pub aspect: Aspect,
     pub portrait: bool,
 }

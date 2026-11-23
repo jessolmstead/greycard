@@ -34,6 +34,8 @@ mod library;
 mod lightbox;
 #[cfg(test)]
 mod name_tips;
+#[cfg(test)]
+mod newer_tests;
 mod open_note;
 mod owners;
 mod panel;

@@ -73,16 +73,15 @@ the reasoning lives in `docs/notes.md`.
       on a noisy frame (ISO 3200, Dehaze +50: to zero). The guide
       could be taken before Dehaze too, at the cost of changing
       Dehaze-only edits (§643); waits on a measurement
-- [ ] States that are never rewritten: a turn, a look rename, the ISO
-      seed, migrations, and an older build's save all change recorded
-      states under their ids, so no reconciliation can trust one.
-      Designed and agreed (§724), built in its seven steps behind one
-      bump to version 10, the turn first. It also answers: the
-      archive sync landing crop and masks a quarter turn off across a
-      turn difference; a look rename reaching only the open folder's
-      sidecars; a snapshot renamed on one copy returning as two; Swap
-      with original on one copy joining unrelated lines; a later
-      build's mask shape dropped at an older build's save
+- [ ] A look rename still rewrites states, and reaches only the open
+      folder's sidecars: looks by id (§724 step 5)
+- [ ] A snapshot renamed on one copy returns as two after a join. The
+      join by heads: a conflict copy for diverged heads, tombstones
+      and the later name winning, and the cap over the joined graph
+      (§724 step 7, §734)
+- [ ] A delete against a rename loses the rename, and three machines
+      joining in turn can undo a rename (§734); waits on the join by
+      heads
 - [ ] The note of edits not saved is out of sight in the lightbox,
       with every pane hidden, and in the grid while an import's line
       shows; so is the archive's note beside it
@@ -253,7 +252,6 @@ the reasoning lives in `docs/notes.md`.
 0.13.0: Canon highlights that hold more, and a learned denoiser that
 steps aside on a card it cannot run on.
 
-- [ ] An edit from a newer version opens in an older one
 
 ### Speed
 
@@ -821,9 +819,6 @@ touches.
 
 - [ ] The editor's `--export` flag dropped, one release after §514
       made it an alias of `greycard export`
-- [ ] Process versions, the foundation: each state records the
-      rendering it was made under (schema 10), and until 1.0 nothing is
-      kept by it. Waits on the sidecar branch
 - [ ] The render gate (§733) enforced on macOS and Windows. Waits on
       `render_gate_spread` run on each
 - [ ] The render gate's fixtures near the thresholds it misses:
@@ -838,6 +833,16 @@ touches.
       fill's version moved
 - [ ] At 1.0, prior process versions offered: an edit keeps the
       rendering it was made under until its owner updates it
+- [ ] An older build writing meta (ratings, flags, keywords) to a
+      newer build's sidecar, which needs a top-level catch-all (§734)
+- [ ] A newer build's unknown fields carried through an older build's
+      edit, or read-only kept (§734)
+- [ ] The delta writer: history entries as differences, which this
+      build reads and never writes (§734)
+- [ ] Another computer's edits fetched from the archive when a frame
+      opens, not only at Back up, Bring back, or a save (§734)
+- [ ] `history` and `redo` made crate-private, as the other state
+      fields are (§734)
 
 ---
 

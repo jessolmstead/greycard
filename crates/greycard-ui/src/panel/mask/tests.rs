@@ -1764,7 +1764,7 @@ fn duplicate_mask_lands_below_as_one_step() {
             "its raster carried"
         );
         assert_eq!(
-            st.sidecars[0].current.adjustments.len(),
+            st.sidecars[0].current().adjustments.len(),
             3,
             "recorded at once"
         );

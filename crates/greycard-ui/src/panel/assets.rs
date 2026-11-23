@@ -2202,6 +2202,18 @@ pub(crate) fn install(app: &App, state: &Rc<Shared>, worker: &Rc<Worker>) {
                 app.set_status(tr!("choose what the preset carries").into());
                 return;
             }
+            // The open frame's masks wait on its shape (§724): a preset
+            // would carry them to other frames unturned.
+            if let Some(c) = st.current
+                && crate::panel::browser::waits_on_shape(
+                    &mut st,
+                    &app,
+                    c,
+                    "no preset was saved from it",
+                )
+            {
+                return;
+            }
             // The demosaic as the open frame runs it, which is what its
             // menu shows.
             let edit = crate::panel::sync::as_source(

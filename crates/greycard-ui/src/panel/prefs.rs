@@ -62,7 +62,7 @@ pub(crate) fn move_sidecars(files: &[PathBuf], placement: greycard_edit::Placeme
         match Sidecar::settle(f, placement) {
             Ok(greycard_edit::Settled::Moved) => out.moved += 1,
             Ok(greycard_edit::Settled::Dropped) => out.dropped += 1,
-            Ok(greycard_edit::Settled::InPlace) => {}
+            Ok(greycard_edit::Settled::InPlace | greycard_edit::Settled::Kept) => {}
             Err(e) => {
                 tracing::warn!("{}: sidecar not moved: {e}", f.display());
                 out.failed.push((f.clone(), e.to_string()));

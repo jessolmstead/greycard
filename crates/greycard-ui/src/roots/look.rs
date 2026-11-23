@@ -340,6 +340,7 @@ impl Look {
             self.sidecars,
             self.fresh,
             self.progress.as_deref().map(|p| &p.read),
+            greycard_edit_io::on_disk::frame_shape,
         );
         // The frame to open: the file last open matched to the list by
         // its folder's canonical form, which is in hand here.

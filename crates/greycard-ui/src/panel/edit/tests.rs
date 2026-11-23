@@ -1121,3 +1121,139 @@ fn the_lightbox_in_and_out_keeps_the_panels_scroll() {
         }
     }
 }
+
+/// A frame whose masks wait on a shape nothing can measure (§724) opens
+/// read-only: a slider moved on it goes back to the state's value, the
+/// panel holds the state, and no step is recorded.
+#[test]
+fn a_slider_moved_on_a_frame_that_waits_goes_back() {
+    use crate::testing;
+    use slint::platform::WindowEvent;
+
+    let app = window(1);
+    app.window()
+        .set_size(slint::LogicalSize::new(1500.0, 950.0));
+    let (state, _worker) = testing::state_for(&app, testing::folder(1));
+    state.borrow_mut().sidecars[0] = testing::waiting_sidecar();
+    let steps = state.borrow().sidecars[0].history.len();
+    app.invoke_select(0);
+    app.set_panel_tab("Develop".into());
+    let center = testing::track_middle(&app, "LightSection::exposure");
+    testing::click(&app, center.0, center.1);
+    app.window().dispatch_event(WindowEvent::PointerScrolled {
+        position: slint::LogicalPosition::new(center.0, center.1),
+        delta_x: 0.0,
+        delta_y: 60.0,
+    });
+    assert_eq!(app.get_exposure(), 0.0, "the slider went back");
+    let st = state.borrow();
+    assert_eq!(
+        st.develop.edit,
+        st.sidecars[0].current().clone(),
+        "the panel holds the state"
+    );
+    assert_eq!(st.sidecars[0].history.len(), steps, "no step");
+}
+
+/// The open frame's wait cleared by another path than its own develop
+/// (an export, a copy, a merge measured it): when its develop lands the
+/// panel takes the state as measured, unmarked, and a slider moved after
+/// is recorded.
+#[test]
+fn a_frame_measured_while_open_takes_changes_again() {
+    use crate::testing;
+
+    let app = window(1);
+    app.window()
+        .set_size(slint::LogicalSize::new(1500.0, 950.0));
+    let (state, worker) = testing::state_for(&app, testing::folder(1));
+    crate::WORKER.with(|w| *w.borrow_mut() = Some(worker.clone()));
+    state.borrow_mut().sidecars[0] = testing::waiting_sidecar();
+    app.invoke_select(0);
+    assert!(
+        state.borrow().develop.edit.unturned,
+        "the panel's copy waits"
+    );
+    // Measured elsewhere: the frame 1.5 wide before its quarter turn.
+    state.borrow_mut().sidecars[0].frame_known(1.0 / 1.5);
+    assert!(!state.borrow().sidecars[0].current_waits());
+    testing::land_develop(
+        &app,
+        &state,
+        crate::worker::LearnedReport::Off,
+        crate::worker::FillReport::default(),
+    );
+    crate::panel::startup::land_pending(&mut state.borrow_mut(), &app);
+    {
+        let st = state.borrow();
+        assert!(!st.develop.edit.unturned, "the panel unmarked");
+        assert_eq!(st.develop.edit, st.sidecars[0].current().clone());
+    }
+    let steps = state.borrow().sidecars[0].history.len();
+    app.set_exposure(0.8);
+    {
+        let mut st = state.borrow_mut();
+        let edit = read_edit(&app, &st.develop.edit, st.develop.target);
+        save_edit(&mut st, edit);
+    }
+    let st = state.borrow();
+    assert_eq!(st.sidecars[0].history.len(), steps + 1, "the move recorded");
+    assert_eq!(st.sidecars[0].current().light.exposure, 0.8);
+    drop(st);
+    crate::WORKER.with(|w| *w.borrow_mut() = None);
+}
+
+/// A frame whose masks wait on its shape is measured by its raw's header
+/// when it is next in hand, never by a picture of it (§724): its 16:9
+/// thumbnail does not say the 3:2 frame's shape. While its raw will not
+/// say, a change is refused and the read-only line said; once the raw
+/// says, the frame is measured on the first ask, and the line comes
+/// down.
+#[test]
+fn a_waiting_frame_is_measured_by_its_header_not_its_thumbnail() {
+    use crate::testing;
+
+    let dir = std::env::temp_dir().join(format!("greycard-shape-header-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let raw = dir.join("IMG_0000.tif");
+    // Not readable yet: its volume, say, not back.
+    std::fs::write(&raw, b"not yet").unwrap();
+    let app = window(1);
+    app.window()
+        .set_size(slint::LogicalSize::new(1500.0, 950.0));
+    let (state, _worker) = testing::state_for(&app, vec![raw.clone()]);
+    {
+        let mut st = state.borrow_mut();
+        st.sidecars[0] = testing::waiting_sidecar();
+        st.views.thumb_base[0] = Some((16, 9, vec![0; 16 * 9 * 3]));
+        // The panel holds the waiting copy, and a change was refused.
+        st.current = Some(0);
+        st.develop.edit = st.sidecars[0].current().clone();
+        app.set_exposure(0.8);
+        assert!(refused_waiting(&mut st, &app));
+    }
+    let words = "Read-only: IMG_0000.tif's masks cannot be placed until its raw is reachable";
+    assert_eq!(app.get_status().as_str(), words);
+    assert_eq!(app.get_exposure(), 0.0, "the slider went back");
+    // The raw reachable: 1.5 wide for each unit of its height, as the
+    // sidecar was turned by.
+    greycard_library::fixture::write_frame_of(
+        &raw,
+        &greycard_library::fixture::R5,
+        6,
+        4,
+        &[0; 6 * 4 * 3],
+    );
+    // The frame back in hand: measured by its header, on the first ask.
+    let waits = crate::panel::browser::waits_on_shape(&mut state.borrow_mut(), &app, 0, "x");
+    assert!(!waits, "measurable, so it does not wait");
+    let st = state.borrow();
+    assert_eq!(
+        st.sidecars[0].shape,
+        greycard_edit::Measured::new(1, 1.0 / 1.5),
+        "the header's 3:2 turned, not the thumbnail's 16:9"
+    );
+    assert_eq!(app.get_status().as_str(), "", "the read-only line is down");
+    drop(st);
+    testing::remove_scratch(state, &dir);
+}

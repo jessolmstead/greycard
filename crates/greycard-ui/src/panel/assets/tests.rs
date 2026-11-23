@@ -1009,7 +1009,7 @@ fn a_picture_opens_with_its_lens_shown_and_its_corrections_off() {
     {
         let mut st = state.borrow_mut();
         st.window.write_sidecars = true;
-        st.sidecars[0] = greycard_library::held::from_disk(
+        st.sidecars[0] = crate::rows::from_disk(
             &jpeg,
             Some(greycard_edit::Placement::Beside),
             Default::default(),
@@ -1054,13 +1054,13 @@ fn a_picture_opens_with_its_lens_shown_and_its_corrections_off() {
     i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(
         crate::panel::edit::SAVE_MS + 100,
     ));
-    let current = state.borrow().sidecars[0].current.lens.clone();
+    let current = state.borrow().sidecars[0].current().lens.clone();
     assert!(current.distortion);
     assert!(!current.chromatic_aberration && !current.vignetting);
-    let saved = greycard_edit::Sidecar::load(&jpeg)
+    let saved = greycard_edit::Sidecar::load_as_file(&jpeg)
         .unwrap()
         .expect("a sidecar written");
-    assert_eq!(saved.current.lens, current);
+    assert_eq!(saved.current().lens, current);
     crate::testing::remove_scratch(state, &dir);
 }
 

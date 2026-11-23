@@ -43,22 +43,34 @@ fn a_merge_that_went_without_the_tier_says_why() {
 }
 
 /// A frame the window has not read takes the setting for new edits
-/// when it has no sidecar, sidecars on or off, and its own when it
-/// has one.
+/// when it has no sidecar, sidecars on or off, or one that holds a
+/// rating and no state (§724), and its own when one is recorded.
 #[test]
 fn a_frame_merged_unread_starts_as_the_setting_says() {
     let off = Fresh { lens: false };
     let none = Path::new("/nowhere/IMG_0001.CR3");
-    assert!(!edit_on_disk(none, true, off).lens.enabled);
-    assert!(!edit_on_disk(none, false, off).lens.enabled);
-    assert_eq!(edit_on_disk(none, true, Fresh::default()), Edit::default());
+    assert!(!edit_on_disk(none, true, off).unwrap().lens.enabled);
+    assert!(!edit_on_disk(none, false, off).unwrap().lens.enabled);
+    assert_eq!(
+        edit_on_disk(none, true, Fresh::default()).unwrap(),
+        Edit::default()
+    );
     let dir = crate::testing::scratch_dir("merge-fresh");
     let raw = dir.join("IMG_0002.CR3");
     std::fs::write(&raw, b"raw").unwrap();
     let mut written = Sidecar::default();
     written.meta.rating = 2;
     written.save(&raw).unwrap();
-    assert!(edit_on_disk(&raw, true, off).lens.enabled, "the file's own");
+    assert!(
+        !edit_on_disk(&raw, true, off).unwrap().lens.enabled,
+        "a rating and no state: the setting's"
+    );
+    written.line = greycard_edit::Line::of(Edit::default(), 0).unwrap();
+    written.save(&raw).unwrap();
+    assert!(
+        edit_on_disk(&raw, true, off).unwrap().lens.enabled,
+        "the file's own"
+    );
     crate::testing::remove_dir_retry(&dir);
 }
 
@@ -92,7 +104,7 @@ fn a_bracket_is_merged_named_stacked_and_given_its_reference_edit() {
     edited.light.exposure = 1.5;
     edited.demosaic = greycard_edit::Demosaic::Bilinear;
     Sidecar {
-        line: Line::of(edited),
+        line: Line::of(edited, 0).unwrap(),
         ..Sidecar::default()
     }
     .save(&files[1])
@@ -146,9 +158,14 @@ fn a_bracket_is_merged_named_stacked_and_given_its_reference_edit() {
     assert!(!with_queue(|q| q.running));
 
     // Its edit: the reference's, less the exposure.
-    let sidecar = Sidecar::load(&out).unwrap().expect("a sidecar beside it");
-    assert_eq!(sidecar.current.light.exposure, 0.0);
-    assert_eq!(sidecar.current.demosaic, greycard_edit::Demosaic::Bilinear);
+    let sidecar = Sidecar::load_as_file(&out)
+        .unwrap()
+        .expect("a sidecar beside it");
+    assert_eq!(sidecar.current().light.exposure, 0.0);
+    assert_eq!(
+        sidecar.current().demosaic,
+        greycard_edit::Demosaic::Bilinear
+    );
 
     // On top of a stack of its sources, in the list's order.
     let stacks = state.borrow().views.stacks.list.clone();
@@ -214,15 +231,19 @@ fn a_bracket_is_merged_named_stacked_and_given_its_reference_edit() {
         // The reference edited in the session, in memory alone.
         let f = st.file_by_path(&files[1]).unwrap();
         assert!(crate::rows::load_file(&mut st, &app, f));
-        st.sidecars[f].line = Line::of(Edit {
-            demosaic: greycard_edit::Demosaic::Vng4,
-            ..Edit::default()
-        });
+        st.sidecars[f].line = Line::of(
+            Edit {
+                demosaic: greycard_edit::Demosaic::Vng4,
+                ..Edit::default()
+            },
+            0,
+        )
+        .unwrap();
     }
     app.invoke_merge_hdr();
     let third = shoot.join("IMG_0-HDR-2.dng");
     assert_eq!(app.get_status(), "merged 3 frames into IMG_0-HDR-2.dng");
-    assert!(Sidecar::load(&third).unwrap().is_none());
+    assert!(Sidecar::load_as_file(&third).unwrap().is_none());
     assert!(state.borrow().work.merge_edits.contains_key(&third));
     writer.index_tree(&root, &mut |_| {}).unwrap();
     open_view(&state, &app, &worker, View::Roots(None));
@@ -231,9 +252,9 @@ fn a_bracket_is_merged_named_stacked_and_given_its_reference_edit() {
     let f = st.file_by_path(&third).expect("listed");
     assert!(crate::rows::load_file(&mut st, &app, f));
     assert!(st.work.merge_edits.is_empty());
-    assert_eq!(st.sidecars[f].current.light.exposure, 0.0);
+    assert_eq!(st.sidecars[f].current().light.exposure, 0.0);
     assert_eq!(
-        st.sidecars[f].current.demosaic,
+        st.sidecars[f].current().demosaic,
         greycard_edit::Demosaic::Vng4
     );
     drop(st);
@@ -286,7 +307,7 @@ fn a_focus_stack_is_merged_named_stacked_and_given_its_reference_edit() {
     edited.noise.learned = Learned::Fast;
     for f in &files {
         Sidecar {
-            line: Line::of(edited.clone()),
+            line: Line::of(edited.clone(), 0).unwrap(),
             ..Sidecar::default()
         }
         .save(f)
@@ -354,9 +375,11 @@ fn a_focus_stack_is_merged_named_stacked_and_given_its_reference_edit() {
 
     // Its edit: the reference's, its exposure kept, no learned
     // denoiser.
-    let sidecar = Sidecar::load(&out).unwrap().expect("a sidecar beside it");
-    assert_eq!(sidecar.current.light.exposure, 0.5);
-    assert_eq!(sidecar.current.noise.learned, Learned::Off);
+    let sidecar = Sidecar::load_as_file(&out)
+        .unwrap()
+        .expect("a sidecar beside it");
+    assert_eq!(sidecar.current().light.exposure, 0.5);
+    assert_eq!(sidecar.current().noise.learned, Learned::Off);
 
     // On top of a stack of its sources.
     let stacks = state.borrow().views.stacks.list.clone();
@@ -400,7 +423,7 @@ fn a_panorama_is_merged_named_stacked_and_given_its_reference_edit() {
     edited.demosaic = greycard_edit::Demosaic::Bilinear;
     edited.geometry.angle = 2.0;
     Sidecar {
-        line: Line::of(edited),
+        line: Line::of(edited, 0).unwrap(),
         ..Sidecar::default()
     }
     .save(&files[0])
@@ -439,10 +462,15 @@ fn a_panorama_is_merged_named_stacked_and_given_its_reference_edit() {
     let out = shoot.join("IMG_0-pano.dng");
     assert_eq!(app.get_status(), "merged 2 frames into IMG_0-pano.dng");
     assert!(out.is_file());
-    let sidecar = Sidecar::load(&out).unwrap().expect("a sidecar beside it");
-    assert_eq!(sidecar.current.light.exposure, 0.0);
-    assert_eq!(sidecar.current.demosaic, greycard_edit::Demosaic::Bilinear);
-    assert_eq!(sidecar.current.geometry, Default::default());
+    let sidecar = Sidecar::load_as_file(&out)
+        .unwrap()
+        .expect("a sidecar beside it");
+    assert_eq!(sidecar.current().light.exposure, 0.0);
+    assert_eq!(
+        sidecar.current().demosaic,
+        greycard_edit::Demosaic::Bilinear
+    );
+    assert_eq!(sidecar.current().geometry, Default::default());
     let stacks = state.borrow().views.stacks.list.clone();
     assert_eq!(stacks.len(), 1);
     let names: Vec<String> = stacks[0]
@@ -505,7 +533,7 @@ fn turned_merged(
         .collect();
     for (k, edit) in edits {
         Sidecar {
-            line: Line::of(edit.clone()),
+            line: Line::of(edit.clone(), 0).unwrap(),
             ..Sidecar::default()
         }
         .save(&files[*k])
@@ -561,7 +589,7 @@ impl Turned {
     /// The merged file's sidecar edit, and the names its stack
     /// holds, the file's first.
     fn landed(&self) -> (Edit, Vec<String>) {
-        let sidecar = Sidecar::load(&self.out)
+        let sidecar = Sidecar::load_as_file(&self.out)
             .unwrap()
             .expect("a sidecar beside it");
         let stacks = self.state.borrow().views.stacks.list.clone();
@@ -577,7 +605,7 @@ impl Turned {
                     .into_owned()
             })
             .collect();
-        (sidecar.current.clone(), names)
+        (sidecar.current().clone(), names)
     }
 
     fn done(self) {
@@ -952,10 +980,10 @@ fn the_row_is_offered_on_a_merge_it_can_make_again() {
 fn the_row_makes_the_merge_again_and_the_picture_reloads() {
     let r = rig("merge-again-press");
     {
-        let mut sidecar = Sidecar::load(&r.out).unwrap().unwrap();
-        let mut edit = sidecar.current.clone();
+        let mut sidecar = Sidecar::load_as_file(&r.out).unwrap().unwrap();
+        let mut edit = sidecar.current().clone();
         edit.light.exposure = 0.4;
-        sidecar.line = Line::of(edit);
+        sidecar.line = Line::of(edit, 0).unwrap();
         sidecar.save(&r.out).unwrap();
     }
     let sidecar = Sidecar::path_for(&r.out);
@@ -1034,10 +1062,10 @@ fn the_row_makes_the_merge_again_and_the_picture_reloads() {
     assert_eq!(r.app.get_status(), "merged 3 frames into IMG_0-HDR.dng");
     assert_eq!(r.app.get_merge_again_tier(), "balanced", "the recipe's");
     assert_eq!(
-        Sidecar::load(&r.out)
+        Sidecar::load_as_file(&r.out)
             .unwrap()
             .unwrap()
-            .current
+            .current()
             .noise
             .learned,
         Learned::Off
@@ -1070,4 +1098,26 @@ fn the_row_makes_the_merge_again_and_the_picture_reloads() {
     assert_eq!(std::fs::read(&r.out).unwrap(), before);
     greycard_core::testing::rename_retry(&aside, &r.files[0]);
     r.done();
+}
+
+/// A frame whose masks wait on a shape its raw's header cannot say, the
+/// one a merge's new file would start from, is not merged, and the
+/// status line says why in the approved words (§724).
+#[test]
+fn a_merge_from_a_frame_whose_masks_wait_says_why_it_was_not_merged() {
+    let dir = std::env::temp_dir().join(format!("greycard-merge-waits-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let raw = dir.join("IMG_0001.CR3");
+    std::fs::write(&raw, b"not a raw").unwrap();
+    let mut s = crate::testing::waiting_sidecar();
+    s.save(&raw).unwrap();
+    let e = edit_on_disk(&raw, true, Fresh::default()).unwrap_err();
+    assert_eq!(
+        tr!("not merged: {why}", why = format!("{e:#}")),
+        format!(
+            "not merged: {}: its masks cannot be placed until its raw is reachable",
+            raw.display()
+        )
+    );
+    crate::testing::remove_dir_retry(&dir);
 }

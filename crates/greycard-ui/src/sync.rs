@@ -853,8 +853,20 @@ fn bring_home(write: &Write, local: &Path, ours: &Sidecar) -> Outcome {
         copy: write.frame.clone(),
     };
     let dest = copy_sidecar(local, write.placement);
-    match Sidecar::load(local) {
+    // A newer build's on either side (§724): both left as they are.
+    if ours.read_only() {
+        tracing::info!("sync: {}: read-only; not brought home", local.display());
+        return same;
+    }
+    match Sidecar::load(local, &ours.start) {
         Ok(None) => {}
+        Ok(Some(there)) if there.read_only() => {
+            tracing::info!(
+                "sync: {}: the sidecar here is read-only (a newer greycard made it); left",
+                local.display()
+            );
+            return same;
+        }
         Ok(Some(there)) => match compare(&there, ours) {
             Compared::Behind(Side::Local) => {}
             Compared::Same => return same,
@@ -931,7 +943,9 @@ fn write_copy(write: &Write, target: &Copy, index: &Path, beat: &Beat, again: bo
     beat();
     // The sidecar to write.
     let from_disk = |lib: &mut Option<Library>| -> Result<Sidecar, Outcome> {
-        match Sidecar::load(&write.frame) {
+        // Written, and held by no window: a line nobody developed writes
+        // nothing, whatever its start (§724).
+        match Sidecar::load_as_file(&write.frame) {
             Ok(Some(s)) => Ok(s),
             Ok(None) => Err(match gone_or_moved(lib.as_mut(), write, archive, copy) {
                 Some(outcome) => outcome,
@@ -954,6 +968,11 @@ fn write_copy(write: &Write, target: &Copy, index: &Path, beat: &Beat, again: bo
                 Ok(s) => s,
                 Err(outcome) => return outcome,
             };
+            // A newer build's on either side (§724): both left as they
+            // are, the reason noted.
+            if let Some(e) = [&ours, &**theirs].iter().find_map(|s| s.writable().err()) {
+                return note(lib.as_mut(), &e.to_string());
+            }
             let local = Sidecar::find(&write.frame)
                 .unwrap_or_else(|| Sidecar::path_in(&write.frame, write.placement));
             match compare(&ours, theirs) {
@@ -999,6 +1018,9 @@ fn write_copy(write: &Write, target: &Copy, index: &Path, beat: &Beat, again: bo
             }
         }
     };
+    if let Err(e) = sidecar.writable() {
+        return note(lib.as_mut(), &e.to_string());
+    }
     if sidecar.revisions.is_empty() {
         // Saved by a build from before revisions: the next save here
         // makes one, and the write goes then.
@@ -1014,10 +1036,14 @@ fn write_copy(write: &Write, target: &Copy, index: &Path, beat: &Beat, again: bo
         Check::Failed(e) => return note(lib.as_mut(), &format!("the copy: {e}")),
         Check::Changed => {
             beat();
-            let theirs = match Sidecar::read(&dest) {
+            let theirs = match Sidecar::read(&dest, &sidecar.start) {
                 Ok(s) => s,
                 Err(e) => return note(lib.as_mut(), &format!("the copy: unreadable: {e}")),
             };
+            // The copy a newer build made (§724): both left as they are.
+            if let Err(e) = theirs.writable() {
+                return note(lib.as_mut(), &format!("the copy: {e}"));
+            }
             match compare(&sidecar, &theirs) {
                 Compared::Same => {
                     record(lib.as_mut(), write, target, &dest, &sidecar);
@@ -1054,7 +1080,7 @@ fn write_copy(write: &Write, target: &Copy, index: &Path, beat: &Beat, again: bo
         // tag.
         let turn = greycard_core::decode::stance_path(copy)
             .ok()
-            .map(|s| xmp::Turn::new(s.orientation, sidecar.turn));
+            .map(|s| xmp::Turn::new(s.orientation, sidecar.xmp_turn()));
         let taken = || greycard_library::export_record::camera_time_of(copy);
         if let Err(e) = xmp::save_dated(copy, &sidecar.meta, turn, taken) {
             tracing::warn!("sync: {}: xmp not written: {e}", file_name(copy));
@@ -1622,6 +1648,14 @@ fn settle_held(
             }
         }
         Compared::SameEdit | Compared::Diverged => {
+            // Every change goes through a save, which makes a revision
+            // in the same turn, so the window's copy is as its last
+            // revision left it: what the join asks of it.
+            debug_assert!(
+                st.sidecars[c].at_its_revision(),
+                "{}: a join of a copy changed since its save",
+                file_name(frame)
+            );
             // The join knows the local file as the window did, so its
             // save below still asks whether another writer saved that
             // file since.
@@ -1851,7 +1885,7 @@ fn follow_check(
         Check::Absent | Check::Ours => Followable::Ready,
         Check::Failed(e) => Followable::Not(e),
         Check::Changed => {
-            let theirs = match Sidecar::read(&dest) {
+            let theirs = match Sidecar::read(&dest, &sidecar.start) {
                 Ok(s) => s,
                 Err(e) => return Followable::Not(format!("the copy: unreadable: {e}")),
             };

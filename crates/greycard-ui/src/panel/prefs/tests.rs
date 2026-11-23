@@ -55,7 +55,7 @@ fn the_move_puts_a_folders_sidecars_in_the_chosen_place() {
         assert!(Sidecar::path_in(f, Placement::Folder).exists());
         assert!(!Sidecar::path_in(f, Placement::Beside).exists());
         // What was there is what is read: the rating came along.
-        assert_eq!(Sidecar::load(f).unwrap().unwrap().meta.rating, 3);
+        assert_eq!(Sidecar::load_as_file(f).unwrap().unwrap().meta.rating, 3);
     }
     assert!(Sidecar::find(&files[3]).is_none(), "none made");
     assert_eq!(
@@ -71,13 +71,21 @@ fn the_move_puts_a_folders_sidecars_in_the_chosen_place() {
 }
 
 /// The Settings switch for a new edit's lens section: on by
-/// default; a click turns it off, and a raw with no sidecar then
-/// reads with the section off and still untouched, while one with
-/// a sidecar keeps its own. Back on, the next read is the default.
+/// default; a click turns it off, and a raw with no sidecar, or with
+/// one that holds a rating and no state (§724), then reads with the
+/// section off and still untouched, while one with a state recorded
+/// keeps its own. Back on, the next read is the default.
 #[test]
 fn the_lens_switch_decides_a_new_edits_lens_section() {
     let dir = scratch("lens-new");
     let files = shoot(&dir);
+    // The first frame's state recorded, untouched.
+    let mut recorded = Sidecar {
+        line: greycard_edit::Line::of(greycard_edit::Edit::default(), 0).unwrap(),
+        ..Sidecar::default()
+    };
+    recorded.meta.rating = 3;
+    recorded.save_in(&files[0], Placement::Beside).unwrap();
     let app = crate::testing::window(files.len());
     let (state, _worker) = crate::testing::state_for(&app, files.clone());
     state.borrow_mut().window.write_sidecars = true;
@@ -93,10 +101,11 @@ fn the_lens_switch_decides_a_new_edits_lens_section() {
         assert!(crate::rows::reread_file(&mut st, &app, file));
         let line = &st.sidecars[file].line;
         let (edited, _) = greycard_library::develop_marks(&st.sidecars[file], &files[file], None);
-        (line.current.lens.enabled, edited)
+        (line.current().lens.enabled, edited)
     };
     assert_eq!(lens_of(3), (false, false), "none on disk: off, untouched");
     assert_eq!(lens_of(0), (true, false), "the sidecar's own");
+    assert_eq!(lens_of(1), (false, false), "a rating and no state: off");
     {
         let st = state.borrow();
         assert!(greycard_edit_io::on_disk::never_developed(&st.sidecars[3]));

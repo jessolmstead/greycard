@@ -97,11 +97,36 @@ pub(crate) fn presets(
         let fresh = greycard_engine::settings::Shared::load().fresh();
         for file in files {
             let mut sidecar = sidecar_for(file, fresh)?;
+            // A newer build's is read-only (§724): the run fails here,
+            // as for one that will not read, in the window's words.
+            if let Err(e) = sidecar.writable() {
+                anyhow::bail!(
+                    "{}: {e}, so {} was not applied",
+                    file.display(),
+                    entry.preset.name
+                );
+            }
+            // Its masks wait on a shape nothing can measure (§724): it
+            // takes no step, and the run fails here as it does for a
+            // sidecar that will not read.
+            if sidecar.current_waits() {
+                tracing::warn!(
+                    "{}: nothing can measure the frame, so {} was not applied",
+                    file.display(),
+                    entry.preset.name
+                );
+                anyhow::bail!(
+                    "{}: its masks cannot be placed until its raw is reachable, so {} was \
+                     not applied",
+                    file.display(),
+                    entry.preset.name
+                );
+            }
             // The tone curve's switch only on a DCP that carries one.
             let edit = entry
                 .preset
                 .settled(&greycard_edit_io::Stores::user())
-                .applied(&sidecar.current);
+                .applied(sidecar.current());
             let label = greycard_edit::history::preset_label(&entry.preset.name);
             if sidecar.record_as(edit, Some(label)) {
                 write_back(&mut sidecar, file)?;
@@ -169,14 +194,14 @@ fn sidecar_for(
     fresh: greycard_edit_io::on_disk::Fresh,
 ) -> Result<greycard_edit::Sidecar> {
     use greycard_edit::Sidecar;
-    let mut sidecar = match Sidecar::load(file)
+    // A line nobody developed holds no state (§724): it starts where the
+    // editor would open the frame, with nothing recorded.
+    let fresh = greycard_edit_io::on_disk::fresh_sidecar(file, fresh);
+    let mut sidecar = match Sidecar::load(file, fresh.line.current())
         .with_context(|| format!("reading the sidecar of {}", file.display()))?
     {
         Some(s) => s,
-        None if greycard_core::picture::is_picture_path(file) => Sidecar {
-            line: greycard_edit::Line::of(greycard_edit::Edit::for_picture()),
-            ..Sidecar::default()
-        },
+        None if greycard_core::picture::is_picture_path(file) => fresh,
         // A raw's learned-denoiser blend starts from its ISO, probed
         // without a full decode; a probe that fails says so and
         // leaves it at the old constant.
@@ -191,27 +216,25 @@ fn sidecar_for(
                     None
                 }
             };
-            let mut sidecar = greycard_edit_io::on_disk::fresh_sidecar(file, fresh);
-            sidecar.line.current.noise.learned_strength = greycard_edit::Noise::blend_for_iso(iso);
+            let mut sidecar = fresh;
+            sidecar
+                .line
+                .seed(|e| e.noise.learned_strength = greycard_edit::Noise::blend_for_iso(iso));
             sidecar
         }
     };
-    // A sidecar from before schema 4 does not know which way up an
-    // `Original` crop goes until the frame says; the file is here, so
-    // ask it before writing anything back (see
-    // `Edit::migrate_with_frame`).
+    // What waits on the frame's shape (a sidecar from before schema 4,
+    // whose `Original` crop does not know which way up it goes, or a
+    // state placed under another turn the file has no shape for, §724):
+    // the file is here, so its header is asked before anything is
+    // written back (see `Edit::migrate_with_frame`).
+    sidecar.settle_shape(|turn| greycard_edit_io::on_disk::frame_shape(file, turn));
     if sidecar.needs_frame() {
-        match greycard_core::decode::stance_path(file)
-            .ok()
-            .and_then(|s| s.shown_size(sidecar.turn))
-        {
-            Some((w, h)) => sidecar.migrate_with_frame(h > w),
-            None => tracing::warn!(
-                "{}: will not say which way up it is, so its Original crop \
-                 is left for the editor to bring up to date",
-                file.display()
-            ),
-        }
+        tracing::warn!(
+            "{}: will not say which way up it is, so its Original crop \
+             is left for the editor to bring up to date",
+            file.display()
+        );
     }
     Ok(sidecar)
 }
@@ -221,7 +244,7 @@ fn sidecar_for(
 /// order they were made.
 fn list_versions(file: &std::path::Path) -> Result<()> {
     use greycard_edit::{Line, Sidecar};
-    let Some(sidecar) = Sidecar::load(file)
+    let Some(sidecar) = Sidecar::load_as_file(file)
         .with_context(|| format!("reading the sidecar of {}", file.display()))?
     else {
         println!("no sidecar    {}", file.display());
@@ -230,7 +253,7 @@ fn list_versions(file: &std::path::Path) -> Result<()> {
     let said = |line: &Line| {
         let states = line.states();
         let plural = if states == 1 { "" } else { "s" };
-        match line.current_label.as_deref() {
+        match line.current_label() {
             Some(step) => format!("{states} state{plural}, at \"{step}\""),
             None => format!("{states} state{plural}"),
         }
@@ -279,19 +302,31 @@ mod tests {
         let raw = d.join("IMG_0001.CR3");
         std::fs::write(&raw, b"not a raw").unwrap();
         let off = Fresh { lens: false };
-        assert!(!super::sidecar_for(&raw, off).unwrap().current.lens.enabled);
+        assert!(
+            !super::sidecar_for(&raw, off)
+                .unwrap()
+                .current()
+                .lens
+                .enabled
+        );
         assert!(
             super::sidecar_for(&raw, Fresh::default())
                 .unwrap()
-                .current
+                .current()
                 .lens
                 .enabled
         );
         let mut written = greycard_edit::Sidecar::default();
         written.meta.rating = 4;
         written.save(&raw).unwrap();
+        // A rating and no state (§724): the setting's start.
+        let rated = super::sidecar_for(&raw, off).unwrap();
+        assert!(!rated.current().lens.enabled);
+        assert_eq!(rated.meta.rating, 4);
+        written.line = greycard_edit::Line::of(greycard_edit::Edit::default(), 0).unwrap();
+        written.save(&raw).unwrap();
         let kept = super::sidecar_for(&raw, off).unwrap();
-        assert!(kept.current.lens.enabled, "the file's own");
+        assert!(kept.current().lens.enabled, "the file's own");
         assert_eq!(kept.meta.rating, 4);
         greycard_core::testing::remove_dir_retry(&d);
     }
@@ -311,26 +346,132 @@ mod tests {
         first.record(greycard_edit::Edit::default());
         first.save(&raw).unwrap();
         let mut sidecar = super::sidecar_for(&raw, Fresh::default()).unwrap();
-        let mut grain = sidecar.current.clone();
+        let mut grain = sidecar.current().clone();
         grain.grain.amount = 0.4;
         sidecar.record_as(grain, Some("Preset: Fine Grain".into()));
         // The editor, between the two.
-        let mut editor = greycard_edit::Sidecar::load(&raw).unwrap().unwrap();
-        let mut bright = editor.current.clone();
+        let mut editor = greycard_edit::Sidecar::load_as_file(&raw).unwrap().unwrap();
+        let mut bright = editor.current().clone();
         bright.light.exposure = 1.0;
         editor.record(bright);
         editor.meta.rating = 2;
         editor.save(&raw).unwrap();
         let checked = super::write_back(&mut sidecar, &raw).unwrap();
         assert_eq!(checked, greycard_edit::Checked::Kept);
-        let back = greycard_edit::Sidecar::load(&raw).unwrap().unwrap();
-        assert_eq!(back.current.grain.amount, 0.4);
+        let back = greycard_edit::Sidecar::load_as_file(&raw).unwrap().unwrap();
+        assert_eq!(back.current().grain.amount, 0.4);
         let path = greycard_edit::Sidecar::path_for(&raw);
-        let kept = greycard_edit::Sidecar::read(&path.with_extension("gcd.other")).unwrap();
-        assert_eq!(kept.current.light.exposure, 1.0);
+        let kept = greycard_edit::Sidecar::read_as_file(&path.with_extension("gcd.other")).unwrap();
+        assert_eq!(kept.current().light.exposure, 1.0);
         assert_eq!(kept.meta.rating, 2);
         greycard_core::testing::remove_dir_retry(&d);
     }
+
+    /// `--apply` on a frame whose masks wait on a shape nothing can
+    /// measure (§724) applies nothing and fails, as it does for a
+    /// sidecar that will not read; the sidecar is left as it was.
+    #[test]
+    fn a_preset_on_a_frame_that_waits_fails_and_writes_nothing() {
+        use greycard_edit::mask::{Component, Mask, Shape};
+        let d =
+            std::env::temp_dir().join(format!("greycard-cli-preset-waits-{}", std::process::id()));
+        greycard_core::testing::remove_dir_retry(&d);
+        std::fs::create_dir_all(&d).unwrap();
+        let store = d.join("store");
+        let gcp = d.join("grain.gcp");
+        std::fs::write(
+            &gcp,
+            r#"{"name": "Fine Grain", "sections": ["grain"], "edit": {"grain": {"amount": 0.4}}}"#,
+        )
+        .unwrap();
+        super::presets(&[], &[gcp], false, None, Some(store.clone())).unwrap();
+        let raw = d.join("IMG_0001.CR3");
+        std::fs::write(&raw, b"not a raw").unwrap();
+        let mut s = greycard_edit::Sidecar::default();
+        let mut placed = greycard_edit::Edit::default();
+        placed.adjustments.push(greycard_edit::Adjustment {
+            id: 1,
+            mask: Mask {
+                components: vec![Component {
+                    shape: Shape::Subject {},
+                    ..Component::default()
+                }],
+                ..Mask::default()
+            },
+            ..Default::default()
+        });
+        s.record(placed);
+        assert!(s.turn_by(1, Some(1.5)).is_some());
+        // The shape not in the file, as a copy turned by a build before
+        // version 10 and joined leaves it.
+        s.shape = None;
+        let path = greycard_edit::Sidecar::path_for(&raw);
+        std::fs::write(&path, s.to_json()).unwrap();
+        let before = std::fs::read(&path).unwrap();
+        let e = super::presets(
+            std::slice::from_ref(&raw),
+            &[],
+            false,
+            Some("Fine Grain"),
+            Some(store),
+        )
+        .unwrap_err();
+        assert_eq!(
+            e.to_string(),
+            format!(
+                "{}: its masks cannot be placed until its raw is reachable, so Fine Grain \
+                 was not applied",
+                raw.display()
+            )
+        );
+        assert_eq!(std::fs::read(&path).unwrap(), before);
+        greycard_core::testing::remove_dir_retry(&d);
+    }
+
+    /// `--apply` on a frame a newer greycard made (§724) applies
+    /// nothing and fails in the window's words; the sidecar is left as
+    /// it was.
+    #[test]
+    fn a_preset_on_a_newer_build_s_frame_fails_and_writes_nothing() {
+        let d =
+            std::env::temp_dir().join(format!("greycard-cli-preset-newer-{}", std::process::id()));
+        greycard_core::testing::remove_dir_retry(&d);
+        std::fs::create_dir_all(&d).unwrap();
+        let store = d.join("store");
+        let gcp = d.join("grain.gcp");
+        std::fs::write(
+            &gcp,
+            r#"{"name": "Fine Grain", "sections": ["grain"], "edit": {"grain": {"amount": 0.4}}}"#,
+        )
+        .unwrap();
+        super::presets(&[], &[gcp], false, None, Some(store.clone())).unwrap();
+        let raw = d.join("IMG_0001.CR3");
+        std::fs::write(&raw, b"not a raw").unwrap();
+        let path = greycard_edit::Sidecar::path_for(&raw);
+        std::fs::write(&path, NEWER).unwrap();
+        let e = super::presets(
+            std::slice::from_ref(&raw),
+            &[],
+            false,
+            Some("Fine Grain"),
+            Some(store),
+        )
+        .unwrap_err();
+        assert_eq!(
+            e.to_string(),
+            format!(
+                "{}: read-only: made with a newer greycard (it asks for schema 11 to write \
+                 it), so Fine Grain was not applied",
+                raw.display()
+            )
+        );
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), NEWER);
+        greycard_core::testing::remove_dir_retry(&d);
+    }
+
+    /// A sidecar a build at schema 11 wrote, past this build's write
+    /// floor.
+    const NEWER: &str = r#"{"floors": {"read": 10, "write": 11}, "current": {"version": 11, "light": {"exposure": 0.5, "sparkle": 1}}, "meta": {"rating": 2}}"#;
 
     /// `--import` refuses a name the store has and says how to
     /// replace it, tries every file whatever is refused, and fails at

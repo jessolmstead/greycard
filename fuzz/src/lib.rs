@@ -39,7 +39,7 @@ pub fn applied_round_trips(preset: &Preset, what: &str) {
 /// all of what it keeps.
 pub fn sidecar_round_trips(sidecar: &Sidecar, what: &str) {
     let json = sidecar.to_json();
-    let back = Sidecar::from_json(&json)
+    let back = Sidecar::from_json(&json, &Edit::default())
         .unwrap_or_else(|e| panic!("{what}: the sidecar does not read back: {e}\n{json}"));
     assert_eq!(
         back.to_json(),

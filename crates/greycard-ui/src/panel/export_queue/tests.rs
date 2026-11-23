@@ -34,7 +34,7 @@ fn entry(st: &State, frames: &[usize], preset: Option<&str>, size: &str) -> Entr
         .map(|&i| {
             (
                 st.files[i].clone(),
-                st.sidecars[i].current.clone(),
+                st.sidecars[i].current().clone(),
                 0,
                 false,
                 None,
@@ -130,7 +130,11 @@ fn add_to_queue_keeps_what_export_would_take_and_writes_it() {
         let mut st = state.borrow_mut();
         st.current = Some(0);
         st.views.picked = vec![0, 2];
-        st.sidecars[2].current.light.exposure = 1.0;
+        {
+            let mut e = st.sidecars[2].current().clone();
+            e.light.exposure = 1.0;
+            st.sidecars[2].record(e);
+        }
         st.sidecars[2].turn = 3;
         st.work.export_queue_file = Some(queue_file(&dir));
         st.work.export_presets = vec![ExportPreset {
@@ -167,13 +171,17 @@ fn add_to_queue_keeps_what_export_would_take_and_writes_it() {
     assert!(st.work.exporting.is_none() && st.work.queue_run.is_none());
     assert!(!dir.join("out").exists());
     // The panel's edit was made a state, as Export makes it.
-    assert_eq!(st.sidecars[0].current.light.exposure, 0.5);
+    assert_eq!(st.sidecars[0].current().light.exposure, 0.5);
     drop(st);
 
     // The sheet and the sidecar move on; the entry does not.
     app.set_export_size("1024".into());
     app.invoke_export_sheet_changed();
-    state.borrow_mut().sidecars[2].current.light.exposure = -1.0;
+    {
+        let mut e = state.borrow_mut().sidecars[2].current().clone();
+        e.light.exposure = -1.0;
+        state.borrow_mut().sidecars[2].record(e);
+    }
     let queued = state.borrow().work.export_queue[0].clone();
     assert_eq!(queued.sheet.size, "2048");
     assert_eq!(queued.frames[1].edit.light.exposure, 1.0);
@@ -777,7 +785,7 @@ fn a_seeded_frame_is_a_line_in_its_history() {
         st.sidecars[0].current_exports[0].preset.as_deref(),
         Some("Web")
     );
-    assert_eq!(st.sidecars[0].current.noise.learned_strength, 0.35);
+    assert_eq!(st.sidecars[0].current().noise.learned_strength, 0.35);
     assert!(!crate::rows::wants_seed(&st, 0));
     drop(st);
     crate::testing::remove_dir_retry(&dir);

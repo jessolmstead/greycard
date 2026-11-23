@@ -1059,7 +1059,7 @@ pub fn import_into(sidecar: &mut Sidecar, imported: &Imported) -> Landed {
     let meta = imported.rated.apply(&mut sidecar.meta);
     let edit = imported.has_edit()
         && sidecar.record_as(
-            imported.applied(&sidecar.current),
+            imported.applied(sidecar.current()),
             Some(history::import_label(imported.dialect.name())),
         );
     Landed { meta, edit }
@@ -1687,17 +1687,14 @@ Method=amaze
             }
         );
         sidecar.save(&raw).unwrap();
-        let back = Sidecar::load(&raw).unwrap().expect("a sidecar");
+        let back = Sidecar::load_as_file(&raw).unwrap().expect("a sidecar");
         assert_eq!(back.meta.rating, 3);
         assert_eq!(back.meta.label, Label::Red);
         assert_eq!(back.meta.flag, Flag::None);
         assert_eq!(back.history.len(), 1, "one state before the import's");
-        assert_eq!(back.history[0].edit, Edit::default());
-        assert_eq!(
-            back.current_label.as_deref(),
-            Some("Imported from RawTherapee")
-        );
-        assert_eq!(back.current.light.exposure, 0.5);
+        assert_eq!(*back.history[0].edit(), Edit::default());
+        assert_eq!(back.current_label(), Some("Imported from RawTherapee"));
+        assert_eq!(back.current().light.exposure, 0.5);
         assert!(has_history(&back));
         // Again: nothing more to record, and the meta is as it was.
         let mut again = back.clone();
@@ -2218,6 +2215,6 @@ UseCA=false
         let mut sidecar = Sidecar::default();
         let landed = import_into(&mut sidecar, &art(ART_SAMPLE, Carry::Set));
         assert!(landed.meta && landed.edit);
-        assert_eq!(sidecar.current_label.as_deref(), Some("Imported from ART"));
+        assert_eq!(sidecar.current_label(), Some("Imported from ART"));
     }
 }

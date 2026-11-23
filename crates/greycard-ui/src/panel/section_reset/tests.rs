@@ -221,7 +221,7 @@ fn save(app: &App, state: &Rc<Shared>) {
 
 fn current(state: &Rc<Shared>) -> Edit {
     let st = state.borrow();
-    st.line(st.current.unwrap()).unwrap().current.clone()
+    st.line(st.current.unwrap()).unwrap().current().clone()
 }
 
 fn steps(state: &Rc<Shared>) -> usize {
@@ -1082,10 +1082,10 @@ fn review_pending_then_reset_on_disk() {
     let got = current(&state);
     assert_eq!(got.color.saturation, 0.5);
     assert_eq!(got.light, greycard_edit::Light::default());
-    let saved = greycard_edit::Sidecar::load(&files[0])
+    let saved = greycard_edit::Sidecar::load_as_file(&files[0])
         .unwrap()
         .expect("written");
-    assert_eq!(saved.current, got, "the disk is the history's top");
+    assert_eq!(*saved.current(), got, "the disk is the history's top");
     i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_secs(2));
     slint::platform::update_timers_and_animations();
     assert_eq!(steps(&state), n + 2, "nothing recorded later");
@@ -1129,10 +1129,10 @@ fn review_no_pending_one_step_bit_for_bit_on_disk() {
     let mut expect = edit.clone();
     expect.color = Default::default();
     assert_eq!(current(&state), expect);
-    let saved = greycard_edit::Sidecar::load(&files[0])
+    let saved = greycard_edit::Sidecar::load_as_file(&files[0])
         .unwrap()
         .expect("written");
-    assert_eq!(saved.current, expect);
+    assert_eq!(*saved.current(), expect);
     drop(app);
     crate::testing::remove_scratch(state, &dir);
 }

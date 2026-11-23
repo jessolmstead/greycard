@@ -823,7 +823,7 @@ fn import_on(
         let Some(raw) = at.get(&image.id) else {
             continue;
         };
-        match Sidecar::load(raw) {
+        match Sidecar::load_as_file(raw) {
             Ok(Some(s)) if has_content(&s) => {
                 report.already += 1;
                 kept.insert(image.file, true);
@@ -1155,9 +1155,9 @@ pub(crate) fn lightroom_only(s: &Sidecar) -> bool {
     s.versions.is_empty()
         && line.snapshots.is_empty()
         && line.history.len() == 1
-        && line.history[0].label.is_none()
+        && line.history[0].label().is_none()
         && line.history[0].exports.is_empty()
-        && line.current_label.as_deref() == Some(label.as_str())
+        && line.current_label() == Some(label.as_str())
         && line.current_exports.is_empty()
         && line.last_export.is_none()
 }
@@ -1544,7 +1544,7 @@ fn write_one(frame: &Frame<'_>, options: &Options) -> Wrote {
         // A re-import's copies are the versions it made last time,
         // found by their names.
         let mut found = Vec::new();
-        if let Ok(Some(s)) = Sidecar::load(frame.raw) {
+        if let Ok(Some(s)) = Sidecar::load_as_file(frame.raw) {
             for c in frame.copies {
                 let name = copy_name(c);
                 found.push((
@@ -1581,12 +1581,6 @@ fn write_frame(
     lightroom_alone: Option<u64>,
     written: &mut Written,
 ) -> Result<FrameWritten, String> {
-    let found = Sidecar::load(raw).map_err(|e| e.to_string())?;
-    // Lightroom's alone as looked at, and not saved since by an image
-    // before this one on the same file.
-    let lightroom = found
-        .as_ref()
-        .is_some_and(|f| Some(f.saved) == lightroom_alone && lightroom_only(f));
     let FrameRead {
         starting,
         camera,
@@ -1601,17 +1595,25 @@ fn write_frame(
         FrameRead::of(raw)
     };
     written.read += bytes;
+    // Started where a frame with no sidecar starts (§724), so a line
+    // nobody developed builds on the same start either way.
+    let found = Sidecar::load(raw, &starting).map_err(|e| e.to_string())?;
+    // Lightroom's alone as looked at, and not saved since by an image
+    // before this one on the same file.
+    let lightroom = found
+        .as_ref()
+        .is_some_and(|f| Some(f.saved) == lightroom_alone && lightroom_only(f));
     let stance = stance.as_ref();
-    let mut sidecar = found.unwrap_or_else(|| Sidecar {
-        line: greycard_edit::Line::of(starting.clone()),
-        ..Sidecar::default()
-    });
+    // A line nobody developed holds no state (§724): an import of the
+    // meta alone records none, and one of a develop records the start as
+    // its root under the import's step.
+    let mut sidecar = found.unwrap_or_else(|| Sidecar::starting_at(&starting));
     // A sidecar from before schema 4 does not know which way up an
     // `Original` crop goes until the frame says, as `presets` asks.
     if sidecar.needs_frame()
         && let Some((w, h)) = stance.and_then(|s| s.shown_size(sidecar.turn))
     {
-        sidecar.migrate_with_frame(h > w);
+        sidecar.frame_known(w as f32 / h as f32);
     }
     let mut changed = false;
     // The catalog's meta over the sidecar's, but for the capture time's
@@ -1673,7 +1675,10 @@ fn write_frame(
     if lightroom {
         // Lightroom's alone: replaced, from where the frame starts.
         let before = sidecar.line.clone();
-        sidecar.line = greycard_edit::Line::of(starting.clone());
+        // The starting edit as the frame stands, so what `developed`
+        // builds over it in the turned frame is placed under that turn.
+        sidecar.line = greycard_edit::Line::start(starting.clone(), turn)
+            .expect("a fresh edit waits on no shape");
         let (edit, cropped, turned) = developed(image, &starting, stance, camera.as_deref(), turn);
         tally(cropped, turned);
         if let Some(edit) = edit {
@@ -1683,7 +1688,7 @@ fn write_frame(
         changed |= sidecar.line != before;
     } else {
         let (edit, cropped, turned) =
-            developed(image, &sidecar.current, stance, camera.as_deref(), turn);
+            developed(image, sidecar.current(), stance, camera.as_deref(), turn);
         tally(cropped, turned);
         if let Some(edit) = edit {
             changed |= sidecar.record_as(edit, Some(label.clone()));
@@ -1705,12 +1710,14 @@ fn write_frame(
             Some(at) => there.remove(at).1,
             None => {
                 changed = true;
-                sidecar.new_version_from_original(starting.clone(), Some(&name))
+                sidecar
+                    .new_version_from_original(starting.clone(), Some(&name))
+                    .expect("a fresh edit waits on no shape")
             }
         };
-        if let Some(line) = sidecar.line_mut(Some(&id)) {
+        if let Some(mut line) = sidecar.line_mut(Some(&id)) {
             let (edit, cropped, turned) =
-                developed(copy, &line.current, stance, camera.as_deref(), turn);
+                developed(copy, line.current(), stance, camera.as_deref(), turn);
             tally(cropped, turned);
             if let Some(edit) = edit {
                 changed |= line.record_as(edit, Some(label.clone()));
@@ -3979,7 +3986,7 @@ pub(crate) mod tests {
         // The meta exactly; the develop as one named state over the
         // starting edit; the copy as a version of its name, its own
         // settings its line's one named state.
-        let a = Sidecar::load(&first).unwrap().unwrap();
+        let a = Sidecar::load_as_file(&first).unwrap().unwrap();
         assert_eq!(a.meta.rating, 4);
         assert_eq!(a.meta.flag, Flag::Pick);
         assert_eq!(a.meta.label, Label::Red);
@@ -3987,21 +3994,18 @@ pub(crate) mod tests {
         assert_eq!(a.meta.title, "Low tide");
         assert_eq!(a.meta.caption, "Boats at low tide");
         assert_eq!(a.history.len(), 1);
-        assert_eq!(a.current_label.as_deref(), Some("Imported from Lightroom"));
-        assert_eq!(a.current.light.exposure, 1.5);
-        assert!((a.current.curves.rgb[1][1] - 140.0 / 255.0).abs() < 1e-6);
+        assert_eq!(a.current_label(), Some("Imported from Lightroom"));
+        assert_eq!(a.current().light.exposure, 1.5);
+        assert!((a.current().curves.rgb[1][1] - 140.0 / 255.0).abs() < 1e-6);
         assert_eq!(a.versions.len(), 1);
         let v = &a.versions[0];
         assert_eq!(v.name, "Warm");
-        assert_eq!(v.line.current.light.exposure, -0.5);
-        assert_eq!(
-            v.line.current_label.as_deref(),
-            Some("Imported from Lightroom")
-        );
+        assert_eq!(v.line.current().light.exposure, -0.5);
+        assert_eq!(v.line.current_label(), Some("Imported from Lightroom"));
         assert_eq!(v.line.history.len(), 1);
 
         // Meta alone: no history.
-        let b = Sidecar::load(&second).unwrap().unwrap();
+        let b = Sidecar::load_as_file(&second).unwrap().unwrap();
         assert_eq!(b.meta.flag, Flag::Reject);
         assert_eq!(b.meta.label, Label::None, "a label that is no color");
         assert!(b.history.is_empty() && b.versions.is_empty());
@@ -4100,14 +4104,14 @@ pub(crate) mod tests {
             "the second file says what it said already"
         );
         assert_eq!(report.written.as_ref().unwrap().written_over, 1);
-        let a = Sidecar::load(&first).unwrap().unwrap();
+        let a = Sidecar::load_as_file(&first).unwrap().unwrap();
         assert_eq!(a.meta.rating, 4);
-        assert_eq!(a.current_label.as_deref(), Some("Imported from Lightroom"));
+        assert_eq!(a.current_label(), Some("Imported from Lightroom"));
         assert_eq!(a.versions.len(), 1);
         // Forced again: the copy's version is found by its name, and
         // nothing is made twice.
         import(&s.catalog, &forced).unwrap();
-        let again = Sidecar::load(&first).unwrap().unwrap();
+        let again = Sidecar::load_as_file(&first).unwrap().unwrap();
         assert_eq!(again.versions.len(), 1);
         assert_eq!(again.history.len(), a.history.len());
         greycard_core::testing::remove_dir_retry(&s.dir);
@@ -4145,9 +4149,9 @@ pub(crate) mod tests {
                 "{}",
                 raw.display()
             );
-            assert!((s.current.light.exposure + 2.0).abs() < 1e-6);
+            assert!((s.current().light.exposure + 2.0).abs() < 1e-6);
             s.save_in_stamped(raw, Placement::Beside, &at(60)).unwrap();
-            Sidecar::load(raw).unwrap().unwrap()
+            Sidecar::load_as_file(raw).unwrap().unwrap()
         };
         let first_of = |what: &str| {
             let s = setup(what);
@@ -4157,10 +4161,10 @@ pub(crate) mod tests {
         let imported = |s: &Setup, first: &Path| {
             let report = import(&s.catalog, &writing(s)).unwrap();
             assert_eq!(report.already, 0, "{report}");
-            let a = Sidecar::load(first).unwrap().unwrap();
+            let a = Sidecar::load_as_file(first).unwrap().unwrap();
             assert_eq!(a.history.len(), 1, "replaced, not stacked");
-            assert_eq!(a.current_label.as_deref(), Some("Imported from Lightroom"));
-            assert!(a.current.light.exposure > -2.0, "the catalog's develop");
+            assert_eq!(a.current_label(), Some("Imported from Lightroom"));
+            assert!(a.current().light.exposure > -2.0, "the catalog's develop");
             assert_eq!(a.versions.len(), 1);
             a
         };
@@ -4181,7 +4185,7 @@ pub(crate) mod tests {
         ours.meta.set_title("My own title");
         ours.save_in_stamped(&first, Placement::Beside, &at(0))
             .unwrap();
-        let ours = Sidecar::load(&first).unwrap().unwrap();
+        let ours = Sidecar::load_as_file(&first).unwrap().unwrap();
         let taken = taken_over(&first, Some(&ours));
         assert_eq!(taken.meta.rating, 1, "ours kept by the take");
         let a = imported(&s, &first);
@@ -4198,7 +4202,7 @@ pub(crate) mod tests {
             r#"{"meta": {"rating": 1, "title": "Old"}}"#,
         )
         .unwrap();
-        let old = Sidecar::load(&first).unwrap().unwrap();
+        let old = Sidecar::load_as_file(&first).unwrap().unwrap();
         taken_over(&first, Some(&old));
         let a = imported(&s, &first);
         assert_eq!((a.meta.rating, a.meta.title.as_str()), (1, "Old"));
@@ -4212,7 +4216,9 @@ pub(crate) mod tests {
         unrated
             .save_in_stamped(&first, Placement::Beside, &at(120))
             .unwrap();
-        assert!(lightroom_only(&Sidecar::load(&first).unwrap().unwrap()));
+        assert!(lightroom_only(
+            &Sidecar::load_as_file(&first).unwrap().unwrap()
+        ));
         assert_eq!(imported(&s, &first).meta.rating, 4);
         greycard_core::testing::remove_dir_retry(&s.dir);
 
@@ -4230,7 +4236,7 @@ pub(crate) mod tests {
         // A step of ours after it: held back.
         let (s, first) = first_of("lightroom-then-ours");
         let mut stepped = taken_over(&first, None);
-        let mut edit = stepped.current.clone();
+        let mut edit = stepped.current().clone();
         edit.light.exposure = 0.3;
         assert!(stepped.record(edit));
         stepped
@@ -4240,10 +4246,10 @@ pub(crate) mod tests {
         let report = import(&s.catalog, &writing(&s)).unwrap();
         assert_eq!(report.already, 1, "{report}");
         assert_eq!(
-            Sidecar::load(&first)
+            Sidecar::load_as_file(&first)
                 .unwrap()
                 .unwrap()
-                .current
+                .current()
                 .light
                 .exposure,
             0.3
@@ -4267,7 +4273,7 @@ pub(crate) mod tests {
             ..writing(&s)
         };
         import(&s.catalog, &forced).unwrap();
-        let a = Sidecar::load(&first).unwrap().unwrap();
+        let a = Sidecar::load_as_file(&first).unwrap().unwrap();
         assert_eq!((a.meta.rating, a.meta.time_shift), (4, 300));
         greycard_core::testing::remove_dir_retry(&s.dir);
     }
@@ -4326,7 +4332,7 @@ pub(crate) mod tests {
     }
 
     fn shift_of(s: &Setup, n: u32) -> i64 {
-        Sidecar::load(&s.here.join(format!("f{n}.tif")))
+        Sidecar::load_as_file(&s.here.join(format!("f{n}.tif")))
             .unwrap()
             .unwrap()
             .meta
@@ -4934,19 +4940,19 @@ pub(crate) mod tests {
         // The master's: the middle half across, the whole height, no
         // turn, its shape free as Lightroom had it.
         let frame = s.here.join("frame.tif");
-        let side = Sidecar::load(&frame).unwrap().unwrap();
-        let g = &side.current.geometry;
+        let side = Sidecar::load_as_file(&frame).unwrap().unwrap();
+        let g = &side.current().geometry;
         let c = g.crop.unwrap();
         let near = |a: f32, b: f32| (a - b).abs() < 1e-4;
         assert!(near(c.x, 0.25) && near(c.y, 0.0), "{c:?}");
         assert!(near(c.w, 0.5) && near(c.h, 1.0), "{c:?}");
         assert_eq!((g.turns, g.angle), (0, 0.0));
         assert_eq!(g.aspect, greycard_edit::geometry::Aspect::Free);
-        assert_eq!(side.current.light.exposure, 0.5);
+        assert_eq!(side.current().light.exposure, 0.5);
         // The copy's: turned 2 degrees, held to its shape, on the
         // picture.
         let v = &side.versions[0];
-        let g = &v.line.current.geometry;
+        let g = &v.line.current().geometry;
         assert_eq!(g.angle, 2.0);
         assert!(g.fits(&g.crop.unwrap(), 4.0, 3.0));
         assert!(matches!(
@@ -5069,16 +5075,16 @@ pub(crate) mod tests {
         };
         let exposures = || {
             let read = |name: &str| {
-                Sidecar::load(&shoot.join(name))
+                Sidecar::load_as_file(&shoot.join(name))
                     .unwrap()
                     .unwrap_or_else(|| panic!("a sidecar for {name}"))
             };
             let a = read("DSCF0001.DNG");
             (
-                a.current.light.exposure,
-                a.versions[0].line.current.light.exposure,
-                read("IMG_0002.DNG").current.light.exposure,
-                read("IMG_0003.jpg").current.light.exposure,
+                a.current().light.exposure,
+                a.versions[0].line.current().light.exposure,
+                read("IMG_0002.DNG").current().light.exposure,
+                read("IMG_0003.jpg").current().light.exposure,
             )
         };
         let report = import(&catalog, &options).unwrap();
@@ -5312,16 +5318,21 @@ pub(crate) mod tests {
             Some(&1),
             "{report}"
         );
-        let side = Sidecar::load(&s.here.join("frame.tif")).unwrap().unwrap();
+        let side = Sidecar::load_as_file(&s.here.join("frame.tif"))
+            .unwrap()
+            .unwrap();
         assert_eq!(
-            side.current.geometry.turns, 3,
+            side.current().geometry.turns,
+            3,
             "a quarter right is three of ours"
         );
-        assert!(side.current.geometry.crop.is_none());
-        assert_eq!(side.versions[0].line.current.geometry.turns, 0);
+        assert!(side.current().geometry.crop.is_none());
+        assert_eq!(side.versions[0].line.current().geometry.turns, 0);
         // Never developed, turned left: one of ours, a state of its own.
-        let other = Sidecar::load(&s.here.join("other.tif")).unwrap().unwrap();
-        assert_eq!(other.current.geometry.turns, 1);
+        let other = Sidecar::load_as_file(&s.here.join("other.tif"))
+            .unwrap()
+            .unwrap();
+        assert_eq!(other.current().geometry.turns, 1);
         assert_eq!(other.history.len(), 1);
         assert!(
             report.to_string().contains("2 turned in Lightroom"),
@@ -5539,14 +5550,17 @@ pub(crate) mod tests {
             if raw.extension().is_none_or(|x| x != "dng") {
                 continue;
             }
-            if let Some(c) = Sidecar::load(&raw).unwrap() {
+            if let Some(c) = Sidecar::load_as_file(&raw).unwrap() {
                 let versions = c
                     .versions
                     .iter()
-                    .map(|v| (v.name.clone(), v.line.current.clone()))
+                    .map(|v| (v.name.clone(), v.line.current().clone()))
                     .collect();
                 let name = raw.file_name().unwrap().to_string_lossy().into_owned();
-                out.insert(name, (c.meta.clone(), c.turn, c.current.clone(), versions));
+                out.insert(
+                    name,
+                    (c.meta.clone(), c.turn, c.current().clone(), versions),
+                );
             }
         }
         out
@@ -5656,7 +5670,9 @@ pub(crate) mod tests {
         let report = import_on(&catalog, &options, &mut |_| {}, &never, WRITE_THREADS).unwrap();
         let w = report.written.as_ref().unwrap();
         assert_eq!((w.sidecars, w.copies_as_own), (2, 0), "{report}");
-        let sidecar = Sidecar::load(&here.join("frame.dng")).unwrap().unwrap();
+        let sidecar = Sidecar::load_as_file(&here.join("frame.dng"))
+            .unwrap()
+            .unwrap();
         let names: Vec<&str> = sidecar.versions.iter().map(|v| v.name.as_str()).collect();
         assert_eq!(names, ["Warm", "Cool"]);
         let folder = collections::read_folder(

@@ -2,8 +2,10 @@ use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
 use greycard_core::raw::Orientation;
+use greycard_edit::Edit;
+#[cfg(test)]
+use greycard_edit::Sidecar;
 use greycard_edit::meta::{self, Meta};
-use greycard_edit::{Edit, Sidecar};
 #[cfg(test)]
 use greycard_edit_io::on_disk::load_sidecar_said;
 use slint::{ComponentHandle, Model, ModelRc};
@@ -675,7 +677,7 @@ pub(crate) fn set_meta(
     // that is offline is left out, and the status line says so. The
     // meta is the file's: a key over a file and a version of it sets
     // it once, and every cell of the file follows.
-    let cells = &crate::rows::load_frames(st, app, frames);
+    let cells = &crate::rows::writable_frames(st, app, frames);
     let files = st.files_of(cells);
     let was_shown: Vec<bool> = cells.iter().map(|&c| row_of(st, c).is_some()).collect();
     let before: Vec<Tags> = files
@@ -786,7 +788,7 @@ pub(crate) fn turn_frames(
     // A turn is written to the whole sidecar, so each frame's is read
     // first where it stands in from its row; one under a root that is
     // offline is left out, and the status line says so.
-    let frames = &crate::rows::load_frames(st, app, frames);
+    let frames = &crate::rows::writable_frames(st, app, frames);
     // The frame whose edit the panel owns: the open one, and not
     // while culling, where the panel still holds the last-opened
     // frame's edit and the sidecars are the truth.
@@ -798,19 +800,20 @@ pub(crate) fn turn_frames(
         cull.turned = Some(std::time::Instant::now());
     }
     let mut developing = false;
+    // The words for a frame that was not turned, kept over the
+    // develop's (§724).
+    let mut refused: Option<String> = None;
     for &f in frames {
         if st.sidecar_at(f).is_none() {
             continue;
         }
+        // The frame's shape, measured for this turn as the frame stands
+        // (the open develop's, failing that its file's): what is placed
+        // on the picture is shown under the new turn by it (§724), and
+        // the file keeps it beside the turn. A frame nothing can measure
+        // is not turned.
         migrate_frame(st, f);
         let aspect = frame_aspect(st, f);
-        if aspect.is_none() && st.sidecar(f).placed() {
-            tracing::warn!(
-                "{}: no picture of it yet to measure by, so its masks and \
-                 repair patches stay where they are on the screen",
-                file_name(st.path_of(f))
-            );
-        }
         // The panel's own cell, while its line is there: a version a
         // read found gone has no line to record on or to show, and its
         // file turns as any other's does until the cells follow.
@@ -820,11 +823,27 @@ pub(crate) fn turn_frames(
             // then turned together; the turn itself records nothing.
             let pending = read_edit(app, &st.develop.edit, st.develop.target);
             save_edit(st, pending);
-            st.sidecar_mut(f).turn_by(quarters, aspect);
-            // The Fill's strokes waiting on it turn with its patches.
-            let path = st.path_of(f).clone();
-            crate::panel::painted::turn(st, &path, quarters, aspect);
-            let edit = st.line(f).map(|l| l.current.clone()).unwrap_or_default();
+            // An XMP's turn still owed on it (its header would not read
+            // when it opened) is made with this one, after the panel's
+            // edit is recorded under the turn it was shown at: the frame
+            // ends where the XMP's turn and this one say together.
+            let quarters = quarters + owed_quarters(st, f);
+            if quarters.rem_euclid(4) == 0 {
+                st.sidecar_mut(f).turn_owed = None;
+                write_sidecar(st, f);
+                continue;
+            }
+            let Some(positions) = st.sidecar_mut(f).turn_by(quarters, aspect) else {
+                refused = Some(not_measured(st, app, f));
+                continue;
+            };
+            // The Fill's strokes waiting on it turn with its patches, by
+            // the same map.
+            if let Some(positions) = positions {
+                let path = st.path_of(f).clone();
+                crate::panel::painted::turn(st, &path, positions);
+            }
+            let edit = st.line(f).map(|l| l.current().clone()).unwrap_or_default();
             // The whole panel, since a turn moves masks and patches
             // as well as the crop. `show_edit` puts a chosen
             // adjustment's tab up, which a turn pressed on the Crop
@@ -842,10 +861,14 @@ pub(crate) fn turn_frames(
             }
             developing = true;
         } else {
-            let file = st.file_of(f);
-            greycard_edit::turn_into(&mut st.sidecars, &[file], quarters, aspect);
-            let path = st.path_of(f).clone();
-            crate::panel::painted::turn(st, &path, quarters, aspect);
+            let Some(positions) = st.sidecar_mut(f).turn_by(quarters, aspect) else {
+                refused = Some(not_measured(st, app, f));
+                continue;
+            };
+            if let Some(positions) = positions {
+                let path = st.path_of(f).clone();
+                crate::panel::painted::turn(st, &path, positions);
+            }
         }
         write_sidecar(st, f);
         for g in st.cells_of_file(st.file_of(f)) {
@@ -894,6 +917,12 @@ pub(crate) fn turn_frames(
             turn: current_turn(st),
             of: crate::panel::edit::develop_of(st),
         });
+        // A frame of the selection that was not turned says so over
+        // the develop's words, and when it lands.
+        if let Some(words) = &refused {
+            app.set_status(words.as_str().into());
+            st.develop.status_after_develop = Some((st.develop.generation, words.clone()));
+        }
     }
     app.window().request_redraw();
 }
@@ -1143,101 +1172,283 @@ pub(crate) fn camera_tag(st: &mut State, c: usize) -> Option<Orientation> {
 /// the map that carries masks and repair patches round a turn.
 ///
 /// They are in units of that picture's width, both ways, so the map
-/// wants its aspect and nothing else — but it has to be *that*
-/// picture's. The file's own answer comes first: the develop on
-/// screen when it is this frame's, and otherwise the size rawler
-/// reports for the frame with no pixel decoded, turned by the tag and
-/// by the frame's own quarters. The camera's JPEG is only a fallback
-/// for want of those, because a body can write its embedded picture
-/// at 16:9 or square with the raw left full frame, and a mask mapped
-/// by 1.778 where 1.5 was wanted lands nowhere.
+/// wants its aspect and nothing else, and it has to be *that*
+/// picture's: the frame's stance, read once a session from the file's
+/// header through a memory map ([`stance`], no pixel decoded), turned by
+/// the tag and by the frame's own quarters; failing that, the area the
+/// camera framed as the raw's metadata says it, or the open develop's
+/// own size when it is this frame's. Never a picture of the
+/// frame (the camera's JPEG, a culling preview, a thumbnail, an edited
+/// picture with its crop): a body can write its embedded picture at
+/// 16:9 or square with the raw left full frame, and a mask mapped by
+/// 1.778 where 1.5 was wanted lands nowhere.
 ///
 /// `None` when nothing can say, which is the one case where a turn
 /// cannot carry placed work with it.
 pub(crate) fn frame_aspect(st: &mut State, cell: usize) -> Option<f32> {
     let turn = st.sidecar_at(cell).map_or(0, |s| s.turn);
     let aspect = |(w, h): (u32, u32)| (w > 0 && h > 0).then(|| w as f32 / h as f32);
-    // The open frame's own develop: exactly the picture the masks
-    // are in, and already the way up the frame's turn puts it.
-    if st.current == Some(cell)
-        && st.culling.cull.is_none()
-        && let Some(a) = aspect(st.develop.source_size)
-    {
-        return Some(a);
-    }
-    // The cell itself, which is the same frame however it is shown.
     if let Some(a) = stance(st, cell)
         .and_then(|s| s.shown_size(turn))
         .and_then(aspect)
     {
         return Some(a);
     }
-    // Failing that, a picture of it the window already has. These
-    // are turned by the camera's tag alone, so the frame's own turn
-    // goes on top.
-    let shown = |(w, h): (u32, u32)| {
+    // The area the camera framed, as the raw's metadata says it (the
+    // index's row, or a read of the raw): the develop is that area.
+    if let Some(Some(camera)) = crate::edited_pictures::camera_state(st.path_of(cell)) {
+        let (w, h) = camera.shown_area();
         let (w, h) = if turn % 2 == 1 { (h, w) } else { (w, h) };
-        aspect((w, h))
-    };
-    // A frame the camera framed: its develop is the whole area the
-    // frame is a part of, which its pictures may be cut from
-    // (`cull::cut_to_camera`) or not (the camera's JPEG beside it).
-    // One whose frame is not known yet may have pictures cut to it:
-    // only a picture known to be whole says its shape, and failing one
-    // the answer waits (`None`) rather than be a cut picture's.
-    let path = st.path_of(cell);
-    let unknown = match crate::edited_pictures::camera_state(path) {
-        Some(Some(camera)) => return shown(camera.shown_area()),
-        Some(None) => false,
-        None => greycard_core::decode::may_have_camera_frame(path),
-    };
-    if let Some(cull) = st.culling.cull.as_ref().or(st.culling.hold.as_ref())
-        && let Some(preview) = cull.cache.best(cell)
-        && !(unknown && (preview.cut || preview.companion))
-        && let Some(a) = shown(preview.source)
-    {
-        return Some(a);
+        return aspect((w, h));
     }
-    if unknown {
-        return None;
+    // The open frame's own develop: exactly the picture the masks are
+    // in, and already the way up the frame's turn puts it.
+    if st.current == Some(cell) && st.culling.cull.is_none() {
+        return aspect(st.develop.source_size);
     }
-    st.views
-        .thumb_base
-        .get(cell)
-        .and_then(|t| t.as_ref())
-        .and_then(|(w, h, _)| shown((*w, *h)))
+    None
 }
 
-/// Finish a sidecar's version 4 migration, now that the frame's
-/// shape can be had: see [`greycard_edit::Edit::migrate_with_frame`].
+/// How many times [`header_shape`] was asked about each frame, for a
+/// test of who asks it: it runs on the pool too, so not a thread's own,
+/// and a count by path, so as long as the frames the tests make.
+#[cfg(test)]
+pub(crate) static HEADER_READS: std::sync::Mutex<std::collections::BTreeMap<PathBuf, usize>> =
+    std::sync::Mutex::new(std::collections::BTreeMap::new());
+
+/// The window's [`greycard_edit_io::on_disk::FrameShape`] for a read on
+/// its own thread: the frame's header through a memory map, as
+/// [`stance`] reads it, never the unmapped read that takes a raw whole
+/// where its format has no other way.
+pub(crate) fn header_shape(frame: &Path, turn: u8) -> Option<f32> {
+    #[cfg(test)]
+    {
+        *HEADER_READS
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .entry(frame.to_path_buf())
+            .or_default() += 1;
+    }
+    let (w, h) = greycard_core::decode::stance_path(frame)
+        .ok()?
+        .shown_size(turn % 4)?;
+    (w > 0 && h > 0).then(|| w as f32 / h as f32)
+}
+
+/// Give a sidecar the frame's shape
+/// ([`greycard_edit::Sidecar::frame_known`]) when
+/// it wants it: a state waiting on it to be shown (placed under another
+/// turn with something placed on the picture, or an `Original` crop
+/// from before version 4, see
+/// [`greycard_edit::Edit::migrate_with_frame`]), or a turn an XMP asked
+/// for that is owed, which is then made (§724).
 ///
-/// The folder's scan loads every sidecar with no frame to measure
-/// by, so an `Original` crop is left part-migrated and reads, renders
-/// and saves back as the version 3 it still is. This is called the
-/// first moment a frame is in hand and before anything can act on
-/// its geometry: as it is selected, as it is culled, and before a
-/// turn maps it. The shape comes from [`frame_aspect`], so it is the
-/// same picture the masks are in, and the file's own answer is a
-/// cached metadata read rather than a decode.
+/// A sidecar read with no file to measure by leaves such a state
+/// waiting; it reads, renders, and saves back as written. This is
+/// called the first moment a frame is in hand and before anything can
+/// act on its geometry: as it is selected, as it is culled, and before
+/// a turn. The shape comes from [`frame_aspect`], so it is the same
+/// picture the masks are in, and the file's own answer is a cached
+/// metadata read rather than a decode.
 ///
 /// A frame nothing can measure is left as it is and tried again next
 /// time; the alternative is guessing which way up it is, and a guess
 /// here re-crops the picture.
+///
+/// The owed turn is not made on the frame the panel holds: the panel's
+/// edit is shown under the turn the frame stands at, and a turn under
+/// it would have the next read of the panel record that edit, a quarter
+/// turn off, under the new one. Turn makes it there, with its own
+/// ([`turn_frames`]), and the next open before the panel takes the
+/// edit ([`migrate_opening`]).
 pub(crate) fn migrate_frame(st: &mut State, c: usize) {
+    let panel_holds = st.current == Some(c) && st.culling.cull.is_none();
+    migrate(st, c, !panel_holds);
+}
+
+/// [`migrate_frame`] for the frame being opened, before its edit reaches
+/// the panel: an owed turn is made, since nothing holds the edit yet.
+pub(crate) fn migrate_opening(st: &mut State, c: usize) {
+    migrate(st, c, true);
+}
+
+/// The XMP's turn still owed on cell `c`, in quarters from where the
+/// frame stands: 0 when none is, or it stands there already.
+fn owed_quarters(st: &State, c: usize) -> i32 {
+    st.sidecar_at(c)
+        .and_then(|s| Some(i32::from(s.turn_owed? % 4) - i32::from(s.turn % 4)))
+        .unwrap_or(0)
+}
+
+fn migrate(st: &mut State, c: usize, owed: bool) {
     if crate::panel::queue_view::refused(st, "a sidecar's migration") {
         return;
     }
-    if !st.sidecar_at(c).is_some_and(Sidecar::needs_frame) {
+    let wanted = st
+        .sidecar_at(c)
+        .is_some_and(|s| s.needs_frame() || (owed && s.turn_owed.is_some()));
+    if !wanted {
         return;
     }
-    match frame_aspect(st, c) {
-        Some(aspect) => st.sidecar_mut(c).migrate_with_frame(aspect < 1.0),
-        None => tracing::warn!(
-            "{}: nothing can say which way up it is yet, so its Original crop \
-             waits before it is brought up to date",
+    let Some(aspect) = frame_aspect(st, c) else {
+        if st.sidecar(c).needs_frame() {
+            tracing::warn!(
+                "{}: nothing can say which way up it is yet, so what waits on its \
+                 shape waits on",
+                file_name(st.path_of(c))
+            );
+        }
+        return;
+    };
+    let sidecar = st.sidecar_mut(c);
+    sidecar.frame_known(aspect);
+    // The XMP's turn, owed for want of the shape, made by it as a read
+    // that knew the shape would have made it: the frame stands as the
+    // library's row has it.
+    if owed
+        && let Some(by) = sidecar.make_owed_turn(|_| None)
+        && by != 0
+    {
+        tracing::info!(
+            "{}: the XMP beside it said the frame is turned; turned to match",
             file_name(st.path_of(c))
-        ),
+        );
     }
+    if st.line(c).is_some_and(|l| !l.current_waits()) {
+        read_only_cleared(st, c);
+    }
+}
+
+/// The panel over the frame on screen holds a copy marked as waiting on
+/// its shape (`Edit::unturned`, §724), and the frame's wait has cleared,
+/// or clears now that it is measured: the panel takes the frame's state
+/// as measured, develops it, and saves it. Called wherever a wait can
+/// clear (a develop landing, an export, a copy, a sync, a preset, a
+/// merge), so the panel never keeps a copy every change from would be
+/// refused. True when the panel took it.
+pub(crate) fn panel_settled(st: &mut State, app: &App) -> bool {
+    if !st.develop.edit.unturned || st.culling.cull.is_some() {
+        return false;
+    }
+    let Some(c) = st.current else {
+        return false;
+    };
+    migrate_frame(st, c);
+    if st.line(c).is_none_or(|l| l.current_waits()) {
+        return false;
+    }
+    let Some(worker) = crate::WORKER.with(|w| w.borrow().clone()) else {
+        return false;
+    };
+    crate::panel::history::take_current_settled(st, app, &worker);
+    true
+}
+
+thread_local! {
+    /// The frame the status line said is read-only ([`say_read_only`]),
+    /// and the words, so the line is taken down when that frame is
+    /// measured, and not when the status line has moved on.
+    static READ_ONLY_SAID: std::cell::RefCell<Option<(PathBuf, String)>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+/// The status line's words for a frame whose sidecar a newer build
+/// made, or holds states this build could not read (§724): it is
+/// read, and nothing here changes it. No file name: said where the
+/// frame is the one acted on, and the log names each.
+pub(crate) fn newer_words() -> String {
+    tr!("Read-only: made with a newer greycard")
+}
+
+/// [`newer_words`] on the status line, when there is a window.
+pub(crate) fn say_newer(st: &State) {
+    if let Some(app) = st.window.app.upgrade() {
+        app.set_status(newer_words().into());
+    }
+}
+
+/// Whether a change to cell `c`'s file is refused, its sidecar being
+/// read-only (§724): logged with the file's name, and said.
+pub(crate) fn refused_read_only(st: &State, c: usize) -> bool {
+    let Some(sidecar) = st.sidecar_at(c) else {
+        return false;
+    };
+    if !sidecar.read_only() {
+        return false;
+    }
+    tracing::warn!(
+        "{}: its sidecar is read-only (a newer greycard made it); not changed",
+        file_name(st.path_of(c))
+    );
+    say_newer(st);
+    true
+}
+
+/// The status line's words for a frame whose masks wait on a shape
+/// nothing can measure (§724): it is read-only until they can be
+/// placed.
+pub(crate) fn read_only_words(st: &State, c: usize) -> String {
+    tr!(
+        "Read-only: {file}'s masks cannot be placed until its raw is reachable",
+        file = file_name(st.path_of(c))
+    )
+}
+
+/// [`read_only_words`] for cell `c` on the status line, kept in mind so
+/// they go when the frame is measured ([`read_only_cleared`]).
+pub(crate) fn say_read_only(st: &State, app: &App, c: usize) -> String {
+    let words = read_only_words(st, c);
+    app.set_status(words.as_str().into());
+    READ_ONLY_SAID.with(|s| *s.borrow_mut() = Some((st.path_of(c).clone(), words.clone())));
+    words
+}
+
+/// Cell `c`'s frame was measured: the status line's read-only words for
+/// it, when they are still what it says, are taken down.
+fn read_only_cleared(st: &State, c: usize) {
+    let path = st.path_of(c);
+    let said = READ_ONLY_SAID.with(|s| {
+        let mut s = s.borrow_mut();
+        match s.as_ref() {
+            Some((p, _)) if p == path => s.take().map(|(_, words)| words),
+            _ => None,
+        }
+    });
+    if let Some(words) = said
+        && let Some(app) = st.window.app.upgrade()
+        && app.get_status().as_str() == words
+    {
+        app.set_status("".into());
+    }
+}
+
+/// Frame `f` was not turned: nothing could measure it (no develop of it,
+/// a file whose header will not say its shape), and a turn would leave
+/// what is placed on it where it was placed (§724). The words, for the
+/// caller to keep on the status line.
+fn not_measured(st: &State, app: &App, f: usize) -> String {
+    tracing::warn!(
+        "{}: nothing can measure the frame, so it was not turned",
+        file_name(st.path_of(f))
+    );
+    say_read_only(st, app, f)
+}
+
+/// Whether cell `c`'s current state waits on a shape nothing can measure
+/// (§724), measured first when it can be: logged, `what` named as not
+/// done. Nothing is made from such a state for another file or for
+/// disk: what is placed on it would go there unturned.
+pub(crate) fn waits_on_shape(st: &mut State, app: &App, c: usize, what: &str) -> bool {
+    migrate_frame(st, c);
+    panel_settled(st, app);
+    let waits = st.line(c).is_some_and(|l| l.current_waits());
+    if waits {
+        tracing::warn!(
+            "{}: nothing can measure the frame, so {what}",
+            file_name(st.path_of(c))
+        );
+    }
+    waits
 }
 
 /// The browser's row of a cell, when the filter shows it.
@@ -1307,7 +1518,7 @@ pub(crate) fn thumb_turns(st: &State, app: &App, c: usize) -> (u8, bool) {
         // geometry.
         st.line(c).map_or_else(
             || greycard_edit::Geometry::default().shown_turns(turn),
-            |l| l.current.geometry.shown_turns(turn),
+            |l| l.current().geometry.shown_turns(turn),
         )
     }
 }
@@ -1870,6 +2081,7 @@ pub(crate) fn load_sidecar(f: &Path, write_sidecars: bool) -> (Sidecar, bool) {
         f,
         write_sidecars.then_some(greycard_edit::Placement::Beside),
         Default::default(),
+        header_shape,
     );
     let seed = write_sidecars
         && !greycard_core::picture::is_picture_path(f)
@@ -2677,7 +2889,12 @@ fn neighbors_said(st: &State, i: usize, say: bool) -> Vec<crate::worker::Neighbo
                 // The edit, the turn, and the seed stand in until the
                 // worker's read.
                 return Some(crate::worker::Neighbor {
-                    edit: st.line(c).map(|l| l.current.clone()).unwrap_or_default(),
+                    // A stand-in's, never one waiting on the frame's
+                    // shape; the worker's read has the word.
+                    edit: st
+                        .line(c)
+                        .and_then(|l| l.ready().cloned())
+                        .unwrap_or_default(),
                     path,
                     turn: 0,
                     seed_blend: false,
@@ -2688,8 +2905,14 @@ fn neighbors_said(st: &State, i: usize, say: bool) -> Vec<crate::worker::Neighbo
                     }),
                 });
             };
+            // What is placed on it waits on a shape nothing can measure
+            // (§724): no picture to make ahead of the open.
+            let Some(edit) = st.line(c)?.ready() else {
+                left_out("nothing can measure the frame, and its masks wait on its shape");
+                return None;
+            };
             Some(crate::worker::Neighbor {
-                edit: st.line(c)?.current.clone(),
+                edit: edit.clone(),
                 path,
                 turn,
                 seed_blend: crate::rows::wants_seed(st, c),
@@ -3103,6 +3326,10 @@ pub(crate) fn step_tags_at(
         .map(|(f, _)| *f)
         .collect();
     for (f, tags) in landing {
+        if st.sidecars[f].read_only() {
+            say_newer(st);
+            continue;
+        }
         tags.put(&mut st.sidecars[f].meta);
     }
     let next = tags_shown(st, app, &cells, &was_shown, &files);

@@ -288,7 +288,7 @@ pub(crate) fn uses(st: &State) -> (Vec<BTreeSet<String>>, Vec<PathBuf>) {
 pub(crate) fn looks_on_disk(paths: &[PathBuf]) -> Vec<(PathBuf, BTreeSet<String>)> {
     paths
         .iter()
-        .filter_map(|p| match Sidecar::load(p) {
+        .filter_map(|p| match Sidecar::load_as_file(p) {
             Ok(Some(s)) => Some((p.clone(), s.looks_named())),
             _ => None,
         })
@@ -744,8 +744,22 @@ impl Job {
 fn one(frame: JobFrame, old: &str, new: &str, placement: Placement, stop: &AtomicBool) -> Outcome {
     let JobFrame { path, memory } = frame;
     let held_names = memory.as_ref().is_some_and(|m| m.names_look(old));
+    // The window's copy's start, when it holds one, for a sidecar it
+    // adopts or takes back written (§724); otherwise the file's.
+    let start = memory
+        .as_ref()
+        .map_or_else(|| Sidecar::start_of(&path), |m| m.start.clone());
     let (mut sidecar, place) = match Sidecar::find(&path) {
-        Some(file) => match Sidecar::read(&file) {
+        Some(file) => match Sidecar::read(&file, &start) {
+            // A newer build's (§724): never written.
+            Ok(read) if read.read_only() => {
+                return Outcome::Failed(
+                    read.writable()
+                        .err()
+                        .map(|e| e.to_string())
+                        .unwrap_or_default(),
+                );
+            }
             Ok(mut read) => {
                 if !read.names_look(old) {
                     return if held_names {
@@ -756,7 +770,7 @@ fn one(frame: JobFrame, old: &str, new: &str, placement: Placement, stop: &Atomi
                 }
                 // What the window undid goes with it, when the file is
                 // where the window left it.
-                if let Some(m) = memory.filter(|m| m.current == read.current) {
+                if let Some(m) = memory.filter(|m| m.current() == read.current()) {
                     read.redo = m.line.redo;
                 }
                 (read, Placement::at(&file))
@@ -910,8 +924,9 @@ pub(crate) fn start(st: &mut State, app: &App, asked: &Asked, new: &str) -> Resu
         .map(|c| st.file_of(c));
     let open_edit = st.develop.edit.look_lut.rename(old, new);
     if let Some(f) = open {
-        // The file's whole sidecar: a rename reaches every line of it.
-        let renamed = st.sidecars[f].rename_look(old, new);
+        // The file's whole sidecar: a rename reaches every line of it;
+        // none of a read-only one's (§724).
+        let renamed = !st.sidecars[f].read_only() && st.sidecars[f].rename_look(old, new);
         if renamed || open_edit {
             done.pictures += 1;
         }
@@ -928,6 +943,14 @@ pub(crate) fn start(st: &mut State, app: &App, asked: &Asked, new: &str) -> Resu
             continue;
         }
         let loaded = crate::rows::file_is_loaded(st, i);
+        // A newer build's sidecar is read-only (§724): not renamed, and
+        // counted as one left naming the old look.
+        if loaded && st.sidecars[i].read_only() {
+            if st.sidecars[i].names_look(old) {
+                done.stale += 1;
+            }
+            continue;
+        }
         if !st.window.write_sidecars {
             if loaded && st.sidecars[i].rename_look(old, new) {
                 done.pictures += 1;
@@ -993,7 +1016,7 @@ pub(crate) fn start(st: &mut State, app: &App, asked: &Asked, new: &str) -> Resu
 /// an archive's copy for a frame the window follows there, which lands
 /// later, or here; one that could not be written is counted stale.
 fn save_window_copy(st: &mut State, i: usize, done: &mut Rewritten) {
-    if crate::sync::followed(st, i) {
+    if crate::sync::followed(st, i) && crate::sidecars::file_writable(st, i) {
         crate::sidecars::save_file(st, i);
         done.archived += 1;
     } else if !(crate::sidecars::file_writable(st, i) && crate::sidecars::save_file(st, i)) {

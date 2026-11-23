@@ -18,6 +18,11 @@ use crate::{
 pub struct Edit {
     /// Schema version of the struct as written.
     pub version: u32,
+    /// The rendering the state was made under ([`crate::PROCESS`]):
+    /// one with none was made before schema 10, under the first. Never
+    /// changed once made, by a read, a migration, a join, or a save.
+    #[serde(default = "first_process")]
+    pub process: u32,
     /// Version 4's step still waits on the frame's shape
     /// ([`Edit::needs_frame`]). Kept apart from `version`, so an edit
     /// written back meanwhile is at this build's version and no other
@@ -29,6 +34,7 @@ pub struct Edit {
     /// been, or AgX. Global, as the curve is; left out of a sidecar at its
     /// default, so a picture nobody switched writes what it always wrote.
     #[serde(skip_serializing_if = "DisplayCurve::is_channels")]
+    #[serde(deserialize_with = "crate::meta::newer_loose")]
     pub display_curve: DisplayCurve,
     pub white_balance: WhiteBalance,
     pub noise: Noise,
@@ -74,6 +80,7 @@ pub struct Edit {
     pub vignette: vignette::Vignette,
     /// The grain over the frame as shown.
     pub grain: grain::Grain,
+    #[serde(deserialize_with = "crate::meta::newer_loose")]
     pub demosaic: Demosaic,
     /// The learned highlight fill, by the name of the version the edit
     /// was made with (`"hl-1"`); absent, off. A name and not an enum,
@@ -92,6 +99,30 @@ pub struct Edit {
     /// Spots and strokes healed or cloned, on the developed picture
     /// before its look.
     pub retouch: retouch::Retouch,
+    /// The frame's turn ([`crate::Sidecar::turn`]) this edit's
+    /// positions were placed under: the crop, the keystone, a held
+    /// aspect, the masks and the repair patches are in the frame that
+    /// turn made (§724). A state as written carries it; a copy shown
+    /// is already in the sidecar's turn, and has 0. Left out at 0, read
+    /// loosely, and last, so a state written with it reads the same in
+    /// any order.
+    #[serde(
+        default,
+        skip_serializing_if = "is_unturned",
+        deserialize_with = "crate::meta::loose_turn"
+    )]
+    pub placed_under: u8,
+    /// A copy shown with its masks or patches still where they were
+    /// placed under another turn, for want of the frame's shape
+    /// ([`crate::Line::current_waits`], §724), and every edit made from
+    /// it by a clone: whatever is done to it, it is not the picture.
+    /// Never recorded ([`crate::Line::record_as`]) and never written.
+    #[serde(skip)]
+    pub unturned: bool,
+}
+
+fn is_unturned(turn: &u8) -> bool {
+    *turn == 0
 }
 
 /// The part of an edit that is a look: what the viewport and the
@@ -482,10 +513,39 @@ impl Edit {
     }
 }
 
+/// The process of a state written with none: every one before schema 10.
+fn first_process() -> u32 {
+    1
+}
+
+impl Edit {
+    /// The edit as compact JSON, every field written but `process`: what
+    /// was made of an edit before it had one, a state's id at 9 and a
+    /// picture's key, which the process is not in while one exists.
+    pub(crate) fn json_but_process(&self) -> String {
+        let text = serde_json::to_string(self).expect("an edit serializes");
+        // `process` follows `version`, the first field: serde writes a
+        // struct's fields in their order.
+        let head = format!("{{\"version\":{},", self.version);
+        let process = format!("\"process\":{},", self.process);
+        let rest = text
+            .strip_prefix(&head)
+            .and_then(|t| t.strip_prefix(&process));
+        // A field moved ahead of `process` would leave it in, and change
+        // every id at 9 and every picture's key with it.
+        debug_assert!(rest.is_some(), "`process` is not second: {text:.80}");
+        match rest {
+            Some(rest) => format!("{head}{rest}"),
+            None => text,
+        }
+    }
+}
+
 impl Default for Edit {
     fn default() -> Self {
         Self {
             version: VERSION,
+            process: crate::process_now(),
             frame_pending: false,
             light: Light::default(),
             display_curve: DisplayCurve::default(),
@@ -510,6 +570,8 @@ impl Default for Edit {
             highlight_fill: None,
             camera: Camera::default(),
             retouch: retouch::Retouch::default(),
+            placed_under: 0,
+            unturned: false,
         }
     }
 }
@@ -678,6 +740,9 @@ pub fn overlay_changes(before: &Edit, touched: &Edit, onto: &Edit) -> Result<Edi
 }
 
 #[cfg(test)]
+mod process_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use crate::{Learned, Tone};
@@ -718,7 +783,7 @@ mod tests {
 
         let mut sidecar = crate::Sidecar::default();
         sidecar.record(e);
-        let read = crate::Sidecar::from_json(&sidecar.to_json()).unwrap();
+        let read = crate::Sidecar::from_json(&sidecar.to_json(), &crate::Edit::default()).unwrap();
         assert_eq!(read.current.highlight_fill.as_deref(), Some("hl-9"));
         assert!(
             !crate::Sidecar::default()

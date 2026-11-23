@@ -406,7 +406,10 @@ pub fn compare_sidecars(
         (None, Some(_)) => held = true,
         (Some(m), Some(t)) if bytes_of(&m) != bytes_of(&t) => {
             use greycard_edit::sync::{Compared, Side, compare};
-            match (Sidecar::read(&m), Sidecar::read(&t)) {
+            match (Sidecar::read_as_file(&m), Sidecar::read_as_file(&t)) {
+                // A newer build's on either side (§724): both left as
+                // they are, and named.
+                (Ok(ours), Ok(other)) if ours.read_only() || other.read_only() => held = true,
                 (Ok(ours), Ok(other)) => match compare(&ours, &other) {
                     Compared::Same => {}
                     Compared::Behind(Side::Other) => sends.push(SidecarCopy {
@@ -474,9 +477,12 @@ fn is_gcd(path: &Path) -> bool {
 /// revision, and the other side the same bytes; the archive write
 /// behind a later save then finds the copies the same.
 pub fn join_sidecars(join: &SidecarJoin) -> Result<(), String> {
-    let ours = Sidecar::read(&join.mine_sidecar).map_err(|e| tr!("reading it: {e}", e = e))?;
-    let theirs =
-        Sidecar::read(&join.theirs_sidecar).map_err(|e| tr!("reading the copy: {e}", e = e))?;
+    // Written to both files and held by no window: a line nobody
+    // developed writes nothing, whatever its start (§724).
+    let ours =
+        Sidecar::read_as_file(&join.mine_sidecar).map_err(|e| tr!("reading it: {e}", e = e))?;
+    let theirs = Sidecar::read_as_file(&join.theirs_sidecar)
+        .map_err(|e| tr!("reading the copy: {e}", e = e))?;
     let mut joined = greycard_edit::sync::join(&ours, &theirs);
     let placement = if join.mine_sidecar.parent().and_then(Path::file_name)
         == Some(std::ffi::OsStr::new(SIDECAR_FOLDER))

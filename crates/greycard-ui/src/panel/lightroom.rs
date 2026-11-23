@@ -1185,7 +1185,7 @@ mod tests {
         app.invoke_select(0);
         assert_eq!(state.borrow().current, Some(0));
         let a = shots.join("a.tif");
-        assert!(greycard_edit::Sidecar::load(&a).unwrap().is_none());
+        assert!(greycard_edit::Sidecar::load_as_file(&a).unwrap().is_none());
         state.borrow_mut().views.index_path = Some(dir.join("library").join("library.sqlite"));
         open(&mut state.borrow_mut(), &app, catalog.clone());
         land_now(&state, &app);
@@ -1194,18 +1194,21 @@ mod tests {
         let report = lrcat::import_with(&catalog, &opts, &mut |_| {}).map_err(|e| e.to_string());
         let keys = keys_of(&report);
         wrote(&state, &app, report, keys);
-        let written = greycard_edit::Sidecar::load(&a).unwrap().unwrap();
+        let written = greycard_edit::Sidecar::load_as_file(&a).unwrap().unwrap();
         assert!(!written.history.is_empty(), "the import's state");
-        assert!(written.current.geometry.crop.is_some());
+        assert!(written.current().geometry.crop.is_some());
         // The panel is the written edit's.
-        assert_eq!(app.get_exposure(), written.current.light.exposure);
+        assert_eq!(app.get_exposure(), written.current().light.exposure);
         // A rating after it: the import's edit kept, the rating with it.
         assert!(app.invoke_meta_key("3".into()));
-        let after = greycard_edit::Sidecar::load(&a).unwrap().unwrap();
+        let after = greycard_edit::Sidecar::load_as_file(&a).unwrap().unwrap();
         assert_eq!(after.meta.rating, 3);
         assert_eq!(after.history.len(), written.history.len());
-        assert_eq!(after.current.light.exposure, written.current.light.exposure);
-        assert_eq!(after.current.geometry, written.current.geometry);
+        assert_eq!(
+            after.current().light.exposure,
+            written.current().light.exposure
+        );
+        assert_eq!(after.current().geometry, written.current().geometry);
         WORKER.with(|w| *w.borrow_mut() = None);
         crate::testing::remove_scratch(state, &dir);
     }
@@ -1236,13 +1239,13 @@ mod tests {
         let opts = write_options(&mut state.borrow_mut(), &app).unwrap();
         assert!(!state.borrow().develop.save_timer.running());
         let a = shots.join("a.tif");
-        let saved = greycard_edit::Sidecar::load(&a).unwrap().unwrap();
-        assert_eq!(saved.current.light.exposure, 0.8);
+        let saved = greycard_edit::Sidecar::load_as_file(&a).unwrap().unwrap();
+        assert_eq!(saved.current().light.exposure, 0.8);
         let report = lrcat::import_with(&catalog, &opts, &mut |_| {}).unwrap();
         let w = report.written.unwrap();
         assert_eq!(w.left_alone, 1, "the frame with the user's edit");
-        let after = greycard_edit::Sidecar::load(&a).unwrap().unwrap();
-        assert_eq!(after.current.light.exposure, 0.8);
+        let after = greycard_edit::Sidecar::load_as_file(&a).unwrap().unwrap();
+        assert_eq!(after.current().light.exposure, 0.8);
         crate::testing::remove_scratch(state, &dir);
     }
 

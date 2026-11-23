@@ -9,7 +9,7 @@ fuzz_target!(|data: &[u8]| {
     let Ok(text) = std::str::from_utf8(data) else {
         return;
     };
-    if let Ok(sidecar) = Sidecar::from_json(text) {
+    if let Ok(sidecar) = Sidecar::from_json(text, &greycard_edit::Edit::default()) {
         greycard_fuzz::sidecar_round_trips(&sidecar, "sidecar");
     }
 });

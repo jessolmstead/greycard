@@ -555,7 +555,7 @@ impl Store {
             };
             match answer_of(at) {
                 None => kept_away += 1,
-                Some(_) => match greycard_edit::Sidecar::load(at) {
+                Some(_) => match greycard_edit::Sidecar::load_as_file(at) {
                     Ok(Some(s)) if s.version(version).is_none() => {
                         gone.insert(r.pair());
                     }

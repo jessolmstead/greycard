@@ -384,7 +384,7 @@ pub(crate) fn leave_cull(st: &mut State, app: &App, worker: &Worker, with: Optio
     // whatever was moved meanwhile: it is not to be edited.
     let edit = match crate::panel::queue_view::open_under(st, c) {
         Some(queued) => queued,
-        None => with.unwrap_or_else(|| st.line(c).map(|l| l.current.clone()).unwrap_or_default()),
+        None => with.unwrap_or_else(|| st.line(c).map(|l| l.current().clone()).unwrap_or_default()),
     };
     st.develop.target = None;
     // The tool is put down. Left onto another frame than the one open
@@ -401,7 +401,7 @@ pub(crate) fn leave_cull(st: &mut State, app: &App, worker: &Worker, with: Optio
     show_edit(st, &edit, app, None);
     // A control's change is a step of the frame's history, as it
     // would be out of the mode: written once the panel rests.
-    if st.line(c).is_some_and(|l| edit != l.current) {
+    if st.line(c).is_some_and(|l| edit != l.current().clone()) {
         schedule_save(st, app.as_weak());
     }
     show_history(st, app);
@@ -415,7 +415,7 @@ pub(crate) fn leave_cull(st: &mut State, app: &App, worker: &Worker, with: Optio
         && let Some((drawn, _)) = st.develop.shown_turn
         && drawn != c
     {
-        st.develop.held = st.line(drawn).map(|l| l.current.clone());
+        st.develop.held = st.line(drawn).map(|l| l.current().clone());
     }
     st.develop.generation += 1;
     st.develop.stood_view = None;
@@ -625,7 +625,7 @@ pub(crate) fn crop_stored(st: &State, c: usize) -> bool {
         .is_some_and(|cell| st.from_row.get(cell.file).is_none_or(|r| r.read));
     read && st
         .line(c)
-        .is_some_and(|line| line.current.geometry.crop.is_some())
+        .is_some_and(|line| line.current().geometry.crop.is_some())
 }
 
 /// The Loupe in Develop: out of either Cull, the frame developed and
@@ -667,7 +667,7 @@ pub(crate) fn control_over_frame(st: &mut State, app: &App) -> Option<Edit> {
     if !crate::rows::load_frame(st, app, c) {
         return None;
     }
-    let frame = &st.line(c)?.current;
+    let frame = &st.line(c)?.current();
     match greycard_edit::overlay_changes(&before, &touched, frame) {
         Ok(edit) => Some(edit),
         Err(e) => {
@@ -1196,7 +1196,7 @@ fn stands_for(st: &State, app: &App, cell: usize) -> Option<(u32, u32)> {
     } else {
         let version = st.cells[cell].version.as_deref();
         let line = sidecar.line(version).unwrap_or(&sidecar.line);
-        line.current.geometry.clone()
+        line.current().geometry.clone()
     };
     let (w, h) = if sidecar.turn % 2 == 1 {
         (h, w)
@@ -2394,7 +2394,7 @@ pub(crate) fn thumb_turns_of(
         sidecar
             .line(cell.version.as_deref())
             .unwrap_or(&sidecar.line)
-            .current
+            .current()
             .geometry
             .shown_turns(turn)
     }
@@ -2918,8 +2918,16 @@ pub(crate) fn move_back(st: &mut State, app: &App, worker: &Worker) {
 /// own write when the sidecar in memory is the frame's, and otherwise
 /// (a row of the index standing in for it) read from the disk, changed
 /// and written back where it was found.
-fn unreject(st: &mut State, i: usize) {
+pub(crate) fn unreject(st: &mut State, i: usize) {
     if st.sidecars[i].meta.flag != meta::Flag::Reject {
+        return;
+    }
+    // A newer build's sidecar is read-only (§724): its flag stays.
+    if st.sidecars[i].read_only() {
+        tracing::warn!(
+            "{}: read-only; its reject flag is left",
+            file_name(&st.files[i])
+        );
         return;
     }
     st.sidecars[i].meta.flag = meta::Flag::None;
@@ -2932,7 +2940,10 @@ fn unreject(st: &mut State, i: usize) {
     }
     let path = st.files[i].clone();
     let placement = greycard_edit::Placement::of(&path);
-    match Sidecar::load(&path) {
+    match Sidecar::load(&path, &st.sidecars[i].start) {
+        Ok(Some(sidecar)) if sidecar.read_only() => {
+            tracing::warn!("{}: read-only; its reject flag is left", file_name(&path));
+        }
         Ok(Some(mut sidecar)) if sidecar.meta.flag == meta::Flag::Reject => {
             sidecar.meta.flag = meta::Flag::None;
             if st.window.xmp_sidecars

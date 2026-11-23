@@ -501,7 +501,7 @@ fn the_rejects_move_with_their_sidecars_and_nothing_is_deleted() {
     greycard_edit_io::xmp::save(&f, &sidecar.meta, None).unwrap();
     std::fs::create_dir_all(rejects_dir(&dir)).unwrap();
     std::fs::write(rejects_dir(&dir).join("D.CR3"), b"older").unwrap();
-    std::fs::write(rejects_dir(&dir).join("E.CR3.gcd"), b"older").unwrap();
+    std::fs::write(rejects_dir(&dir).join("E.CR3.gcd"), STALE).unwrap();
     std::fs::write(rejects_dir(&dir).join("F.xmp"), b"older").unwrap();
     let mut files = files;
     files.push(e.clone());
@@ -530,7 +530,7 @@ fn the_rejects_move_with_their_sidecars_and_nothing_is_deleted() {
     assert!(there.join("B.CR3.xmp").exists() && !dir.join("B.CR3.xmp").exists());
     assert_eq!(std::fs::read(there.join("D.CR3")).unwrap(), b"older");
     // The orphans are gone under E's and F's own.
-    assert_ne!(std::fs::read(there.join("E.CR3.gcd")).unwrap(), b"older");
+    assert_ne!(std::fs::read(there.join("E.CR3.gcd")).unwrap(), STALE);
     assert_ne!(std::fs::read(there.join("F.xmp")).unwrap(), b"older");
     assert!(there.join("E.CR3").exists() && there.join("F.CR3").exists());
     // Every file that was there is still somewhere, the two
@@ -683,7 +683,10 @@ fn move_back_takes_a_frame_home_with_its_sidecar_and_xmps() {
     let (dir, rejects) = shoot_with_rejects("plain");
     let a = rejects.join("A.CR3");
     rejected_frame(&a, greycard_edit::Placement::Beside);
-    let meta = greycard_edit::Sidecar::load(&a).unwrap().unwrap().meta;
+    let meta = greycard_edit::Sidecar::load_as_file(&a)
+        .unwrap()
+        .unwrap()
+        .meta;
     greycard_edit_io::xmp::save(&a, &meta, None).unwrap();
     std::fs::write(
         greycard_edit_io::xmp::long_path(&a),
@@ -765,7 +768,10 @@ fn move_back_leaves_a_frame_whose_name_is_taken_whole() {
     let (a, b) = (rejects.join("A.CR3"), rejects.join("B.CR3"));
     rejected_frame(&a, greycard_edit::Placement::Beside);
     rejected_frame(&b, greycard_edit::Placement::Beside);
-    let meta = greycard_edit::Sidecar::load(&b).unwrap().unwrap().meta;
+    let meta = greycard_edit::Sidecar::load_as_file(&b)
+        .unwrap()
+        .unwrap()
+        .meta;
     greycard_edit_io::xmp::save(&b, &meta, None).unwrap();
     assert!(rejects.join("B.xmp").exists(), "B's own short XMP");
     // A's raw name is taken above; B's short XMP name is the
@@ -800,17 +806,17 @@ fn move_back_writes_the_frames_sidecar_over_its_own_orphan() {
     rejected_frame(&a, greycard_edit::Placement::Folder);
     let hidden = dir.join(greycard_edit::SIDECAR_FOLDER);
     std::fs::create_dir_all(&hidden).unwrap();
-    std::fs::write(hidden.join("A.CR3.gcd"), b"older").unwrap();
+    std::fs::write(hidden.join("A.CR3.gcd"), STALE).unwrap();
 
     let moved = move_back(std::slice::from_ref(&a), &[0], false);
     assert_eq!(moved.files, vec![0]);
     assert_eq!(moved.sidecars, 1);
     assert!(dir.join("A.CR3").exists());
-    let now = greycard_edit::Sidecar::load(&dir.join("A.CR3"))
+    let now = greycard_edit::Sidecar::load_as_file(&dir.join("A.CR3"))
         .unwrap()
         .expect("the frame's own sidecar");
     assert_eq!(now.meta.flag, greycard_edit::meta::Flag::Reject);
-    assert_ne!(std::fs::read(hidden.join("A.CR3.gcd")).unwrap(), b"older");
+    assert_ne!(std::fs::read(hidden.join("A.CR3.gcd")).unwrap(), STALE);
     greycard_render::testing::remove_dir_retry(&dir);
 }
 
@@ -864,7 +870,7 @@ fn an_orphan_under_the_other_placement_goes_or_keeps_the_frame_whole() {
         !dir.join(hidden).join("A.CR3.gcd").exists(),
         "the orphan under the other placement went"
     );
-    let now = greycard_edit::Sidecar::load(&dir.join("A.CR3"))
+    let now = greycard_edit::Sidecar::load_as_file(&dir.join("A.CR3"))
         .unwrap()
         .unwrap();
     assert_eq!(now.meta.flag, greycard_edit::meta::Flag::Reject);
@@ -890,6 +896,51 @@ fn an_orphan_under_the_other_placement_goes_or_keeps_the_frame_whole() {
     greycard_render::testing::remove_dir_retry(&dir);
 }
 
+/// An earlier cull's sidecar, as an orphan: one that reads, so it may
+/// be written over (a newer build's, or one that will not read, may not).
+const STALE: &[u8] = br#"{"saved": 1}"#;
+
+/// An orphan a newer greycard wrote is somebody's data: even where an
+/// orphan is written over, the frame waits, both files as they were;
+/// one that will not parse is set aside as `.bad` (§724).
+#[test]
+fn a_newer_build_s_orphan_is_neither_written_over_nor_taken_away() {
+    let (dir, rejects) = shoot_with_rejects("newer-orphan");
+    let hidden = greycard_edit::SIDECAR_FOLDER;
+    let newer = r#"{"floors": {"read": 10, "write": 11}, "current": {"version": 11}}"#;
+    for (name, orphan, body) in [
+        ("A.CR3", rejects.join("A.CR3.gcd"), newer.as_bytes()),
+        (
+            "B.CR3",
+            rejects.join(hidden).join("B.CR3.gcd"),
+            newer.as_bytes(),
+        ),
+    ] {
+        let raw = dir.join(name);
+        rejected_frame(&raw, greycard_edit::Placement::Beside);
+        std::fs::create_dir_all(orphan.parent().unwrap()).unwrap();
+        std::fs::write(&orphan, body).unwrap();
+        let moved =
+            move_rejects_as(std::slice::from_ref(&raw), &[0], Orphans::WriteOver, false).unwrap();
+        assert!(moved.files.is_empty(), "{name}");
+        assert!(raw.exists() && greycard_edit::Sidecar::path_for(&raw).exists());
+        assert_eq!(std::fs::read(&orphan).unwrap(), body, "{name}");
+    }
+    // One that will not parse is set aside, its bytes kept, and the
+    // frame goes.
+    let raw = dir.join("C.CR3");
+    rejected_frame(&raw, greycard_edit::Placement::Beside);
+    std::fs::write(rejects.join("C.CR3.gcd"), b"{ not json").unwrap();
+    let moved =
+        move_rejects_as(std::slice::from_ref(&raw), &[0], Orphans::WriteOver, false).unwrap();
+    assert_eq!(moved.files, vec![0]);
+    assert_eq!(
+        std::fs::read(rejects.join("C.CR3.gcd.bad")).unwrap(),
+        b"{ not json"
+    );
+    greycard_render::testing::remove_dir_retry(&dir);
+}
+
 /// The `.gcd` and the long XMP name carry the raw's whole name, so
 /// an unrelated file of the stem there owns neither: a hidden
 /// orphan beside the camera's JPEG of the frame is still an orphan.
@@ -900,12 +951,12 @@ fn a_jpeg_of_the_stem_owns_no_gcd() {
     rejected_frame(&a, greycard_edit::Placement::Folder);
     let hidden = dir.join(greycard_edit::SIDECAR_FOLDER);
     std::fs::create_dir_all(&hidden).unwrap();
-    std::fs::write(hidden.join("A.CR3.gcd"), b"older").unwrap();
+    std::fs::write(hidden.join("A.CR3.gcd"), STALE).unwrap();
     std::fs::write(dir.join("A.CR3.jpg"), b"jpeg").unwrap();
     std::fs::write(dir.join("A.JPG"), b"jpeg").unwrap();
     let moved = move_back(std::slice::from_ref(&a), &[0], false);
     assert_eq!(moved.files, vec![0], "{:?}", moved.skipped);
-    assert_ne!(std::fs::read(hidden.join("A.CR3.gcd")).unwrap(), b"older");
+    assert_ne!(std::fs::read(hidden.join("A.CR3.gcd")).unwrap(), STALE);
     greycard_render::testing::remove_dir_retry(&dir);
 }
 

@@ -12,7 +12,7 @@ use greycard_edit::Edit;
 
 use super::{
     NeighborsSent, OpenMosaic, ThumbRun, chosen_frames, end_flash, file_name, known_mosaic,
-    migrate_frame, neighbors_of, panel_frame, rebuild_browser, row_of, seed_near, show_file_name,
+    migrate_opening, neighbors_of, panel_frame, rebuild_browser, row_of, seed_near, show_file_name,
     show_set, walked_to,
 };
 use crate::panel::cull::{cull_select, drop_placeholder, enter_cull, start_placeholder};
@@ -439,7 +439,7 @@ fn pick_pending(st: &mut State, app: &App, i: usize, row: i32) {
     crate::panel::painted::show(st, app);
     st.develop.generation += 1;
     if st.culling.cull.is_none() {
-        let edit = st.line(i).map(|l| l.current.clone()).unwrap_or_default();
+        let edit = st.line(i).map(|l| l.current().clone()).unwrap_or_default();
         st.develop.target = None;
         st.develop.placing = None;
         app.set_placing("".into());
@@ -578,7 +578,7 @@ pub(crate) fn open_frame(st: &mut State, app: &App, worker: &Worker, i: usize) {
         // edit and turn, as it opens when it is online.
         let edit = match crate::panel::queue_view::open_under(st, i) {
             Some(queued) => queued,
-            None => st.line(i).map(|l| l.current.clone()).unwrap_or_default(),
+            None => st.line(i).map(|l| l.current().clone()).unwrap_or_default(),
         };
         st.develop.target = None;
         st.develop.placing = None;
@@ -626,7 +626,16 @@ pub(crate) fn open_frame(st: &mut State, app: &App, worker: &Worker, i: usize) {
         // refit can run on it: a sidecar from an older build
         // does not know which way up its Original crop goes
         // until the frame does.
-        migrate_frame(st, i);
+        migrate_opening(st, i);
+        // What is placed on it waits on a shape nothing can measure
+        // (§724): it opens read-only, every change put back
+        // (`edit::refused_waiting`), and nothing is made from it.
+        if st.line(i).is_some_and(|l| l.current_waits()) {
+            tracing::warn!(
+                "{}: nothing can measure the frame, so it opens read-only",
+                file_name(&file)
+            );
+        }
     }
     // The cell's own line: a version gone from the sidecar since the
     // cells were made has nothing to open, and the list follows.
@@ -634,7 +643,7 @@ pub(crate) fn open_frame(st: &mut State, app: &App, worker: &Worker, i: usize) {
         tracing::warn!("{}: no such version to open", file_name(&file));
         return;
     };
-    let mut edit = queued.unwrap_or_else(|| line.current.clone());
+    let mut edit = queued.unwrap_or_else(|| line.current().clone());
     // The frame the command line's overrides were on is left, or
     // opened again: they are done with (`panel_state`).
     st.launch.overridden = None;

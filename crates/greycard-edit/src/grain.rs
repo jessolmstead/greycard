@@ -65,6 +65,7 @@ pub struct Grain {
     pub amount: f32,
     /// The grain's cell, thousandths of the frame's width.
     pub size: f32,
+    #[serde(deserialize_with = "crate::meta::newer_loose")]
     pub kind: Kind,
 }
 

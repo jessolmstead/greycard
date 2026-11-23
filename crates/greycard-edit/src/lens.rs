@@ -64,6 +64,7 @@ pub struct Lens {
     /// choice existed writes back as it was, and keeps its develop
     /// key.
     #[serde(skip_serializing_if = "LensChoice::is_from_file")]
+    #[serde(deserialize_with = "crate::meta::newer_loose")]
     pub chosen: LensChoice,
     pub distortion: bool,
     pub chromatic_aberration: bool,

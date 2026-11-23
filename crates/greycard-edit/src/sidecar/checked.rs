@@ -133,15 +133,18 @@ impl Bytes {
 }
 
 /// The fields of a sidecar's file that are not its lines: the meta and
-/// what goes with it. Every other field is the lines' (the states, the
-/// snapshots, the export records, the versions), a field this build
-/// does not know among them.
-const NOT_LINES: [&str; 10] = [
+/// what goes with it, the turn and the frame's shape written beside it.
+/// Every other field is the lines' (the states, the snapshots, the
+/// export records, the versions), a field this build does not know
+/// among them.
+const NOT_LINES: [&str; 12] = [
     "meta",
     "meta_at",
     "turn",
+    "shape",
     "xmp",
     "xmp_shared",
+    "turn_owed",
     "lightroom",
     "saved",
     "revisions",
@@ -401,7 +404,14 @@ impl Sidecar {
         let (reconciled, asides) = self.reconciled(raw, placement, stamp);
         let (checked, kept) = match reconciled {
             Ok(r) => r,
-            Err(error) => return Err(NotSaved { error, asides }),
+            Err(error) => {
+                // A newer build's file is the frame's now: this copy is
+                // read-only too, its edit kept aside (§724).
+                if let crate::Error::ReadOnly(floor) = error {
+                    self.newer = Some(floor);
+                }
+                return Err(NotSaved { error, asides });
+            }
         };
         if let (Checked::Took, Some(theirs)) = (checked, &kept) {
             *self = theirs.clone();
@@ -458,8 +468,34 @@ impl Sidecar {
             if self.as_known(&path) {
                 continue;
             }
-            let disk = match read_changed(&path) {
-                Ok(Read::Sidecar(disk)) => *disk,
+            // Started at this copy's start (§724): a line nobody
+            // developed on disk is the same frame's.
+            let disk = match read_changed(&path, &self.start) {
+                // One a newer build made, or with states this build
+                // cannot read, is never written over (§724). This
+                // copy's edit is kept beside it, as another writer's is
+                // ([`keep_ours`]), so it is not lost with the window;
+                // unless this copy is read-only too, all it would keep
+                // being a newer file as this build reads it.
+                Ok(Read::Sidecar(disk)) if disk.read_only() => {
+                    let e = disk.writable().expect_err("read-only");
+                    if !self.read_only() {
+                        match keep_ours(&path, self.to_json().as_bytes()) {
+                            Ok(to) => asides.kept.push(to),
+                            Err(k) => {
+                                log::warn!("{}: this copy not kept aside: {k}", path.display())
+                            }
+                        }
+                    }
+                    return (Err(e), asides);
+                }
+                Ok(Read::Sidecar(disk)) => {
+                    // Each line nobody developed as this copy holds it,
+                    // its seed kept.
+                    let mut disk = *disk;
+                    disk.keep_starts_of(self);
+                    disk
+                }
                 Ok(Read::SetAside(to)) => {
                     asides.bad.push(to);
                     continue;
@@ -523,6 +559,10 @@ impl Sidecar {
     ///    than keep it in turn, and the two settle.
     pub fn checked_against(&self, disk: Sidecar) -> (Checked, Sidecar) {
         use sync::{Compared, Side};
+        // The file is this frame's, so its states are shown by the
+        // shape this sidecar knows (§724).
+        let mut disk = disk;
+        disk.take_shape(self.shape);
         let read = disk.on_disk.clone();
         let disk_revision = disk.revisions.last().map(|r| r.hash.clone());
         let ours = || {
@@ -677,8 +717,9 @@ pub enum Read {
 /// a shape no sidecar has, which migration's `refused` says as a JSON
 /// error: [`set_aside`]). A file past [`READ_MOST`] is not read, and one
 /// from a newer build is not ours to write over: both are the error, as
-/// is a read that fails.
-pub fn read_changed(path: &Path) -> Result<Read> {
+/// is a read that fails. A line nobody developed is started at `start`,
+/// the copy's it is weighed against (§724).
+pub fn read_changed(path: &Path, start: &crate::Edit) -> Result<Read> {
     #[cfg(any(test, feature = "testing"))]
     READS.with(|n| n.set(n.get() + 1));
     let len = path.metadata()?.len();
@@ -689,7 +730,7 @@ pub fn read_changed(path: &Path) -> Result<Read> {
             path.display()
         ))));
     }
-    let torn = match Sidecar::read(path) {
+    let torn = match Sidecar::read(path, start) {
         Ok(s) => return Ok(Read::Sidecar(Box::new(s))),
         Err(Error::Json(e)) => e.to_string(),
         Err(Error::Io(e)) if e.kind() == std::io::ErrorKind::InvalidData => e.to_string(),
@@ -825,6 +866,26 @@ pub fn aside_at(aside: &Path, from: &Path, to: &Path) -> PathBuf {
 /// lowest go, each said in the log. The name it is kept under.
 pub fn keep_other(path: &Path) -> std::io::Result<PathBuf> {
     let bytes = std::fs::read(path)?;
+    keep_bytes(
+        path,
+        &bytes,
+        "saved elsewhere since it was read; that copy kept as",
+    )
+}
+
+/// This copy's sidecar, `bytes`, kept beside `path` as another writer's
+/// is ([`keep_other`]), the same names, so the user finds both: for a
+/// save a newer build's file at `path` refuses (§724).
+pub fn keep_ours(path: &Path, bytes: &[u8]) -> std::io::Result<PathBuf> {
+    keep_bytes(
+        path,
+        bytes,
+        "a newer greycard saved it since it was read; this copy's edit kept as",
+    )
+}
+
+/// [`keep_other`] of `bytes`, `said` in the log before the name.
+fn keep_bytes(path: &Path, bytes: &[u8], said: &str) -> std::io::Result<PathBuf> {
     let kept = kept_others(path)?;
     if let Some((_, same)) = kept
         .iter()
@@ -834,12 +895,8 @@ pub fn keep_other(path: &Path) -> std::io::Result<PathBuf> {
     }
     let next = kept.last().map_or(1, |(n, _)| n.saturating_add(1));
     let to = beside(path, next, "other");
-    super::Staged::write(&to, &bytes)?.commit()?;
-    log::warn!(
-        "{}: saved elsewhere since it was read; that copy kept as {}",
-        path.display(),
-        to.display()
-    );
+    super::Staged::write(&to, bytes)?.commit()?;
+    log::warn!("{}: {said} {}", path.display(), to.display());
     let excess = (kept.len() + 1).saturating_sub(KEEP_OTHERS);
     for (_, old) in kept.into_iter().take(excess) {
         match std::fs::remove_file(&old) {

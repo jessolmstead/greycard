@@ -1760,9 +1760,9 @@ mod tests {
                     laid.develop_key_with(&[], None),
                     frame.develop_key_with(&[], None)
                 );
-                let mut line = Line::of(frame.clone());
+                let mut line = Line::of(frame.clone(), 0).unwrap();
                 assert!(
-                    !line.record_as(laid, Some("Preset Curve".into())),
+                    !line.record_as(laid, Some("Preset Curve".into()), 0),
                     "no history step"
                 );
             }
@@ -1838,9 +1838,9 @@ mod tests {
             current: old_frame.clone(),
             ..Line::default()
         };
-        assert!(line.record(old_preset.applied(&edit_on(named("Vivid", false)))));
-        assert!(line.record(edit_on(named("Vivid", false))));
-        assert!(line.record(old_preset.applied(&line.current.clone())));
+        assert!(line.record(old_preset.applied(&edit_on(named("Vivid", false))), 0));
+        assert!(line.record(edit_on(named("Vivid", false)), 0));
+        assert!(line.record(old_preset.applied(&line.current.clone()), 0));
         assert!(line.current.camera.look_table);
         assert!(line.undo());
         assert_eq!(line.current.camera, named("Vivid", false));
@@ -2737,7 +2737,7 @@ mod tests {
         .unwrap();
         assert_eq!(p.to_json(), golden);
         assert!(p.to_json().starts_with(
-            "{\n  \"version\": 9,\n  \"name\": \"Warm\",\n  \"sections\": [\n    \"look\",\n    \"light\"\n  ],\n  \"edit\": {"
+            "{\n  \"version\": 10,\n  \"name\": \"Warm\",\n  \"sections\": [\n    \"look\",\n    \"light\"\n  ],\n  \"edit\": {"
         ));
     }
 

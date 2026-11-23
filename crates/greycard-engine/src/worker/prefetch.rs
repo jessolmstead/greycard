@@ -521,9 +521,14 @@ pub(super) fn read_first(n: &Neighbor, peeks: &mut Peeks, asked: &dyn Fn() -> bo
         None => None,
     };
     let line = sidecar.line(first.version.as_deref());
-    let why = why.or_else(|| {
-        line.is_none()
-            .then(|| "its sidecar has no such version".into())
+    let why = why.or_else(|| match line {
+        None => Some("its sidecar has no such version".into()),
+        // What is placed on it waits on a shape nothing can measure
+        // (§724): no picture to make ahead of the open.
+        Some(line) if line.ready().is_none() => {
+            Some("nothing can measure the frame, and its masks wait on its shape".into())
+        }
+        Some(_) => None,
     });
     if let Some(why) = why {
         peeks.put(key);
@@ -531,7 +536,7 @@ pub(super) fn read_first(n: &Neighbor, peeks: &mut Peeks, asked: &dyn Fn() -> bo
     }
     let line = line.expect("a line, or a reason");
     let ready = Neighbor {
-        edit: line.current.clone(),
+        edit: line.current().clone(),
         turn: sidecar.turn,
         seed_blend: greycard_edit_io::on_disk::line_never_developed(line),
         read_first: None,

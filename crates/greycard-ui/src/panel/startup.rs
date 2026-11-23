@@ -150,6 +150,10 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
     // anything this run writes one.
     let first_run = settings::path().is_some_and(|p| !p.exists());
     let (remembered, set_aside) = settings::Settings::load_at_start();
+    // This install's opaque id, for what a sidecar says moved it (§724).
+    if let Some(id) = settings::install_id() {
+        greycard_edit::sync::set_install(&id);
+    }
     match settings::path() {
         Some(p) => tracing::info!("settings: {}", p.display()),
         None => tracing::warn!("settings: no configuration directory; nothing is remembered"),
@@ -3105,6 +3109,10 @@ pub(crate) fn land_pending(st: &mut State, app: &App) -> Landing {
         st.develop.source_size = (w, h);
         // A turn pressed since its delivery stands it on end again.
         settle_source_size(st);
+        // A panel over a copy that waited on the frame's shape (§724):
+        // this develop measures the frame, or something did meanwhile,
+        // and the panel takes its state as measured.
+        crate::panel::browser::panel_settled(st, app);
         crate::panel::crop::start_landed(st, app);
         app.set_shot_size(size_text(w, h).into());
         st.develop.base_white = Some(landed.white);
@@ -3407,19 +3415,21 @@ mod tests {
 
         let mut sidecar = Sidecar::default();
         preset_at_start(&mut sidecar, None, &file, &preset, None);
-        assert_eq!(sidecar.current.light.exposure, 0.5);
+        assert_eq!(sidecar.current().light.exposure, 0.5);
         assert!(Sidecar::find(&file).is_none(), "no sidecars: none written");
 
         let mut sidecar = Sidecar::default();
         let placement = Some(greycard_edit::Placement::Folder);
         preset_at_start(&mut sidecar, None, &file, &preset, placement);
-        let back = Sidecar::load(&file).unwrap().expect("the step was written");
+        let back = Sidecar::load_as_file(&file)
+            .unwrap()
+            .expect("the step was written");
         assert_eq!(
             Sidecar::find(&file),
             Some(Sidecar::path_in(&file, greycard_edit::Placement::Folder))
         );
-        assert_eq!(back.current.light.exposure, 0.5);
-        assert_eq!(back.current_label.as_deref(), Some("Preset: Faded film"));
+        assert_eq!(back.current().light.exposure, 0.5);
+        assert_eq!(back.current_label(), Some("Preset: Faded film"));
         assert_eq!(back.describe(1).as_deref(), Some("Preset: Faded film"));
 
         // Again: on already, so no step and no write.
@@ -3427,14 +3437,14 @@ mod tests {
         let mut again = back;
         preset_at_start(&mut again, None, &file, &preset, placement);
         assert_eq!(again.history.len(), 1);
-        assert_eq!(Sidecar::load(&file).unwrap().unwrap().saved, saved);
+        assert_eq!(Sidecar::load_as_file(&file).unwrap().unwrap().saved, saved);
 
         // A file that will not say its ISO keeps waiting for its
         // blend rather than being given one made up.
         let mut fresh = Sidecar::default();
         preset_at_start(&mut fresh, None, &dir.join("IMG_0002.CR3"), &preset, None);
         assert_eq!(
-            fresh.current.noise.learned_strength,
+            fresh.current().noise.learned_strength,
             Edit::default().noise.learned_strength
         );
         // On a version: its line takes the step, the file's own stays.
@@ -3448,10 +3458,10 @@ mod tests {
             None
         ));
         preset_at_start(&mut with, Some(&id), &file, &preset, None);
-        assert_eq!(with.current.light.exposure, 0.0);
-        assert_eq!(with.line(Some(&id)).unwrap().current.light.exposure, 0.5);
+        assert_eq!(with.current().light.exposure, 0.0);
+        assert_eq!(with.line(Some(&id)).unwrap().current().light.exposure, 0.5);
         assert_eq!(
-            with.line(Some(&id)).unwrap().current_label.as_deref(),
+            with.line(Some(&id)).unwrap().current_label(),
             Some("Preset: Faded film")
         );
         crate::testing::remove_dir_retry(&dir);

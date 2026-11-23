@@ -141,6 +141,8 @@ pub fn import_into_group(
         Error::Newer(v) => ImportError::Newer(v),
         Error::Json(e) => ImportError::NotAPreset(e.to_string()),
         Error::Preset(why) | Error::Xmp(why) | Error::Pp3(why) => ImportError::NotAPreset(why),
+        // A sidecar's, never an import's.
+        e @ (Error::Unread(_) | Error::ReadOnly(_)) => ImportError::NotAPreset(e.to_string()),
     })?;
     let preset = &imported.preset;
     if preset.is_empty() {

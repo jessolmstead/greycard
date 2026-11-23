@@ -1172,9 +1172,17 @@ fn a_set_takes_each_frame_s_edit_and_stops_on_escape() {
         let mut st = state.borrow_mut();
         st.current = Some(0);
         st.views.picked = vec![0, 2];
-        st.sidecars[2].current.light.exposure = 1.0;
+        {
+            let mut e = st.sidecars[2].current().clone();
+            e.light.exposure = 1.0;
+            st.sidecars[2].record(e);
+        }
         st.sidecars[2].turn = 3;
-        st.sidecars[1].current.light.exposure = -2.0;
+        {
+            let mut e = st.sidecars[1].current().clone();
+            e.light.exposure = -2.0;
+            st.sidecars[1].record(e);
+        }
     }
     app.set_exposure(0.5);
     let frames = set_frames(&mut state.borrow_mut(), &app);
@@ -2652,7 +2660,7 @@ fn a_blend_seeded_behind_a_develop_is_developed_again() {
         state
             .borrow()
             .line(0)
-            .map(|l| l.current.noise.learned_strength),
+            .map(|l| l.current().noise.learned_strength),
         Some(0.35)
     );
     deliver(&app, developed(develop, (60, 40)));
@@ -3048,4 +3056,67 @@ fn the_way_back_from_200_percent_follows_a_move() {
         now
     );
     assert_eq!(now.map(|(k, _)| k.path), Some(to));
+}
+
+/// An export pressed on a frame whose masks wait on a shape nothing can
+/// measure (§724) takes nothing, alone or pressed in a set, and the set
+/// is not exported in its place; a set it is one of leaves it out.
+#[test]
+fn a_frame_whose_masks_wait_on_its_shape_is_not_exported() {
+    let app = crate::testing::window(3);
+    let (state, _worker) = crate::testing::state_for(&app, crate::testing::folder(3));
+    state.borrow_mut().sidecars[0] = crate::testing::waiting_sidecar();
+    let key = |c: usize| state.borrow().key_of(c).unwrap();
+    assert!(
+        pressed_frames(&state, &app, &key(0), &[0]).is_none(),
+        "alone"
+    );
+    assert!(
+        pressed_frames(&state, &app, &key(0), &[0, 1]).is_none(),
+        "pressed in a set"
+    );
+    let (_, _, frames, _) = pressed_frames(&state, &app, &key(1), &[0, 1]).unwrap();
+    let files: Vec<PathBuf> = frames.into_iter().map(|f| f.0).collect();
+    assert_eq!(files, [state.borrow().files[1].clone()]);
+    let (_, _, frames, _) = pressed_frames(&state, &app, &key(1), &[0, 1, 2]).unwrap();
+    let files: Vec<PathBuf> = frames.into_iter().map(|f| f.0).collect();
+    let st = state.borrow();
+    assert_eq!(files, [st.files[1].clone(), st.files[2].clone()]);
+}
+
+/// A waiting frame its raw's header can measure is exported on the
+/// first press (§724): measured as the press takes it, by the header
+/// and not by its 16:9 thumbnail, and the set goes whole.
+#[test]
+fn a_waiting_frame_its_header_measures_is_exported_on_the_first_press() {
+    let dir = std::env::temp_dir().join(format!("greycard-export-measured-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let files: Vec<PathBuf> = (0..2)
+        .map(|i| dir.join(format!("IMG_{i:04}.tif")))
+        .collect();
+    for f in &files {
+        greycard_library::fixture::write_frame_of(
+            f,
+            &greycard_library::fixture::R5,
+            6,
+            4,
+            &[0; 6 * 4 * 3],
+        );
+    }
+    let app = crate::testing::window(2);
+    let (state, _worker) = crate::testing::state_for(&app, files.clone());
+    {
+        let mut st = state.borrow_mut();
+        st.sidecars[0] = crate::testing::waiting_sidecar();
+        st.views.thumb_base[0] = Some((16, 9, vec![0; 16 * 9 * 3]));
+    }
+    let key = state.borrow().key_of(0).unwrap();
+    let (_, _, frames, _) = pressed_frames(&state, &app, &key, &[0, 1]).unwrap();
+    let pressed: Vec<PathBuf> = frames.into_iter().map(|f| f.0).collect();
+    assert_eq!(pressed, files);
+    assert_eq!(
+        state.borrow().sidecars[0].shape,
+        greycard_edit::Measured::new(1, 1.0 / 1.5)
+    );
+    crate::testing::remove_scratch(state, &dir);
 }

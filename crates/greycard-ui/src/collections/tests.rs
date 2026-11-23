@@ -747,7 +747,7 @@ fn forget_missing_keeps_the_frames_of_a_folder_that_cannot_be_read() {
 /// A version of `path`'s picture named `name`, made in its sidecar
 /// and written: its id.
 fn version_in(path: &Path, name: &str) -> String {
-    let mut s = greycard_edit::Sidecar::load(path)
+    let mut s = greycard_edit::Sidecar::load_as_file(path)
         .unwrap()
         .unwrap_or_default();
     let id = s.new_version(None, Some(name)).unwrap();

@@ -353,8 +353,16 @@ fn move_into(
                     dir.display()
                 )
             };
+            // An orphan that will not parse is set aside first; a newer
+            // greycard's is never written over nor taken away (§724):
+            // the frame waits.
+            if !keep {
+                for g in &gcds {
+                    greycard_edit::Sidecar::set_aside_if_broken(g);
+                }
+            }
             gcds.iter()
-                .find(|to| keep && to.exists())
+                .find(|to| to.exists() && (keep || greycard_edit::Sidecar::must_keep(to)))
                 .map(|to| there(to))
                 .or_else(|| {
                     beside.iter().find_map(|(from, to)| {

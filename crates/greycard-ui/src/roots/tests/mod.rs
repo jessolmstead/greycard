@@ -92,7 +92,14 @@ fn read_new(st: &State, next: &[PathBuf]) -> HashMap<PathBuf, Held> {
         .cloned()
         .collect();
     let none = vec![None; fresh.len()];
-    let held = rows::bring(&fresh, &none, st.window.sidecars(), st.window.fresh(), None);
+    let held = rows::bring(
+        &fresh,
+        &none,
+        st.window.sidecars(),
+        st.window.fresh(),
+        None,
+        greycard_edit_io::on_disk::frame_shape,
+    );
     fresh.into_iter().zip(held).collect()
 }
 
@@ -244,7 +251,7 @@ fn rated_under_a_root(
     std::fs::create_dir_all(&a).unwrap();
     let files = frames(&a, &["x.tif", "y.tif", "z.tif"]);
     let fresh = || Sidecar {
-        line: greycard_edit::Line::of(greycard_edit::Edit::for_picture()),
+        line: greycard_edit::Line::of(greycard_edit::Edit::for_picture(), 0).unwrap(),
         ..Sidecar::default()
     };
     let mut s = fresh();

@@ -5983,8 +5983,10 @@ fn case_fields(case: &Case, seen: &mut Moved) {
     seen.mark("detail planes", *planes);
     seen.mark("profile curve", profile_tone.is_some());
     let greycard_edit::Edit {
-        // Neither reaches a pixel (`develop_key_by`).
+        // None reaches a pixel (`develop_key_by`): the process only
+        // records while one exists.
         version: _,
+        process: _,
         frame_pending: _,
         light,
         display_curve,
@@ -6019,6 +6021,11 @@ fn case_fields(case: &Case, seen: &mut Moved) {
         adjustments,
         // The develop's, before the finish.
         retouch: _,
+        // Where a state as written was placed; a copy shown has none.
+        placed_under: _,
+        // A mark on a copy that waits on the frame's shape, never
+        // developed.
+        unturned: _,
     } = edit;
     light_fields(seen, "light", light, true);
     for c in greycard_edit::DisplayCurve::ALL {

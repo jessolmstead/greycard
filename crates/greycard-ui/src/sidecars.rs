@@ -60,7 +60,7 @@ fn write_xmp(st: &mut State, file: usize) {
         let turn = st
             .file_cell(file)
             .and_then(|c| camera_tag(st, c))
-            .map(|o| xmp::Turn::new(o, st.sidecars[file].turn));
+            .map(|o| xmp::Turn::new(o, st.sidecars[file].xmp_turn()));
         // The capture time's dates, from the camera's own time, asked
         // only when a shift moves them.
         let (path, meta) = (st.files[file].clone(), st.sidecars[file].meta.clone());
@@ -193,6 +193,7 @@ pub(crate) fn file_writable(st: &State, file: usize) -> bool {
     st.window.write_sidecars
         && !crate::panel::delete::held_file(st, file)
         && st.from_row.get(file).is_none_or(|r| r.read)
+        && st.sidecars.get(file).is_none_or(|s| !s.read_only())
 }
 
 /// Why a sidecar's write failed, in the few words the status line has
@@ -226,7 +227,7 @@ impl Why {
     pub(crate) fn of(e: &greycard_edit::Error) -> Self {
         match e {
             greycard_edit::Error::Io(e) => Self::of_io(e.kind()),
-            greycard_edit::Error::Newer(_) => Self::Newer,
+            greycard_edit::Error::Newer(_) | greycard_edit::Error::ReadOnly(_) => Self::Newer,
             _ => Self::Other,
         }
     }
@@ -766,7 +767,7 @@ pub(crate) mod tests {
         assert_eq!(app.get_sync_note(), "");
         assert!(st.work.unsaved.edits.is_empty());
         for f in &files {
-            assert!(greycard_edit::Sidecar::load(f).unwrap().is_some());
+            assert!(greycard_edit::Sidecar::load_as_file(f).unwrap().is_some());
         }
         drop(st);
         remove_scratch(state, &dir);
@@ -788,10 +789,10 @@ pub(crate) mod tests {
         std::fs::create_dir_all(&missing).expect("the folder");
         retry(&mut st);
         assert_eq!(app.get_sync_note(), "");
-        let back = greycard_edit::Sidecar::load(&path)
+        let back = greycard_edit::Sidecar::load_as_file(&path)
             .unwrap()
             .expect("written");
-        assert_eq!(back.current.light.exposure, 1.25);
+        assert_eq!(back.current().light.exposure, 1.25);
         drop(st);
         remove_scratch(state, &dir);
     }
@@ -879,7 +880,7 @@ pub(crate) mod tests {
         );
         {
             let st = state.borrow();
-            assert_eq!(st.sidecars[0].current.light.exposure, 0.5);
+            assert_eq!(st.sidecars[0].current().light.exposure, 0.5);
             assert_eq!(st.work.unsaved.edits.len(), 1);
         }
         assert_eq!(app.get_sync_note(), "1 edit not saved");
@@ -931,7 +932,7 @@ pub(crate) mod tests {
             crate::roots::Select::Row(0),
         );
         assert!(state.borrow().work.unsaved.edits.is_empty());
-        let back = greycard_edit::Sidecar::load(&files[0])
+        let back = greycard_edit::Sidecar::load_as_file(&files[0])
             .unwrap()
             .expect("written");
         assert_eq!(back.meta.rating, 4);
@@ -947,10 +948,10 @@ pub(crate) mod tests {
         std::fs::create_dir_all(&missing).expect("the folder");
         crate::panel::startup::save_at_quit(&mut st, Edit::default(), crate::sync::QUIT_WRITE_WAIT);
         assert!(st.work.unsaved.edits.is_empty());
-        let back = greycard_edit::Sidecar::load(&st.files[0])
+        let back = greycard_edit::Sidecar::load_as_file(&st.files[0])
             .unwrap()
             .expect("written");
-        assert_eq!(back.current.light.exposure, 0.5);
+        assert_eq!(back.current().light.exposure, 0.5);
         drop(st);
         remove_scratch(state, &dir);
     }
@@ -1008,7 +1009,7 @@ pub(crate) mod tests {
     /// label, the rating set by another hand beside it, and saved back
     /// where it was found.
     fn second_writer(raw: &Path) {
-        let mut other = greycard_edit::Sidecar::load(raw).unwrap().unwrap();
+        let mut other = greycard_edit::Sidecar::load_as_file(raw).unwrap().unwrap();
         let mut grain = Edit::default();
         grain.grain.amount = 0.4;
         let preset = greycard_edit::Preset {
@@ -1017,7 +1018,7 @@ pub(crate) mod tests {
             edit: grain,
             ..Default::default()
         };
-        let edit = preset.applied(&other.current);
+        let edit = preset.applied(other.current());
         let label = greycard_edit::history::preset_label(&preset.name);
         assert!(other.record_as(edit, Some(label)));
         other.meta.rating = 4;
@@ -1034,13 +1035,13 @@ pub(crate) mod tests {
     fn kept_copy(raw: &Path) -> greycard_edit::Sidecar {
         let path = greycard_edit::Sidecar::path_for(raw);
         let name = path.file_name().unwrap().to_string_lossy().into_owned();
-        greycard_edit::Sidecar::read(&path.with_file_name(format!("{name}.other"))).unwrap()
+        greycard_edit::Sidecar::read_as_file(&path.with_file_name(format!("{name}.other"))).unwrap()
     }
 
     /// Whether `s` holds a state, in its history or as its current, with
     /// `pick` of its edit.
     fn has_state(s: &greycard_edit::Sidecar, pick: impl Fn(&Edit) -> bool) -> bool {
-        s.history.iter().any(|st| pick(&st.edit)) || pick(&s.current)
+        s.history.iter().any(|st| pick(st.edit())) || pick(s.current())
     }
 
     /// A second writer between two saves of a frame the window holds
@@ -1055,13 +1056,17 @@ pub(crate) mod tests {
         let mut st = state.borrow_mut();
         st.sidecars[0].record(exposed(1.0));
         write_sidecar(&mut st, 0);
-        let back = greycard_edit::Sidecar::load(raw).unwrap().unwrap();
-        assert_eq!(back.current.light.exposure, 1.0, "the window's own");
+        let back = greycard_edit::Sidecar::load_as_file(raw).unwrap().unwrap();
+        assert_eq!(back.current().light.exposure, 1.0, "the window's own");
         assert!(!has_state(&back, |e| e.grain.amount == 0.4));
         assert_eq!(st.sidecars[0], back, "the window holds what is on disk");
         let kept = kept_copy(raw);
         assert_eq!(kept.meta.rating, 4, "the other writer's rating");
-        assert_eq!(kept.current.grain.amount, 0.4, "the other writer's preset");
+        assert_eq!(
+            kept.current().grain.amount,
+            0.4,
+            "the other writer's preset"
+        );
         assert_eq!(
             app.get_status(),
             "IMG_0000.CR3 was edited elsewhere; other copy kept as IMG_0000.CR3.gcd.other"
@@ -1081,9 +1086,11 @@ pub(crate) mod tests {
         let mut st = state.borrow_mut();
         st.sidecars[0].meta.rating = 2;
         write_sidecar(&mut st, 0);
-        let back = greycard_edit::Sidecar::load(&files[0]).unwrap().unwrap();
-        assert_eq!(back.current.grain.amount, 0.4);
-        assert_eq!(back.current.light.exposure, 0.25);
+        let back = greycard_edit::Sidecar::load_as_file(&files[0])
+            .unwrap()
+            .unwrap();
+        assert_eq!(back.current().grain.amount, 0.4);
+        assert_eq!(back.current().light.exposure, 0.25);
         assert_eq!(back.meta.rating, 2);
         assert_eq!(st.sidecars[0], back);
         drop(st);
@@ -1108,10 +1115,12 @@ pub(crate) mod tests {
         st.sidecars[1].record(exposed(1.5));
         write_sidecar(&mut st, 1);
         assert!(crate::panel::saves::finish(&mut st, None));
-        let back = greycard_edit::Sidecar::load(&files[1]).unwrap().unwrap();
-        assert_eq!(st.sidecars[1].current.light.exposure, 1.5);
+        let back = greycard_edit::Sidecar::load_as_file(&files[1])
+            .unwrap()
+            .unwrap();
+        assert_eq!(st.sidecars[1].current().light.exposure, 1.5);
         assert_eq!(st.sidecars[1], back);
-        assert_eq!(kept_copy(&files[1]).current.grain.amount, 0.4);
+        assert_eq!(kept_copy(&files[1]).current().grain.amount, 0.4);
         drop(st);
         remove_scratch(state, &dir);
     }
@@ -1142,7 +1151,7 @@ pub(crate) mod tests {
         );
         assert_eq!(app.get_sync_note(), "");
         for (f, raw) in files.iter().enumerate() {
-            let back = greycard_edit::Sidecar::load(raw).unwrap().unwrap();
+            let back = greycard_edit::Sidecar::load_as_file(raw).unwrap().unwrap();
             assert_eq!(st.sidecars[f], back, "{f}");
             let bad = greycard_edit::Sidecar::path_for(raw).with_extension("gcd.bad");
             assert_eq!(std::fs::read_to_string(bad).unwrap(), "{\"current\": ");
@@ -1161,8 +1170,10 @@ pub(crate) mod tests {
         let mut st = state.borrow_mut();
         st.window.xmp_sidecars = true;
         crate::panel::saves::save(&mut st, &[0]);
-        let back = greycard_edit::Sidecar::load(&files[0]).unwrap().unwrap();
-        assert_eq!(back.current.grain.amount, 0.4, "the preset current");
+        let back = greycard_edit::Sidecar::load_as_file(&files[0])
+            .unwrap()
+            .unwrap();
+        assert_eq!(back.current().grain.amount, 0.4, "the preset current");
         assert_eq!(st.sidecars[0], back);
         let text = std::fs::read_to_string(files[0].with_extension("xmp")).expect("the XMP");
         assert!(
@@ -1221,7 +1232,7 @@ pub(crate) mod tests {
         assert!(crate::panel::history::show_settled_pending(&mut st, &app, &worker) >= 1);
         let names = history_names(&app);
         assert!(names.iter().any(|n| n.contains("Fine Grain")), "{names:?}");
-        assert_eq!(st.develop.edit, st.sidecars[0].current);
+        assert_eq!(st.develop.edit, st.sidecars[0].current().clone());
         assert_eq!(st.sidecars[0].meta.rating, 2);
         drop(st);
         remove_scratch(state, &dir);
@@ -1241,12 +1252,12 @@ pub(crate) mod tests {
         write_files(&mut st, &[0, 1, 2]);
         assert!(!crate::panel::saves::out(&st));
         for (f, raw) in files.iter().enumerate() {
-            let back = greycard_edit::Sidecar::load(raw).unwrap().unwrap();
+            let back = greycard_edit::Sidecar::load_as_file(raw).unwrap().unwrap();
             assert_eq!(st.sidecars[f], back, "{f}");
-            assert_eq!(back.current.light.exposure, 1.0, "{f}");
+            assert_eq!(back.current().light.exposure, 1.0, "{f}");
             assert!(!has_state(&back, |e| e.grain.amount == 0.4), "{f}");
         }
-        assert_eq!(kept_copy(&files[1]).current.grain.amount, 0.4);
+        assert_eq!(kept_copy(&files[1]).current().grain.amount, 0.4);
         assert_eq!(
             app.get_status(),
             "IMG_0001.CR3 was edited elsewhere; other copy kept as IMG_0001.CR3.gcd.other"
@@ -1274,14 +1285,16 @@ pub(crate) mod tests {
         st.sidecars[1].record(exposed(1.5));
         write_sidecar(&mut st, 1);
         assert!(crate::panel::saves::finish(&mut st, None));
-        let back = greycard_edit::Sidecar::load(&files[1]).unwrap().unwrap();
+        let back = greycard_edit::Sidecar::load_as_file(&files[1])
+            .unwrap()
+            .unwrap();
         assert_eq!(st.sidecars[1], back);
-        assert_eq!(back.current.light.exposure, 1.5);
+        assert_eq!(back.current().light.exposure, 1.5);
         assert_eq!(back.history.len(), states + 1, "nothing joined");
         assert!(
             back.history
                 .iter()
-                .all(|s| !s.label.as_deref().unwrap_or("").contains("Reconciled"))
+                .all(|s| !s.label().unwrap_or("").contains("Reconciled"))
         );
         drop(st);
         remove_scratch(state, &dir);
@@ -1306,11 +1319,11 @@ pub(crate) mod tests {
         other.save_in(&raw, Placement::Beside).unwrap();
         retry(&mut st);
         assert_eq!(app.get_sync_note(), "");
-        let back = greycard_edit::Sidecar::load(&raw).unwrap().unwrap();
+        let back = greycard_edit::Sidecar::load_as_file(&raw).unwrap().unwrap();
         assert!(has_state(&back, |e| e.light.exposure == 0.5));
         assert_eq!(st.sidecars[0], back);
         let kept = kept_copy(&raw);
-        assert_eq!((kept.meta.rating, kept.current.grain.amount), (4, 0.4));
+        assert_eq!((kept.meta.rating, kept.current().grain.amount), (4, 0.4));
         drop(st);
         remove_scratch(state, &dir);
     }
@@ -1329,7 +1342,7 @@ pub(crate) mod tests {
         st.sidecars[0].record(exposed(1.0));
         write_sidecar(&mut st, 0);
         assert_eq!(std::fs::read_to_string(&path).unwrap(), newer);
-        assert_eq!(st.sidecars[0].current.light.exposure, 1.0);
+        assert_eq!(st.sidecars[0].current().light.exposure, 1.0);
         assert_eq!(app.get_sync_note(), "1 edit not saved");
         assert_eq!(
             app.get_status(),
@@ -1366,7 +1379,7 @@ pub(crate) mod tests {
                 text.contains("Rating=\"4\"") || text.contains("Rating>4<"),
                 "{f}: {text}"
             );
-            let back = greycard_edit::Sidecar::load(raw).unwrap().unwrap();
+            let back = greycard_edit::Sidecar::load_as_file(raw).unwrap().unwrap();
             assert_eq!(back.meta.rating, 4);
             assert_eq!(back.meta.flag, greycard_edit::meta::Flag::Pick);
             assert_eq!(st.sidecars[f], back, "{f}");
@@ -1439,7 +1452,9 @@ pub(crate) mod tests {
         st.sidecars[0].record(exposed(1.5));
         assert_eq!(save_file_checked(&mut st, 0), Some(Checked::Written));
         assert_eq!(greycard_edit::changed_reads(), reads, "nothing read");
-        let back = greycard_edit::Sidecar::load(&files[0]).unwrap().unwrap();
+        let back = greycard_edit::Sidecar::load_as_file(&files[0])
+            .unwrap()
+            .unwrap();
         assert_eq!(st.sidecars[0], back);
         drop(st);
         remove_scratch(state, &dir);
@@ -1461,15 +1476,22 @@ pub(crate) mod tests {
         st.sidecars[0].record(exposed(1.5));
         assert!(crate::panel::saves::finish(&mut st, None));
         assert_eq!(
-            st.sidecars[0].current.light.exposure, 1.5,
+            st.sidecars[0].current().light.exposure,
+            1.5,
             "the slider kept"
         );
         save_file(&mut st, 0);
-        let back = greycard_edit::Sidecar::load(&files[0]).unwrap().unwrap();
-        assert_eq!(back.current.light.exposure, 1.5);
+        let back = greycard_edit::Sidecar::load_as_file(&files[0])
+            .unwrap()
+            .unwrap();
+        assert_eq!(back.current().light.exposure, 1.5);
         assert!(has_state(&back, |e| e.light.exposure == 1.0));
         assert_eq!(st.sidecars[0], back);
-        assert_eq!(kept_copy(&files[0]).current.grain.amount, 0.4, "the preset");
+        assert_eq!(
+            kept_copy(&files[0]).current().grain.amount,
+            0.4,
+            "the preset"
+        );
         drop(st);
         remove_scratch(state, &dir);
     }
@@ -1540,7 +1562,9 @@ pub(crate) mod tests {
         app.set_status("".into());
         crate::panel::saves::save(&mut st, &[0, 1]);
         assert_eq!(app.get_status(), "");
-        let back = greycard_edit::Sidecar::load(&files[0]).unwrap().unwrap();
+        let back = greycard_edit::Sidecar::load_as_file(&files[0])
+            .unwrap()
+            .unwrap();
         assert_eq!(st.sidecars[0], back);
         assert!(torn.with_file_name("IMG_0000.CR3.gcd.2.bad").exists());
         drop(st);
@@ -1570,7 +1594,7 @@ pub(crate) mod tests {
         crate::panel::saves::tests::wait_moved(&st);
         st.sidecars[0].record(exposed(1.5));
         assert!(crate::panel::saves::finish(&mut st, None));
-        assert_eq!(st.sidecars[0].current.light.exposure, 1.5);
+        assert_eq!(st.sidecars[0].current().light.exposure, 1.5);
         assert_eq!(app.get_sync_note(), "1 edit not saved");
         assert!(save_file(&mut st, 0));
         assert_eq!(app.get_sync_note(), "");

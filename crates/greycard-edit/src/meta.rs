@@ -58,6 +58,38 @@ where
     })
 }
 
+thread_local! {
+    /// Whether the file being read is a newer build's, past this one's
+    /// schema ([`reading_newer`]).
+    static NEWER: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// `f`, with [`newer_loose`]'s fields read loosely when `newer`: for
+/// the read of a file a newer build made (§724).
+pub(crate) fn reading_newer<R>(newer: bool, f: impl FnOnce() -> R) -> R {
+    let was = NEWER.replace(newer);
+    let r = f();
+    NEWER.set(was);
+    r
+}
+
+/// An enum a later build may give another value: read as written, and
+/// in a file a newer build made ([`reading_newer`]) a value this build
+/// does not know read as its default, so the file opens read-only
+/// rather than not at all (§724). In any other file, an error as ever.
+pub(crate) fn newer_loose<'de, D, T>(d: D) -> Result<T, D::Error>
+where
+    D: Deserializer<'de>,
+    T: serde::de::DeserializeOwned + Default,
+{
+    let v = serde_json::Value::deserialize(d)?;
+    match T::deserialize(&v) {
+        Ok(t) => Ok(t),
+        Err(_) if NEWER.get() => Ok(T::default()),
+        Err(e) => Err(serde::de::Error::custom(e)),
+    }
+}
+
 /// A whole [`Meta`], or an empty one when the section itself is
 /// something this build cannot read. For the sidecar's field: the
 /// last net under the per-field ones, so that nothing written under

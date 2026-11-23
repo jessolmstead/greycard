@@ -255,13 +255,11 @@ pub(crate) fn undo_last(st: &mut State, app: &App) -> bool {
 }
 
 /// The frame of `path` turned: the strokes waiting on any of its
-/// versions carried round by the same map as its patches, when the
-/// picture's shape is known (`aspect`, before the turn); left where
-/// they are when it is not, as the patches are.
-pub(crate) fn turn(st: &mut State, path: &std::path::Path, quarters: i32, aspect: Option<f32>) {
-    let Some(t) = aspect.map(|a| greycard_edit::mask::Turned::new(quarters, a)) else {
-        return;
-    };
+/// versions carried round by `t`, the map the turn carried the
+/// sidecar's patches by ([`greycard_edit::Sidecar::turn_by`]), so the
+/// two stay together. A frame nothing could measure, with patches, is
+/// not turned, and neither are its strokes.
+pub(crate) fn turn(st: &mut State, path: &std::path::Path, t: greycard_edit::mask::Turned) {
     let painted = &mut st.develop.painted;
     let on = |f: &Frame| f.as_ref().is_some_and(|k| k.path == path);
     let dropped = painted
@@ -651,7 +649,7 @@ mod tests {
         assert_eq!(states(&state), before);
         assert!(
             state.borrow().sidecars[0]
-                .current
+                .current()
                 .retouch
                 .patches
                 .is_empty()
@@ -667,7 +665,7 @@ mod tests {
         assert!(asked(&state), "the develop that makes them");
         assert_eq!(app.get_retouch_mode(), "Fill", "the tool stays in hand");
         assert_eq!(states(&state), before + 1);
-        assert_eq!(state.borrow().sidecars[0].current.retouch.patches, made);
+        assert_eq!(state.borrow().sidecars[0].current().retouch.patches, made);
         // A second Enter with nothing painted makes nothing more.
         press(&app, Key::Return);
         assert_eq!(patches(&state), made);
@@ -804,7 +802,7 @@ mod tests {
             assert!(patches(&state).is_empty(), "{how}: nothing in the edit");
             let st = state.borrow();
             let now = &st.sidecars[0];
-            assert_eq!(now.current, line.current, "{how}: the line as it was");
+            assert_eq!(now.current(), line.current(), "{how}: the line as it was");
             assert_eq!(now.states(), line.states(), "{how}: no step");
             assert!(!st.develop.debounce.running(), "{how}: nothing developed");
         }
@@ -1211,7 +1209,11 @@ mod tests {
         write_frame(&shots.join("b.tif"), &R6, 2);
         let raw = shots.join("a.tif");
         let mut old = greycard_edit::Sidecar::default();
-        old.line.current.retouch.patches.push(fill(1, 0.5));
+        {
+            let mut e = old.current().clone();
+            e.retouch.patches.push(fill(1, 0.5));
+            old.record(e);
+        }
         let mut value: serde_json::Value = serde_json::from_str(&old.to_json()).unwrap();
         eight(&mut value);
         let text = value.to_string();
@@ -1248,9 +1250,9 @@ mod tests {
         app.invoke_patch_changed(0);
         assert_eq!(painted(&state), 1, "still waiting");
         press(&app, Key::Return);
-        let written = greycard_edit::Sidecar::read(&path).unwrap();
+        let written = greycard_edit::Sidecar::read_as_file(&path).unwrap();
         assert_eq!(
-            written.current.retouch.patches[0].more.len(),
+            written.current().retouch.patches[0].more.len(),
             1,
             "grown, and written"
         );

@@ -741,7 +741,9 @@ mod tests {
         app.invoke_keyword_added("Harbor".into());
         app.invoke_title_edited("Dusk".into());
         for f in &files {
-            let s = greycard_edit::Sidecar::load(f).unwrap().expect("a sidecar");
+            let s = greycard_edit::Sidecar::load_as_file(f)
+                .unwrap()
+                .expect("a sidecar");
             assert_eq!(s.meta.keywords, ["Harbor"], "{}", f.display());
             assert_eq!(s.meta.title, "Dusk");
             let xmp = greycard_edit_io::xmp::path_of(f).expect("an XMP");
@@ -1141,10 +1143,14 @@ mod tests {
         }
         assert!(!app.get_title_dirty());
         for f in &files {
-            let s = greycard_edit::Sidecar::load(f).unwrap().expect("a sidecar");
+            let s = greycard_edit::Sidecar::load_as_file(f)
+                .unwrap()
+                .expect("a sidecar");
             assert_eq!(s.meta.title, "Dusk", "{}", f.display());
         }
-        let b = greycard_edit::Sidecar::load(&files[1]).unwrap().unwrap();
+        let b = greycard_edit::Sidecar::load_as_file(&files[1])
+            .unwrap()
+            .unwrap();
         assert_eq!(b.meta.rating, 3);
         assert_eq!(b.meta.caption, "kept", "read before it was written");
         drop(state);

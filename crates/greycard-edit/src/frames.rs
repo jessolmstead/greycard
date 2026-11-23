@@ -1,22 +1,24 @@
 //! Changes laid over a set of frames at once: a turn, the meta, a
 //! preset, and a sync.
 
-use crate::{Edit, Line, Preset, Section, Sidecar, meta};
+use crate::{Edit, LineMut, Preset, Section, Sidecar, meta};
 
 /// Turn every frame in `frames` by `quarters` quarter turns
 /// clockwise; the frames it moved.
 ///
-/// No history state is recorded — a turn is no part of the edit's
-/// line — but every state a sidecar holds takes the same map, so
-/// that what undo, redo and a snapshot hand back means the pixels
-/// the current state means (see [`Sidecar::turn_by`]). A frame past
-/// the end of the list is passed over rather than a panic; a
-/// selection can outlive a folder change.
+/// No history state is recorded and none is changed — a turn is no
+/// part of the edit's line — and every state a sidecar holds is shown
+/// under the new turn, so that what undo, redo and a snapshot hand back
+/// means the pixels the current state means (see
+/// [`Sidecar::turn_by`]). `aspect` is each frame's shape as the caller
+/// measured it, by its index, when it can; a frame nothing can measure
+/// is not turned. A frame past the end of the list is passed over
+/// rather than a panic; a selection can outlive a folder change.
 pub fn turn_into(
     sidecars: &mut [Sidecar],
     frames: &[usize],
     quarters: i32,
-    aspect: Option<f32>,
+    mut aspect: impl FnMut(usize) -> Option<f32>,
 ) -> Vec<usize> {
     if quarters.rem_euclid(4) == 0 {
         return Vec::new();
@@ -25,10 +27,7 @@ pub fn turn_into(
         .iter()
         .copied()
         .filter(|&i| match sidecars.get_mut(i) {
-            Some(sidecar) => {
-                sidecar.turn_by(quarters, aspect);
-                true
-            }
+            Some(sidecar) => sidecar.turn_by(quarters, aspect(i)).is_some(),
             None => false,
         })
         .collect()
@@ -98,9 +97,12 @@ pub fn apply_preset_into(
         .iter()
         .copied()
         .filter(|&i| {
-            sidecars.get_mut(i).is_some_and(|sidecar| {
-                apply_preset_to_line(&mut sidecar.line, preset, learned_from, label)
-            })
+            sidecars
+                .get_mut(i)
+                .and_then(|sidecar| sidecar.line_mut(None))
+                .is_some_and(|mut line| {
+                    apply_preset_to_line(&mut line, preset, learned_from, label)
+                })
         })
         .collect()
 }
@@ -111,7 +113,7 @@ pub fn apply_preset_into(
 /// the line moved. What a version of a frame takes as its own, as the
 /// frame's own line does.
 pub fn apply_preset_to_line(
-    line: &mut Line,
+    line: &mut LineMut<'_>,
     preset: &Preset,
     learned_from: Option<&Edit>,
     label: Option<&str>,
@@ -330,7 +332,7 @@ mod tests {
             h: 0.5,
         });
         sidecars[1].current.light.exposure = 1.0;
-        let moved = turn_into(&mut sidecars, &[0, 1], 1, Some(1.5));
+        let moved = turn_into(&mut sidecars, &[0, 1], 1, |_| Some(1.5));
         assert_eq!(moved, vec![0, 1]);
         assert_eq!(sidecars[0].turn, 1);
         assert_eq!(sidecars[1].turn, 1);
@@ -349,7 +351,7 @@ mod tests {
         assert_eq!(sidecars[1].current.light.exposure, 1.0);
         assert!(sidecars[1].history.is_empty());
         // Left again is where it started.
-        turn_into(&mut sidecars, &[0, 1], -1, Some(1.0 / 1.5));
+        turn_into(&mut sidecars, &[0, 1], -1, |_| None);
         assert_eq!(sidecars[1].turn, 0);
         assert_eq!(
             sidecars[1].current.geometry.crop,
@@ -362,8 +364,18 @@ mod tests {
         );
         // Four quarters are none, and a frame off the end is passed
         // over rather than a panic.
-        assert!(turn_into(&mut sidecars, &[0], 4, Some(1.5)).is_empty());
+        assert!(turn_into(&mut sidecars, &[0], 4, |_| Some(1.5)).is_empty());
         assert_eq!(sidecars[0].turn, 0);
-        assert!(turn_into(&mut sidecars, &[9], 1, Some(1.5)).is_empty());
+        assert!(turn_into(&mut sidecars, &[9], 1, |_| Some(1.5)).is_empty());
+        // A frame nothing can measure is not turned when it has work
+        // placed on the picture: the one turned before knows its shape,
+        // the one never turned does not.
+        sidecars[2].current.retouch.patches.push(Default::default());
+        assert_eq!(turn_into(&mut sidecars, &[1, 2], 1, |_| None), vec![1]);
+        assert_eq!(sidecars[2].turn, 0);
+        // With nothing placed, it turns all the same: no state of it
+        // wants the shape.
+        sidecars[2].current.retouch.patches.clear();
+        assert_eq!(turn_into(&mut sidecars, &[2], 1, |_| None), vec![2]);
     }
 }

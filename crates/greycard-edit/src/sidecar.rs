@@ -5,9 +5,10 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
+use crate::VERSION;
 use crate::migration::{migrate_line, refused};
 use crate::{
-    Edit, Exported, Line, Meta, Result, Version, mask, meta, retouch, sync, versions, xmp,
+    Edit, Exported, Line, Measured, Meta, Result, Version, mask, meta, retouch, sync, versions, xmp,
 };
 
 /// What sits beside a file: the current edit, the ones before it,
@@ -25,14 +26,24 @@ use crate::{
 /// is the `line` field, and each further version in [`Self::versions`]
 /// holds one of its own. The meta, the turn, the XMP mark, the save
 /// count and the revisions are the file's and shared by every version.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-#[serde(default)]
+// Read only through the readers below, each given the start (§724):
+// `remote = "Self"` makes the derive an inherent function rather than
+// `Deserialize`, so no other reader can make one without a start.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default, remote = "Self")]
 pub struct Sidecar {
     /// Version 0's line, the file's own: its keys at the top level of
     /// the file, first. The sidecar derefs to it, so `sidecar.current`
     /// and the line's methods read and act on version 0.
-    #[serde(flatten)]
+    #[serde(flatten, deserialize_with = "crate::line::read_line")]
     pub line: Line,
+    /// The write floor of a file a newer build wrote, past this build's
+    /// schema: the file is read, and never written ([`Self::read_only`],
+    /// §724). Never written itself: a file this build writes says its
+    /// own floors ([`Floors`]). Set by the read alone; a test may set it
+    /// to stand for such a file.
+    #[serde(skip)]
+    pub newer: Option<u32>,
     /// The rating, the flag, the label, the keywords and the words:
     /// see [`meta`]. Absent from every sidecar written before it
     /// existed, and the default there; left out again when it says
@@ -81,6 +92,25 @@ pub struct Sidecar {
     /// [`Self::baseline`] is.
     #[serde(skip)]
     pub on_disk: Option<OnDisk>,
+    /// The content as this copy's last revision took it, against that
+    /// revision's own previous ([`crate::sync::revision_hash`]), as of
+    /// the last read or save here: what [`Self::at_its_revision`] holds
+    /// the copy to. A read takes it only in a debug build, which alone
+    /// asks. Not written, not part of equality; public as
+    /// [`Self::on_disk`] is, so a sidecar can be built with
+    /// `..Default::default()` elsewhere.
+    #[serde(skip)]
+    pub as_revised: Option<String>,
+    /// The start the reader that holds the frame gave this sidecar
+    /// (§724), before any seed: what a line nobody developed that this
+    /// copy does not have at all (a version made on another machine)
+    /// starts at when a copy of the file is read for a save or a join.
+    /// A line this copy has keeps its own: a line nobody developed is
+    /// its start, the ISO's seed included, and a version waits for its
+    /// seed on its own ([`Self::keep_starts_of`]). Not written, not part
+    /// of equality, public as [`Self::baseline`] is.
+    #[serde(skip)]
+    pub start: Edit,
     /// Quarter turns clockwise on top of the camera's orientation
     /// tag, 0 to 3: the frames a camera got wrong (shot straight
     /// down, a body with no sensor for it, a scan).
@@ -93,12 +123,30 @@ pub struct Sidecar {
     /// picture was. Read loosely and left out when it is 0, so a
     /// sidecar written before it existed loads unchanged and
     /// developing a frame nobody has turned does not grow a field.
+    ///
+    /// A turn changes this and nothing else (§724): each state says the
+    /// turn it was placed under ([`Edit::placed_under`]) and is shown
+    /// under this one, made again from what was written at every turn.
     #[serde(
         default,
         skip_serializing_if = "is_no_turn",
         deserialize_with = "meta::loose_turn"
     )]
     pub turn: u8,
+    /// The frame's developed picture's shape, as the file says it or as
+    /// something with the frame said it ([`Self::frame_known`], a turn,
+    /// [`Self::settle_shape`]): what a state placed under another turn
+    /// with something placed on the picture is shown by.
+    ///
+    /// Written after the turn while the file needs it to show a state
+    /// ([`Self::needs_shape`]): a frame turned with work placed under
+    /// the turn before carries the shape its turn was made by, so every
+    /// reader shows that work as the writer did, with or without the
+    /// frame's file to measure. Left out otherwise, so a sidecar nobody
+    /// turned writes what it always wrote; read loosely, and a shape
+    /// that is not one is none. Part of equality as written.
+    #[serde(default, deserialize_with = "meta::loose")]
+    pub shape: Option<Measured>,
     /// What was last taken from an XMP beside the frame, so a load
     /// can ask whether that file has changed rather than compare two
     /// files' clocks: see [`xmp::Adopted`]. Read loosely, as the
@@ -120,6 +168,14 @@ pub struct Sidecar {
         deserialize_with = "meta::loose"
     )]
     pub xmp_shared: Option<xmp::Culled>,
+    /// The turn an XMP beside the frame asked for that nothing could
+    /// measure the frame to make (§724), owed until a read can: kept
+    /// apart from [`Self::xmp`], so the packet's meta is taken once and
+    /// marked as taken, and a write of the packet by this build, which
+    /// says the sidecar's own turn, does not lose it. Left out when
+    /// none, and read loosely.
+    #[serde(default, deserialize_with = "meta::loose")]
+    pub turn_owed: Option<u8>,
     /// The meta a Lightroom import laid, at the values it laid: see
     /// [`meta::Laid`]. Left out when empty, and read loosely.
     #[serde(
@@ -197,10 +253,66 @@ pub struct Sidecar {
         deserialize_with = "versions::loose"
     )]
     pub versions: Vec<Version>,
+    /// The ids of versions deleted, each with when (§724): a tombstone,
+    /// carried through a join. A join that keeps the version (one copy
+    /// edited it, as §243 has it) drops its tombstone, so a file never
+    /// holds one for a version it holds. At most
+    /// [`crate::line::TOMBSTONES`], the oldest going first. The time is
+    /// this machine's clock. Left out while empty, and read loosely.
+    #[serde(
+        default,
+        skip_serializing_if = "std::collections::BTreeMap::is_empty",
+        deserialize_with = "meta::loose"
+    )]
+    pub removed: std::collections::BTreeMap<String, u64>,
+    /// When the original was last swapped with a version, seconds since
+    /// the Unix epoch; 0, and not written, while it never was (§724).
+    /// The original is [`Self::line`], by its id ([`Line::line_id`]); a
+    /// join takes the original of the copy that swapped later.
+    #[serde(
+        default,
+        skip_serializing_if = "skip::zero",
+        deserialize_with = "meta::loose"
+    )]
+    pub original_at: u64,
 }
 
 fn is_no_turn(turn: &u8) -> bool {
     turn.rem_euclid(4) == 0
+}
+
+/// What the written file leaves out, for [`Sidecar`]'s serializer, whose
+/// fields are borrowed.
+mod skip {
+    pub(super) fn zero(n: &u64) -> bool {
+        *n == 0
+    }
+
+    use super::{Meta, meta};
+
+    pub(super) fn meta(m: &&Meta) -> bool {
+        m.is_empty()
+    }
+
+    pub(super) fn times(t: &&meta::Times) -> bool {
+        t.is_empty()
+    }
+
+    pub(super) fn turn(t: &&u8) -> bool {
+        super::is_no_turn(t)
+    }
+
+    pub(super) fn none<T>(o: &&Option<T>) -> bool {
+        o.is_none()
+    }
+
+    pub(super) fn laid(l: &&meta::Laid) -> bool {
+        l.is_empty()
+    }
+
+    pub(super) fn empty<T>(v: &&Vec<T>) -> bool {
+        v.is_empty()
+    }
 }
 
 /// Everything the file holds, and the redo stack: not the baseline
@@ -212,33 +324,146 @@ impl PartialEq for Sidecar {
     fn eq(&self, other: &Self) -> bool {
         let Sidecar {
             line,
+            newer,
             meta,
             meta_at,
             baseline: _,
             modified: _,
             on_disk: _,
+            as_revised: _,
+            start: _,
             turn,
+            shape: _,
             xmp,
             xmp_shared,
+            turn_owed,
             lightroom,
             saved,
             revisions,
             absorbed,
             set_aside,
             versions,
+            removed,
+            original_at,
         } = self;
         *line == other.line
+            && *newer == other.newer
             && *meta == other.meta
             && *meta_at == other.meta_at
             && *turn == other.turn
+            && self.written_shape() == other.written_shape()
             && *xmp == other.xmp
             && *xmp_shared == other.xmp_shared
+            && *turn_owed == other.turn_owed
             && *lightroom == other.lightroom
             && *saved == other.saved
             && *revisions == other.revisions
             && *absorbed == other.absorbed
             && *set_aside == other.set_aside
             && *versions == other.versions
+            && *removed == other.removed
+            && *original_at == other.original_at
+    }
+}
+
+/// What may read a file, and what may write it (§724): the oldest
+/// schema a build must know to read it, and to write it. Written at the
+/// top of every file, as this build's own ([`Floors::OURS`]). A later
+/// build raises `write` when it writes what this one would lose on a
+/// write (a field it does not know), and `read` when it writes what
+/// this one would read wrongly (a difference it does not know). A file
+/// with none says nothing, and is judged by its states' versions.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize)]
+pub struct Floors {
+    pub read: u32,
+    pub write: u32,
+}
+
+impl Floors {
+    /// This build's: its own schema for both.
+    pub const OURS: Floors = Floors {
+        read: VERSION,
+        write: VERSION,
+    };
+
+    /// The floors `v` says, loosely: a floor that is not a whole number
+    /// is none (0).
+    fn read(v: &serde_json::Value) -> Floors {
+        let floor = |k: &str| {
+            v.get(k)
+                .and_then(serde_json::Value::as_u64)
+                .map_or(0, |n| u32::try_from(n).unwrap_or(u32::MAX))
+        };
+        Floors {
+            read: floor("read"),
+            write: floor("write"),
+        }
+    }
+}
+
+/// The file's keys, in the order they have always been written: the
+/// fields' own, and the shape where the file needs it
+/// ([`Sidecar::written_shape`]), which is no field's alone.
+impl Serialize for Sidecar {
+    fn serialize<S: serde::Serializer>(
+        &self,
+        serializer: S,
+    ) -> std::result::Result<S::Ok, S::Error> {
+        #[derive(Serialize)]
+        struct Out<'a> {
+            floors: Floors,
+            #[serde(flatten)]
+            line: &'a Line,
+            #[serde(skip_serializing_if = "skip::meta")]
+            meta: &'a Meta,
+            #[serde(skip_serializing_if = "skip::times")]
+            meta_at: &'a meta::Times,
+            #[serde(skip_serializing_if = "skip::turn")]
+            turn: &'a u8,
+            #[serde(skip_serializing_if = "Option::is_none")]
+            shape: Option<Measured>,
+            #[serde(skip_serializing_if = "skip::none")]
+            xmp: &'a Option<xmp::Adopted>,
+            #[serde(skip_serializing_if = "skip::none")]
+            xmp_shared: &'a Option<xmp::Culled>,
+            #[serde(skip_serializing_if = "skip::none")]
+            turn_owed: &'a Option<u8>,
+            #[serde(skip_serializing_if = "skip::laid")]
+            lightroom: &'a meta::Laid,
+            saved: u64,
+            #[serde(skip_serializing_if = "skip::empty")]
+            revisions: &'a Vec<sync::Revision>,
+            #[serde(skip_serializing_if = "skip::empty")]
+            absorbed: &'a Vec<String>,
+            #[serde(skip_serializing_if = "skip::empty")]
+            set_aside: &'a Vec<String>,
+            #[serde(skip_serializing_if = "skip::empty")]
+            versions: &'a Vec<Version>,
+            #[serde(skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+            removed: &'a std::collections::BTreeMap<String, u64>,
+            #[serde(skip_serializing_if = "skip::zero")]
+            original_at: u64,
+        }
+        Out {
+            floors: Floors::OURS,
+            line: &self.line,
+            meta: &self.meta,
+            meta_at: &self.meta_at,
+            turn: &self.turn,
+            shape: self.written_shape(),
+            xmp: &self.xmp,
+            xmp_shared: &self.xmp_shared,
+            turn_owed: &self.turn_owed,
+            lightroom: &self.lightroom,
+            saved: self.saved,
+            revisions: &self.revisions,
+            absorbed: &self.absorbed,
+            set_aside: &self.set_aside,
+            versions: &self.versions,
+            removed: &self.removed,
+            original_at: self.original_at,
+        }
+        .serialize(serializer)
     }
 }
 
@@ -253,8 +478,13 @@ impl std::ops::Deref for Sidecar {
     }
 }
 
+/// Reached for anything that acts on version 0's line, so the line is
+/// shown under the sidecar's turn first: a line put on a sidecar under
+/// another turn than it was made for is never acted on as it stood
+/// ([`Sidecar::show_if_stale`]).
 impl std::ops::DerefMut for Sidecar {
     fn deref_mut(&mut self) -> &mut Line {
+        self.show_if_stale();
         &mut self.line
     }
 }
@@ -387,6 +617,14 @@ impl Sidecar {
             (Some(_), None) => Some(beside),
             (None, Some(_)) => Some(under),
             (Some(b), Some(u)) => {
+                // A newer build's copy is the frame's while this build's
+                // is not (§724): it opens read-only, and nothing this
+                // build saves goes over it.
+                match (by_newer_build(&beside), by_newer_build(&under)) {
+                    (true, false) => return Some(beside),
+                    (false, true) => return Some(under),
+                    _ => {}
+                }
                 let (bc, uc) = (saved_count(&beside), saved_count(&under));
                 if bc > 0 && uc > 0 && bc != uc {
                     Some(if bc > uc { beside } else { under })
@@ -415,12 +653,36 @@ impl Sidecar {
         modified(a).cmp(&modified(b))
     }
 
-    /// The sidecar `raw` has, if there is one, wherever it is.
-    pub fn load(raw: &Path) -> Result<Option<Self>> {
-        match Self::find(raw) {
-            Some(path) => Self::read(&path).map(Some),
-            None => Ok(None),
-        }
+    /// The sidecar `raw` has, if there is one, wherever it is, a line
+    /// nobody developed started at `start` (§724): the reader's, which
+    /// holds the frame and the settings ([`Self::set_start`]).
+    pub fn load(raw: &Path, start: &Edit) -> Result<Option<Self>> {
+        let Some(path) = Self::find(raw) else {
+            return Ok(None);
+        };
+        Self::read(&path, start).map(Some)
+    }
+
+    /// [`Self::load`] by what the file is and no setting
+    /// ([`Self::start_of`]): for a reader with no editor's settings (the
+    /// library, the command line).
+    pub fn load_as_file(raw: &Path) -> Result<Option<Self>> {
+        Self::load(raw, &Self::start_of(raw))
+    }
+
+    /// [`Self::read`] by what the frame the file is named for is, and no
+    /// setting ([`Self::start_of`]): the name up to its `.gcd`, so a copy
+    /// kept beside it (`X.JPG.gcd.other`) is a picture's too.
+    pub fn read_as_file(path: &Path) -> Result<Self> {
+        let name = path
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        let frame = path.with_file_name(match name.rfind(".gcd") {
+            Some(at) => &name[..at],
+            None => name.as_str(),
+        });
+        Self::read(path, &Self::start_of(&frame))
     }
 
     /// The sidecar at `path`, the file itself and not the frame's:
@@ -430,8 +692,8 @@ impl Sidecar {
     /// one time an id is computed from a file; a meta field with no
     /// time gets the file's ([`Self::pin_times`]); and the meta and the
     /// turn as read are kept to stamp their times against at the next
-    /// save.
-    pub fn read(path: &Path) -> Result<Self> {
+    /// save. A line nobody developed is started at `start` (§724).
+    pub fn read(path: &Path, start: &Edit) -> Result<Self> {
         // Before the read: a write landing between the two leaves a stat
         // older than the bytes, which the next checked save takes for a
         // change and compares, at the cost of a read.
@@ -442,7 +704,7 @@ impl Sidecar {
             .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
             .map(|d| d.as_secs());
         let json = std::fs::read_to_string(path)?;
-        let mut sidecar = Self::from_json(&json)?;
+        let mut sidecar = Self::from_json(&json, start)?;
         sidecar.modified = modified;
         sidecar.fill_ids();
         sidecar.pin_times();
@@ -457,10 +719,50 @@ impl Sidecar {
     /// ([`Error::Newer`]) when any edit is from a schema past it.
     ///
     /// [`Error::Newer`]: crate::Error::Newer
-    pub fn from_json(json: &str) -> Result<Self> {
-        let mut value: serde_json::Value = serde_json::from_str(json)?;
+    ///
+    /// Every state is shown under the file's turn, from the turn it
+    /// was placed under ([`Line::show`]), by the shape the file writes
+    /// beside its turn when it needs one ([`Self::shape`]). A state the
+    /// file has no shape for (one from before version 4, or from a join
+    /// with a copy turned by a build before version 10) waits for one
+    /// ([`Self::needs_frame`]): the reader that holds the frame asks it
+    /// ([`Self::settle_shape`]). Nothing here reads the frame's file.
+    ///
+    /// A line nobody developed holds no state (§724): it is started at
+    /// `start`, the reader's ([`Self::set_start`]). Every reader says it,
+    /// so none hands on a start it made up.
+    pub fn from_json(json: &str, start: &Edit) -> Result<Self> {
+        Self::from_value(serde_json::from_str(json)?, start)
+    }
+
+    /// [`Self::from_json`] of JSON already parsed, for a reader that
+    /// looks at the value itself first (the library's pass) and need
+    /// not parse it twice.
+    ///
+    /// A file's floors ([`Floors`]) say what may read it and what may
+    /// write it. One whose `read` floor is past this build's schema is
+    /// refused ([`Error::Newer`]); one whose `write` floor is, is read,
+    /// its states past this schema as they are and an enum's value this
+    /// build does not know as its default ([`crate::meta::newer_loose`]),
+    /// and is never written ([`Self::read_only`]). A file with no floors
+    /// is refused when any state is past this schema, as before them.
+    pub fn from_value(mut value: serde_json::Value, start: &Edit) -> Result<Self> {
+        let floors = value.get("floors").map(Floors::read).unwrap_or_default();
+        if floors.read > VERSION {
+            return Err(crate::Error::Newer(floors.read));
+        }
+        let newer = (floors.write > VERSION).then_some(floors.write);
         if let Some(obj) = value.as_object_mut() {
-            migrate_line(obj)?;
+            // The turn as the struct reads it, loosely: every state a
+            // build before version 10 wrote was turned to it in place.
+            let turn = obj
+                .get("turn")
+                .map_or(Ok(0), |t| meta::loose_turn(t.clone()))
+                .unwrap_or(0);
+            let mut budget = crate::sparse::BUDGET;
+            let budget = &mut budget;
+            let newer_ok = newer.is_some();
+            migrate_line(obj, turn, budget, newer_ok)?;
             if let Some(serde_json::Value::Array(versions)) = obj.get_mut("versions") {
                 for version in versions.iter_mut() {
                     // A line that is not an object would be read as a
@@ -476,14 +778,24 @@ impl Sidecar {
                         continue;
                     }
                     match version.get_mut("line") {
-                        Some(serde_json::Value::Object(line)) => migrate_line(line)?,
+                        Some(serde_json::Value::Object(line)) => {
+                            migrate_line(line, turn, budget, newer_ok)?
+                        }
                         Some(_) => return Err(refused("a version's line is an object")),
                         None => {}
                     }
                 }
             }
         }
-        Ok(serde_json::from_value(value)?)
+        let mut sidecar = meta::reading_newer(newer.is_some(), || Self::deserialize(value))?;
+        sidecar.newer = newer;
+        sidecar.shape = sidecar.shape.and_then(|m| Measured::new(m.turn, m.aspect));
+        sidecar.show();
+        sidecar.set_start(start);
+        if cfg!(debug_assertions) {
+            sidecar.as_revised = sidecar.content_key();
+        }
+        Ok(sidecar)
     }
 }
 
@@ -498,14 +810,32 @@ impl Sidecar {
     // .clone(), ..)` reads the sidecar while the call's borrow waits,
     // which a borrow taken through the deref does not allow.
 
-    /// [`Line::record`] on version 0.
+    /// [`Line::record`] on version 0, placed under the sidecar's turn.
     pub fn record(&mut self, edit: Edit) -> bool {
-        self.line.record(edit)
+        self.record_as(edit, None)
     }
 
-    /// [`Line::record_as`] on version 0.
+    /// [`Line::record_as`] on version 0, placed under the sidecar's
+    /// turn: the turn `edit` is in is the one the frame stands at as it
+    /// is recorded, whatever line was put on the sidecar since its last
+    /// show. False while the current state waits on the frame's shape
+    /// ([`Line::current_waits`]): the frame is read-only until something
+    /// can measure it.
     pub fn record_as(&mut self, edit: Edit, label: Option<String>) -> bool {
-        self.line.record_as(edit, label)
+        if self.read_only() {
+            log::warn!("a step on a read-only sidecar is not recorded: a newer build made it");
+            return false;
+        }
+        self.show_if_stale();
+        if self.line.current_waits() {
+            log::warn!(
+                "a step on a frame whose masks wait on its shape is not recorded: \
+                 nothing has measured the frame yet"
+            );
+            return false;
+        }
+        let turn = self.turn;
+        self.line.record_as(edit, label, turn)
     }
 
     /// [`Line::record_export`] on version 0.
@@ -515,36 +845,128 @@ impl Sidecar {
 
     /// [`Line::go_to`] on version 0.
     pub fn go_to(&mut self, index: usize) -> bool {
+        self.show_if_stale();
         self.line.go_to(index)
     }
 
     /// [`Line::take_snapshot`] on version 0.
     pub fn take_snapshot(&mut self, name: impl Into<String>, taken: u64) -> usize {
+        self.show_if_stale();
         self.line.take_snapshot(name, taken)
     }
 
     /// [`Line::restore_snapshot`] on version 0.
     pub fn restore_snapshot(&mut self, index: usize) -> bool {
+        self.show_if_stale();
         self.line.restore_snapshot(index)
     }
 
     /// [`Line::undo`] on version 0.
     pub fn undo(&mut self) -> bool {
+        self.show_if_stale();
         self.line.undo()
     }
 
     /// [`Line::redo`] on version 0.
     pub fn redo(&mut self) -> bool {
+        self.show_if_stale();
         self.line.redo()
     }
 
     /// Version 0's line and every version's, version 0 first.
+    /// How many of the file's states could not be read (§724): while
+    /// there are any, nothing writes the sidecar, which would hide
+    /// their loss.
+    pub fn unread(&self) -> usize {
+        self.lines().map(|l| l.unread).sum()
+    }
+
+    /// Whether the sidecar may be written: refused with what keeps it
+    /// from being written, a newer build's floor ([`Self::newer`]) or
+    /// states it could not read ([`Self::unread`]). Every write of the
+    /// file asks it, and so does every write beside it (an XMP of its
+    /// meta) a caller makes from it.
+    pub fn writable(&self) -> Result<()> {
+        if let Some(floor) = self.newer {
+            return Err(crate::Error::ReadOnly(floor));
+        }
+        match self.unread() {
+            0 => Ok(()),
+            n => Err(crate::Error::Unread(n)),
+        }
+    }
+
+    /// Whether the sidecar is read-only (§724): made with a newer build,
+    /// whose write floor is past this one's schema, or holding states
+    /// this build could not read. Nothing writes it, or anything beside
+    /// it from it; a reader that holds it says so.
+    pub fn read_only(&self) -> bool {
+        self.writable().is_err()
+    }
+
     pub fn lines(&self) -> impl Iterator<Item = &Line> {
         std::iter::once(&self.line).chain(self.versions.iter().map(|v| &v.line))
     }
 
-    /// [`Self::lines`], to change in place.
+    /// [`Self::lines`], to change in place, each shown under the
+    /// sidecar's turn first ([`Self::show_if_stale`]).
     pub fn lines_mut(&mut self) -> impl Iterator<Item = &mut Line> {
+        self.show_if_stale();
+        self.each_line_mut()
+    }
+
+    /// The start a line nobody developed holds for the frame at `raw`
+    /// (§724), by what the file is and no setting: a picture's own
+    /// default, a raw's with its lens section on. A reader that holds
+    /// the editor's settings makes its own (`on_disk::fresh_sidecar`).
+    pub fn start_of(raw: &Path) -> Edit {
+        if greycard_core::picture::is_picture_path(raw) {
+            Edit::for_picture()
+        } else {
+            Edit::default()
+        }
+    }
+
+    /// Every line nobody developed (§724) given `start` as its start,
+    /// shown under the sidecar's turn; a line with a recorded state is
+    /// left as it is. What a reader does as it reads, and only then: a
+    /// line read holds no start yet, and one started may have been
+    /// seeded since, which a start given again would undo.
+    pub(crate) fn set_start(&mut self, start: &Edit) {
+        self.start = start.clone();
+        for line in self.each_line_mut() {
+            line.set_start(start);
+        }
+    }
+
+    /// A sidecar nothing has been written for, started at `start`
+    /// (§724): no state recorded, and nothing of the line written until
+    /// something records one.
+    pub fn starting_at(start: &Edit) -> Self {
+        let mut sidecar = Self::default();
+        sidecar.set_start(start);
+        sidecar
+    }
+
+    /// Every line here nobody developed takes the one `local` holds for
+    /// it when that one holds no state either (§724), unless this one has
+    /// taken its seed and `local`'s has not: a line nobody developed is
+    /// its start, the ISO's seed included, and it is the local reader's,
+    /// so a copy read for a save or a join never undoes a seed or gives a
+    /// line a start no reader of the frame made. A line `local` has
+    /// developed, or does not have (a version made elsewhere), keeps the
+    /// start it was read with: [`Self::start`].
+    pub(crate) fn keep_starts_of(&mut self, local: &Sidecar) {
+        self.line.keep_start_of(&local.line);
+        for v in &mut self.versions {
+            if let Some(there) = local.version(&v.id) {
+                v.line.keep_start_of(&there.line);
+            }
+        }
+    }
+
+    /// [`Self::lines_mut`] as they stand.
+    fn each_line_mut(&mut self) -> impl Iterator<Item = &mut Line> {
         std::iter::once(&mut self.line).chain(self.versions.iter_mut().map(|v| &mut v.line))
     }
 
@@ -553,26 +975,116 @@ impl Sidecar {
         self.lines().flat_map(Line::edits)
     }
 
-    fn edits_mut(&mut self) -> impl Iterator<Item = &mut Edit> {
-        self.lines_mut().flat_map(Line::edits_mut)
-    }
-
-    /// Whether any state of any version is still waiting on the
-    /// frame's shape: see [`Edit::needs_frame`]. A sidecar that answers
-    /// yes reads and renders, and saves back as the version 3 it is,
-    /// but its crop must not be refitted until the frame is known.
+    /// Whether any state of any version waits on the frame's shape to
+    /// be shown ([`Line::waits`]): one placed under another turn with
+    /// something placed on the picture, or one still wanting version 4's
+    /// step ([`Edit::needs_frame`]), and no shape known to show it by:
+    /// not the file's ([`Self::shape`]), and not the frame's, asked by
+    /// the reader that holds it ([`Self::settle_shape`]). Such a state
+    /// saves back as it was written; while the current one waits, the
+    /// line is read-only ([`Line::current_waits`]) and hands out no
+    /// edit to develop or copy ([`Line::ready`]).
     pub fn needs_frame(&self) -> bool {
-        self.edits().any(Edit::needs_frame)
+        self.lines().any(Line::waits)
     }
 
-    /// Finish version 4's step on every state of every version, now the
-    /// frame's shape is known. `source_portrait` is as
-    /// [`Edit::migrate_with_frame`] has it, and includes this
-    /// sidecar's own [`Self::turn`], since that is already in the
-    /// developed picture. A no-op when nothing was waiting.
-    pub fn migrate_with_frame(&mut self, source_portrait: bool) {
-        for edit in self.edits_mut() {
-            edit.migrate_with_frame(source_portrait);
+    /// Whether showing any state of any version takes the frame's shape:
+    /// one placed under another turn than the sidecar's, or one wanting
+    /// version 4's step. The file writes its shape while this holds
+    /// ([`Self::written_shape`]).
+    pub fn needs_shape(&self) -> bool {
+        self.lines().any(Line::needs_shape)
+    }
+
+    /// The shape as the file writes it: [`Self::shape`] while a state
+    /// needs it to be shown ([`Self::needs_shape`]), or while a turn is
+    /// owed ([`Self::turn_owed`]), which a later read makes by it; none
+    /// otherwise, so a frame nobody turned writes no shape for having
+    /// been measured.
+    pub fn written_shape(&self) -> Option<Measured> {
+        self.shape
+            .filter(|_| self.needs_shape() || self.turn_owed.is_some())
+    }
+
+    /// The turn an XMP written beside the frame says: an owed one
+    /// ([`Self::turn_owed`]) while there is one, so the other program's
+    /// rotation stays in the packet until it is made; the frame's own
+    /// otherwise.
+    pub fn xmp_turn(&self) -> u8 {
+        self.turn_owed.unwrap_or(self.turn) % 4
+    }
+
+    /// The frame's developed picture is `aspect` wide for each unit of
+    /// its height under this sidecar's [`Self::turn`] (the camera's tag
+    /// and the frame's own turn applied, the edit's quarter turns not;
+    /// what `Stance::shown_size` reports): every state shown again by
+    /// it, so what waited on it is shown, version 4's step done in the
+    /// shown copies (§724). The states as written keep what they hold.
+    /// An aspect that is not a positive number says nothing.
+    pub fn frame_known(&mut self, aspect: f32) {
+        let Some(shape) = Measured::new(self.turn, aspect) else {
+            return;
+        };
+        self.shape = Some(shape);
+        self.show();
+        self.as_read_knowing_the_shape();
+    }
+
+    /// [`Self::as_revised`] taken again, after a step that makes what a
+    /// read that knew the frame's shape would have made: the copy is as
+    /// its revision left it, if it was before. A copy holding none (a
+    /// release build's read) holds none still.
+    fn as_read_knowing_the_shape(&mut self) {
+        if self.as_revised.is_some() {
+            self.as_revised = self.content_key();
+        }
+    }
+
+    /// [`Self::shape`] from another copy of this frame's sidecar, when
+    /// this one has none: the picture is the same whichever copy says
+    /// it. Shown again when it was not known.
+    pub fn take_shape(&mut self, shape: Option<Measured>) {
+        if self.shape.is_none() && shape.is_some() {
+            self.shape = shape;
+            self.show();
+            self.as_read_knowing_the_shape();
+        }
+    }
+
+    /// Every state of every line shown under [`Self::turn`], made again
+    /// from the state as written ([`Line::show`]), by the shape as it
+    /// stands. One that waits on a shape nothing has said waits until
+    /// the reader that holds the frame says it ([`Self::settle_shape`]).
+    pub(crate) fn show(&mut self) {
+        let (turn, shape) = (self.turn % 4, self.shape);
+        for line in self.each_line_mut() {
+            line.show(turn, shape);
+        }
+    }
+
+    /// [`Self::show`], when a line here is shown under another turn than
+    /// the sidecar's: one put on the sidecar, or a turn set by hand, since
+    /// the last show. Called before anything acts on a line, so a state
+    /// is never recorded, undone, or redone in a frame it is not in.
+    pub(crate) fn show_if_stale(&mut self) {
+        let turn = self.turn;
+        if self.lines().any(|l| l.shown_elsewhere(turn)) {
+            self.show();
+        }
+    }
+
+    /// Where a state still waits on the frame's shape, `ask` is asked
+    /// for it under the frame's turn, and every state shown by what it
+    /// says ([`Self::frame_known`]); nothing is asked of a sidecar with
+    /// nothing waiting. The edit crate reads no file: `ask` is the
+    /// reader's, which holds the frame (a header read, the window's
+    /// develop, nothing at all), and says none when it cannot say now.
+    pub fn settle_shape(&mut self, ask: impl FnOnce(u8) -> Option<f32>) {
+        self.show_if_stale();
+        if self.needs_frame()
+            && let Some(aspect) = ask(self.turn % 4)
+        {
+            self.frame_known(aspect);
         }
     }
 
@@ -586,34 +1098,95 @@ impl Sidecar {
         took
     }
 
-    /// Turn the frame `quarters` more quarter turns clockwise, and
-    /// carry every state here round with it: the crop, the keystone
-    /// and a held aspect, and the masks and the repair patches when
-    /// `aspect` says what shape the picture is (see [`Edit::turn`]).
+    /// Turn the frame `quarters` more quarter turns clockwise: the
+    /// file's [`Self::turn`] changes and nothing else in it (§724). None
+    /// when nothing turned; turned, the map positions on the picture
+    /// were carried round by, for what is placed on it outside the
+    /// sidecar (a Fill's strokes waiting to be recorded), when the shape
+    /// was known.
     ///
-    /// *Every* state, not only the current one, and of every version,
-    /// the turn being the file's. A turn is not a step in developing
-    /// the picture — no state is recorded for it, and an undo that
-    /// took the crop back but left the frame on its side would be
-    /// worse than one that does neither — and that promise only holds
-    /// if what undo, redo and a snapshot hand back means the same
-    /// pixels the current state does. So the history, the redo stack
-    /// and the snapshots take the same map.
+    /// Every state, of every version, is then shown under the new turn
+    /// from the turn it was placed under: the crop, the keystone and a
+    /// held aspect, and the masks and the repair patches by the
+    /// frame's shape (see [`Edit::turn`]). A turn is not a step in
+    /// developing the picture — no state is recorded for it, and an
+    /// undo that took the crop back but left the frame on its side
+    /// would be worse than one that does neither — and that promise
+    /// holds because what undo, redo and a snapshot hand back is shown
+    /// under the same turn the current state is.
     ///
-    /// `aspect` is the picture's width over its height *before* the
-    /// turn, and is `None` when the caller cannot say. The geometry
-    /// turns either way; anything placed on the picture is left
-    /// where it is, which [`Sidecar::placed`] warns the caller
-    /// about.
-    pub fn turn_by(&mut self, quarters: i32, aspect: Option<f32>) {
+    /// A turn takes the frame's shape: `aspect`, the picture's width over
+    /// its height under the turn it stands at now, as the caller measured
+    /// it (the open develop's, the file's), or failing one the shape
+    /// known ([`Self::turn_by_asking`] asks for one). The shape
+    /// the turn was made by is written beside it ([`Self::written_shape`]),
+    /// so every reader shows what was placed before it as this one does.
+    /// A frame nothing can measure turns only when no state of it has
+    /// anything a shape is wanted for ([`Self::wants_shape`]); one that
+    /// has is not turned, and nothing changes: turned, a mask placed
+    /// under the turn before would wait on a shape no reader has.
+    pub fn turn_by(&mut self, quarters: i32, aspect: Option<f32>) -> Option<Option<mask::Turned>> {
         if quarters.rem_euclid(4) == 0 {
-            return;
+            return None;
         }
+        if let Some(shape) = aspect.and_then(|a| Measured::new(self.turn, a)) {
+            self.shape = Some(shape);
+        }
+        let positions = match self.shape {
+            Some(shape) => Some(mask::Turned::new(quarters, shape.aspect_at(self.turn % 4))),
+            None if !self.wants_shape() => None,
+            None => return None,
+        };
         self.turn = (i32::from(self.turn) + quarters).rem_euclid(4) as u8;
-        let positions = aspect.map(|a| mask::Turned::new(quarters, a));
-        for edit in self.edits_mut() {
-            edit.turn(quarters, positions);
+        // A turn made, by hand or by an XMP, is the word on the turn: one
+        // owed is not made over it at the next read.
+        self.turn_owed = None;
+        self.show();
+        Some(positions)
+    }
+
+    /// [`Self::turn_by`] for a caller with no measure in hand: `ask` is
+    /// asked for the shape under the turn the frame stands at now, and
+    /// only when the turn has something to carry by it and no shape is
+    /// known, so a frame with nothing placed turns without a read (the
+    /// library's pass and a folder's open adopt an XMP's turn this way).
+    pub fn turn_by_asking(
+        &mut self,
+        quarters: i32,
+        ask: impl FnOnce(u8) -> Option<f32>,
+    ) -> Option<Option<mask::Turned>> {
+        let aspect = if quarters.rem_euclid(4) != 0 && self.shape.is_none() && self.wants_shape() {
+            ask(self.turn % 4)
+        } else {
+            None
+        };
+        self.turn_by(quarters, aspect)
+    }
+
+    /// The turn an XMP asked for that nothing could measure the frame to
+    /// make ([`Self::turn_owed`]), made now by the frame's shape: the
+    /// sidecar's, or `ask`'s ([`Self::turn_by_asking`]). The quarters it
+    /// turned, 0 when the frame stood there already; None when nothing
+    /// was owed or it still cannot be made.
+    pub fn make_owed_turn(&mut self, ask: impl FnOnce(u8) -> Option<f32>) -> Option<i32> {
+        let owed = self.turn_owed?;
+        let by = i32::from(owed % 4) - i32::from(self.turn % 4);
+        if by == 0 {
+            self.turn_owed = None;
+            self.as_read_knowing_the_shape();
+            return Some(0);
         }
+        self.turn_by_asking(by, ask)?;
+        self.turn_owed = None;
+        self.as_read_knowing_the_shape();
+        Some(by)
+    }
+
+    /// Whether any state of any version has something a turn needs the
+    /// frame's shape for: work placed on the picture ([`Edit::placed`]),
+    /// or version 4's step still to do ([`Edit::needs_frame`]).
+    pub fn wants_shape(&self) -> bool {
+        self.edits().any(|e| e.placed() || e.needs_frame())
     }
 
     /// Whether any state of any version has work placed on the picture
@@ -705,6 +1278,7 @@ impl Sidecar {
     /// yet, and nothing renamed. A batch stages every frame's before it
     /// commits any; [`Self::drop_other`] follows each commit.
     pub fn stage_in(&self, raw: &Path, placement: Placement) -> Result<Staged> {
+        self.writable()?;
         let path = Self::path_in(raw, placement);
         if placement == Placement::Folder
             && let Some(folder) = path.parent()
@@ -720,11 +1294,23 @@ impl Sidecar {
     /// The copy in the place `placement` does not name removed, after a
     /// save to the one it does: superseded either way (see
     /// [`Self::save_in`]). A failure is said and not returned.
+    ///
+    /// A copy this build may not write over is kept whatever the save
+    /// decided ([`must_keep`]): a newer build's, or one that will not
+    /// read, is somebody's data (§724).
     pub fn drop_other(raw: &Path, placement: Placement) {
         let other = Self::path_in(raw, placement.other());
-        if other.exists()
-            && let Err(e) = std::fs::remove_file(&other)
-        {
+        if !other.exists() || Self::set_aside_if_broken(&other) {
+            return;
+        }
+        if Self::must_keep(&other) {
+            log::warn!(
+                "{}: a newer greycard's, or one that will not open: kept",
+                other.display()
+            );
+            return;
+        }
+        if let Err(e) = std::fs::remove_file(&other) {
             log::warn!("{}: superseded but not removed: {e}", other.display());
         }
     }
@@ -769,6 +1355,7 @@ impl Sidecar {
     /// The write, and what was written: its bytes, and the file as a
     /// stat of it found it before the rename.
     fn write_text_to(&self, path: &Path) -> Result<(Bytes, Option<FileStat>)> {
+        self.writable()?;
         // A copy's hidden folder may not be there yet: the archive's
         // shoot was copied before the folder was, or made by another
         // tool. Made and hidden as a save makes its own.
@@ -803,8 +1390,24 @@ impl Sidecar {
             Self::path_in(raw, placement),
             Self::path_in(raw, placement.other()),
         );
+        // One that will not parse is set aside first, out of the way
+        // (§724).
+        if here.exists() && other.exists() {
+            Self::set_aside_if_broken(&here);
+            Self::set_aside_if_broken(&other);
+        }
         if !other.exists() {
             return Ok(Settled::InPlace);
+        }
+        // With a copy in each place, one would be moved over or
+        // removed: neither, when either is a newer build's (§724). One
+        // alone is only renamed, nothing lost.
+        if here.exists() && (Self::must_keep(&here) || Self::must_keep(&other)) {
+            log::warn!(
+                "{}: a newer greycard's sidecar is beside it; both left where they are",
+                raw.display()
+            );
+            return Ok(Settled::Kept);
         }
         if Self::find(raw).as_deref() == Some(other.as_path()) {
             if placement == Placement::Folder {
@@ -831,6 +1434,116 @@ pub enum Settled {
     /// The copy in the other place was the older of two and was
     /// removed; the one read was already in place.
     Dropped,
+    /// One of the two is a newer build's, or will not open (§724): both
+    /// left where they were.
+    Kept,
+}
+
+/// Whether the file at `path` says a floor past this build's schema
+/// ([`Floors`]): a newer build's, read-only here. Read from its head
+/// alone: every build that writes floors writes them first, so a file
+/// that does not start with them was written before there were any,
+/// and is no newer build's.
+fn by_newer_build(path: &Path) -> bool {
+    use std::io::Read;
+    let mut head = [0u8; 256];
+    let Ok(n) = std::fs::File::open(path).and_then(|mut f| f.read(&mut head)) else {
+        return false;
+    };
+    let head = String::from_utf8_lossy(&head[..n]);
+    let Some(rest) = head.trim_start().strip_prefix('{') else {
+        return false;
+    };
+    let Some(rest) = rest.trim_start().strip_prefix("\"floors\"") else {
+        return false;
+    };
+    let Some(close) = rest.find('}') else {
+        return false;
+    };
+    let Some(open) = rest.find('{').filter(|o| *o < close) else {
+        return false;
+    };
+    serde_json::from_str::<serde_json::Value>(&rest[open..=close])
+        .ok()
+        .map(|v| Floors::read(&v))
+        .is_some_and(|f| f.read > VERSION || f.write > VERSION)
+}
+
+/// What a copy of a frame's sidecar is to this build, for whether it
+/// may be removed, moved over, or written over (§724).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CopyIs {
+    /// One this build reads and writes.
+    Ours,
+    /// A newer build's (its floors past ours, or states this build
+    /// cannot read), or one that will not open: left as it is.
+    Kept,
+    /// One that will not parse, with no floors past ours: set aside as
+    /// `<name>.bad` ([`set_aside`]), its bytes kept, so it stops
+    /// standing in the way.
+    Broken,
+}
+
+impl Sidecar {
+    /// What the copy at `path` is to this build ([`CopyIs`]), read now,
+    /// never remembered: every caller removes or renames on it, and a
+    /// file can change under the same length and time. A head that shows
+    /// floors past ours is a newer build's whatever follows (one cut off
+    /// mid-sync too), and costs no whole read.
+    pub fn copy_is(path: &Path) -> CopyIs {
+        if by_newer_build(path) {
+            return CopyIs::Kept;
+        }
+        Self::copy_is_read(path)
+    }
+
+    fn copy_is_read(path: &Path) -> CopyIs {
+        let Ok(bytes) = std::fs::read(path) else {
+            return CopyIs::Kept;
+        };
+        match Self::read_as_file(path) {
+            Ok(s) if s.read_only() => CopyIs::Kept,
+            Ok(_) => CopyIs::Ours,
+            Err(_) => match serde_json::from_slice::<serde_json::Value>(&bytes) {
+                Ok(v)
+                    if v.get("floors")
+                        .map(Floors::read)
+                        .is_some_and(|f| f.read > VERSION || f.write > VERSION) =>
+                {
+                    CopyIs::Kept
+                }
+                _ => CopyIs::Broken,
+            },
+        }
+    }
+
+    /// Whether the sidecar at `path` is one this build may not write
+    /// over, move over, or remove (§724): [`CopyIs::Kept`].
+    pub fn must_keep(path: &Path) -> bool {
+        Self::copy_is(path) == CopyIs::Kept
+    }
+
+    /// The copy at `path` set aside as `<name>.bad` when it is
+    /// [`CopyIs::Broken`], said in the log; true when it was.
+    pub fn set_aside_if_broken(path: &Path) -> bool {
+        if !path.exists() || Self::copy_is(path) != CopyIs::Broken {
+            return false;
+        }
+        match checked::set_aside(path) {
+            Ok(to) => {
+                log::warn!(
+                    "{}: will not read; set aside as {}",
+                    path.display(),
+                    to.display()
+                );
+                true
+            }
+            Err(e) => {
+                log::warn!("{}: will not read, and not set aside: {e}", path.display());
+                false
+            }
+        }
+    }
 }
 
 /// Replace the file at `path` with `bytes`, whole: written and synced
@@ -1026,10 +1739,33 @@ pub use checked::{
     Asides, Bytes, Checked, FileStat, NotSaved, OnDisk, Saved, aside_at, asides_among, asides_of,
 };
 
+/// A sidecar as serde alone reads `json`, with no migration, no show,
+/// and no start: for a test of what the derive itself does.
+#[cfg(test)]
+pub(crate) fn plain(json: &str) -> serde_json::Result<Sidecar> {
+    Sidecar::deserialize(&mut serde_json::Deserializer::from_str(json))
+}
+
+/// [`plain`] of JSON already parsed.
+#[cfg(test)]
+pub(crate) fn plain_value(value: serde_json::Value) -> serde_json::Result<Sidecar> {
+    Sidecar::deserialize(value)
+}
+
 #[cfg(test)]
 mod checked_matrix;
 #[cfg(test)]
 mod checked_tests;
+#[cfg(test)]
+mod floors_tests;
+#[cfg(test)]
+mod golden_tests;
+#[cfg(test)]
+mod parent_tests;
+#[cfg(test)]
+pub(crate) mod placed_tests;
+#[cfg(test)]
+mod start_tests;
 
 #[cfg(test)]
 mod tests {
@@ -1060,7 +1796,7 @@ mod tests {
             format!(r#"{{"current": {old}, "history": [{old}]}}"#),
         )
         .unwrap();
-        let sidecar = Sidecar::load(&raw).unwrap().unwrap();
+        let sidecar = Sidecar::load_as_file(&raw).unwrap().unwrap();
         assert_eq!(sidecar.current, e);
         greycard_core::testing::remove_dir_retry(&dir);
 
@@ -1183,7 +1919,7 @@ mod tests {
             sidecar.save(&raw).unwrap();
         }
         assert_eq!(sidecar.saved, 3);
-        assert_eq!(Sidecar::load(&raw).unwrap().unwrap().saved, 3);
+        assert_eq!(Sidecar::load_as_file(&raw).unwrap().unwrap().saved, 3);
     }
 
     #[test]
@@ -1260,7 +1996,7 @@ mod tests {
         // What this build's own sidecars looked like before this
         // field existed, and what an older build still writes.
         std::fs::write(&beside, r#"{"current":{"version":4}}"#).unwrap();
-        let loaded = Sidecar::load(&raw).unwrap().unwrap();
+        let loaded = Sidecar::load_as_file(&raw).unwrap().unwrap();
         assert_eq!(loaded.saved, 0);
     }
 
@@ -1279,7 +2015,7 @@ mod tests {
             r#"{"current":{"version":4,"light":{"exposure":2.0}},"saved":-1}"#,
         )
         .unwrap();
-        let loaded = Sidecar::load(&raw).unwrap().unwrap();
+        let loaded = Sidecar::load_as_file(&raw).unwrap().unwrap();
         assert_eq!(loaded.saved, 0);
         assert_eq!(
             loaded.current.light.exposure, 2.0,
@@ -1363,7 +2099,7 @@ mod tests {
                 .unwrap()
                 .all(|e| e.unwrap().path().extension() != Some(std::ffi::OsStr::new("tmp")))
         );
-        assert_eq!(Sidecar::load(&raw).unwrap().unwrap(), sidecar);
+        assert_eq!(Sidecar::load_as_file(&raw).unwrap().unwrap(), sidecar);
 
         // Saved beside afterwards: the folder's copy is superseded
         // and goes, so the frame has one sidecar, and it loads.
@@ -1374,7 +2110,7 @@ mod tests {
         later.save(&raw).unwrap();
         assert!(!under.exists(), "the folder's copy is superseded");
         assert!(Sidecar::path_for(&raw).exists());
-        assert_eq!(Sidecar::load(&raw).unwrap().unwrap(), later);
+        assert_eq!(Sidecar::load_as_file(&raw).unwrap().unwrap(), later);
 
         // And back under the folder: the beside copy goes the same way.
         later.save_in(&raw, Placement::Folder).unwrap();
@@ -1383,7 +2119,7 @@ mod tests {
             !Sidecar::path_for(&raw).exists(),
             "the beside copy is superseded"
         );
-        assert_eq!(Sidecar::load(&raw).unwrap().unwrap(), later);
+        assert_eq!(Sidecar::load_as_file(&raw).unwrap().unwrap(), later);
     }
 
     #[test]
@@ -1401,12 +2137,12 @@ mod tests {
         let under = Sidecar::path_in(&raw, Placement::Folder);
         assert!(!under.parent().unwrap().exists());
         sidecar.write_to(&under).unwrap();
-        assert_eq!(Sidecar::read(&under).unwrap(), sidecar);
+        assert_eq!(Sidecar::read_as_file(&under).unwrap(), sidecar);
 
         // Beside, the shoot folder is what there is; nothing made.
         let beside = Sidecar::path_in(&raw, Placement::Beside);
         sidecar.write_to(&beside).unwrap();
-        assert_eq!(Sidecar::read(&beside).unwrap(), sidecar);
+        assert_eq!(Sidecar::read_as_file(&beside).unwrap(), sidecar);
     }
 
     #[test]
@@ -1418,10 +2154,11 @@ mod tests {
             dir.join("C.CR3"),
             dir.join("D.CR3"),
         );
+        // Each a sidecar that reads, told apart by a key no build reads.
         let place = |raw: &Path, placement, text: &str| {
             let path = Sidecar::path_in(raw, placement);
             std::fs::create_dir_all(path.parent().unwrap()).unwrap();
-            std::fs::write(&path, text).unwrap();
+            std::fs::write(&path, format!(r#"{{"told": "{text}"}}"#)).unwrap();
             path
         };
         // A beside only; B under the folder only; C in both, the one
@@ -1444,8 +2181,11 @@ mod tests {
         assert_eq!(Sidecar::settle(&c, to).unwrap(), Settled::Moved);
         assert_eq!(Sidecar::settle(&d, to).unwrap(), Settled::InPlace);
 
-        let read =
-            |raw: &Path, placement| std::fs::read_to_string(Sidecar::path_in(raw, placement)).ok();
+        let read = |raw: &Path, placement| {
+            let text = std::fs::read_to_string(Sidecar::path_in(raw, placement)).ok()?;
+            let v: serde_json::Value = serde_json::from_str(&text).unwrap();
+            Some(v["told"].as_str().unwrap().to_string())
+        };
         assert_eq!(read(&a, to).as_deref(), Some("a"));
         assert_eq!(read(&a, Placement::Beside), None);
         assert_eq!(read(&b, to).as_deref(), Some("b"));
@@ -1469,7 +2209,7 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("greycard-edit-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let raw = dir.join("IMG_0001.CR3");
-        assert!(Sidecar::load(&raw).unwrap().is_none());
+        assert!(Sidecar::load_as_file(&raw).unwrap().is_none());
         let mut sidecar = Sidecar::default();
         let mut e = Edit::default();
         e.light.exposure = 1.0;
@@ -1480,7 +2220,7 @@ mod tests {
         assert_eq!(sidecar.history.len(), 2);
         sidecar.save(&raw).unwrap();
         assert!(Sidecar::path_for(&raw).ends_with("IMG_0001.CR3.gcd"));
-        let back = Sidecar::load(&raw).unwrap().unwrap();
+        let back = Sidecar::load_as_file(&raw).unwrap().unwrap();
         assert_eq!(back, sidecar);
         assert_eq!(back.current.light.exposure, 2.0);
         greycard_core::testing::remove_dir_retry(&dir);
@@ -1506,7 +2246,7 @@ mod tests {
         assert_eq!(sidecar.states(), states);
         assert!(!sidecar.history.is_empty());
         sidecar.save(&raw).unwrap();
-        let back = Sidecar::load(&raw).unwrap().unwrap();
+        let back = Sidecar::load_as_file(&raw).unwrap().unwrap();
         assert_eq!(back, sidecar);
         assert_eq!(back.meta.rating, 4);
         assert_eq!(back.meta.flag, Flag::Pick);
@@ -1520,10 +2260,14 @@ mod tests {
     fn a_meta_that_says_nothing_is_not_written_and_a_bad_one_costs_no_edit() {
         // A developed frame nobody has rated: no meta block at all.
         let mut sidecar = Sidecar::default();
-        sidecar.current.light.exposure = 1.0;
+        {
+            let mut e = sidecar.current().clone();
+            e.light.exposure = 1.0;
+            sidecar.record(e);
+        }
         let json = serde_json::to_string(&sidecar).unwrap();
         assert!(!json.contains("meta"), "{json}");
-        assert_eq!(serde_json::from_str::<Sidecar>(&json).unwrap(), sidecar);
+        assert_eq!(crate::sidecar::plain(&json).unwrap(), sidecar);
         sidecar.meta.set_rating(1);
         assert!(serde_json::to_string(&sidecar).unwrap().contains("meta"));
 
@@ -1531,14 +2275,14 @@ mod tests {
         // and the history down with it: that would open the frame as
         // a fresh one and let the next slider write over both.
         let json = r#"{"current":{"version":3,"light":{"exposure":0.5}},"meta":"picked"}"#;
-        let back: Sidecar = serde_json::from_str(json).unwrap();
+        let back: Sidecar = crate::sidecar::plain(json).unwrap();
         assert_eq!(back.current.light.exposure, 0.5);
         assert!(back.meta.is_empty());
         // Nor does one field of it: a label from a later build leaves
         // the rating, and the edit, where they are.
         let json = r#"{"current":{"version":3,"light":{"exposure":0.5}},
                        "meta":{"rating":3,"label":"grey"}}"#;
-        let back: Sidecar = serde_json::from_str(json).unwrap();
+        let back: Sidecar = crate::sidecar::plain(json).unwrap();
         assert_eq!(back.current.light.exposure, 0.5);
         assert_eq!(back.meta.rating, 3);
         assert_eq!(back.meta.label, meta::Label::None);
@@ -1575,7 +2319,11 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         let raw = dir.join("IMG_0002.CR3");
         let mut sidecar = Sidecar::default();
-        sidecar.current.light.exposure = 0.25;
+        {
+            let mut e = sidecar.current().clone();
+            e.light.exposure = 0.25;
+            sidecar.record(e);
+        }
 
         // Nothing to say: no field in the file at all, so a sidecar
         // written before the turn existed and one written now for an
@@ -1586,7 +2334,7 @@ mod tests {
         sidecar.turn_by(-1, Some(1.5));
         assert_eq!(sidecar.turn, 3);
         sidecar.save(&raw).unwrap();
-        let back = Sidecar::load(&raw).unwrap().unwrap();
+        let back = Sidecar::load_as_file(&raw).unwrap().unwrap();
         assert_eq!(back.turn, 3);
         assert_eq!(back.current.light.exposure, 0.25);
         greycard_core::testing::remove_dir_retry(&dir);
@@ -1618,14 +2366,14 @@ mod tests {
             let json = format!(
                 r#"{{"current":{{"version":3,"light":{{"exposure":0.5}}}},"turn":{value}}}"#
             );
-            let back: Sidecar = serde_json::from_str(&json).unwrap();
+            let back: Sidecar = crate::sidecar::plain(&json).unwrap();
             assert_eq!(back.turn, 0, "{value}");
             assert_eq!(back.current.light.exposure, 0.5, "{value}");
         }
         // A turn past three is the turn it comes to, not a refusal.
-        let back: Sidecar = serde_json::from_str(r#"{"turn":6}"#).unwrap();
+        let back: Sidecar = crate::sidecar::plain(r#"{"turn":6}"#).unwrap();
         assert_eq!(back.turn, 2);
-        let back: Sidecar = serde_json::from_str(r#"{"turn":7}"#).unwrap();
+        let back: Sidecar = crate::sidecar::plain(r#"{"turn":7}"#).unwrap();
         assert_eq!(back.turn, 3);
     }
 
@@ -1726,7 +2474,7 @@ mod tests {
         for (w, h) in [(6000.0f32, 4000.0f32), (4000.0f32, 6000.0f32)] {
             for q in 1..4i32 {
                 let mut sidecar = Sidecar {
-                    line: Line::of(make()),
+                    line: Line::of(make(), 0).unwrap(),
                     ..Sidecar::default()
                 };
                 // One state behind it, one undone in front of it and
@@ -1734,12 +2482,9 @@ mod tests {
                 // has to land on the same pixels.
                 sidecar.history.push(make().into());
                 sidecar.redo.push(make().into());
-                sidecar.snapshots.push(Snapshot {
-                    name: "before".into(),
-                    taken: 0,
-                    edit: make(),
-                });
-                sidecar.turn_by(q, Some(w / h));
+                sidecar.snapshots.push(Snapshot::new("before", 0, make()));
+                sidecar.frame_known(w / h);
+                sidecar.turn_by(q, None);
 
                 let (_, (nw, _)) = turn_pixel((0.0, 0.0), w, h, q);
                 let want = |p: [f32; 2]| {
@@ -1805,16 +2550,18 @@ mod tests {
 
         // And all the way round is where it started.
         let mut sidecar = Sidecar {
-            line: Line::of(make()),
+            line: Line::of(make(), 0).unwrap(),
             ..Sidecar::default()
         };
         let (w, h) = (6000.0f32, 4000.0f32);
-        let mut aspect = w / h;
+        sidecar.frame_known(w / h);
         for _ in 0..4 {
-            sidecar.turn_by(1, Some(aspect));
-            aspect = 1.0 / aspect;
+            sidecar.turn_by(1, None);
         }
         assert_eq!(sidecar.turn, 0);
+        // To the bit: each turn shows the state as written again, never
+        // the copy shown the turn before (§724).
+        assert_eq!(sidecar.current, make());
         let Shape::Radial {
             center,
             radius,
@@ -1829,21 +2576,22 @@ mod tests {
         assert!((angle - 20.0).abs() < 1e-4);
     }
 
-    /// With no picture to measure by, the geometry still turns — a
-    /// crop is in fractions of the plane and needs no aspect — and
-    /// anything placed on the picture stays where it is, which the
-    /// caller is told about rather than left to find out.
+    /// A turn nothing can measure turns nothing (§724): turned, a mask
+    /// placed under the turn before would wait on a shape no reader of
+    /// the file has. Measured by the caller, the turn shows the mask
+    /// where a turn that knew the shape all along would, keeps the state
+    /// as written, and writes the shape it was made by beside it.
     #[test]
-    fn a_turn_with_no_aspect_moves_the_crop_and_says_what_it_left() {
+    fn a_turn_nothing_can_measure_turns_nothing() {
         use mask::{Component, Mask};
         let mut sidecar = Sidecar::default();
+        sidecar.line.record_root();
         sidecar.current.geometry.crop = Some(geometry::Crop {
             x: 0.0,
             y: 0.0,
             w: 0.5,
             h: 0.5,
         });
-        assert!(!sidecar.placed(), "a crop is not placed on the picture");
         sidecar.current.adjustments.push(Adjustment {
             id: 1,
             mask: Mask {
@@ -1852,10 +2600,29 @@ mod tests {
             },
             ..Adjustment::default()
         });
-        assert!(sidecar.placed());
-        let before = sidecar.current.adjustments[0].mask.clone();
-        sidecar.turn_by(1, None);
+        sidecar.current.adjustments[0].mask.components[0].shape = mask::Shape::Radial {
+            center: [0.3, 0.4],
+            radius: [0.1, 0.05],
+            angle: 10.0,
+            feather: 0.5,
+        };
+        let written = sidecar.current.clone();
+        let before = sidecar.clone();
+        assert!(sidecar.turn_by(1, None).is_none());
+        assert_eq!(sidecar, before, "nothing changes");
+        assert_eq!(sidecar.current, written);
+        assert_eq!(sidecar.written_shape(), None);
+
+        // The picture is 1.5 wide before the turn.
+        assert_eq!(
+            sidecar.turn_by(1, Some(1.5)),
+            Some(Some(mask::Turned::new(1, 1.5)))
+        );
         assert_eq!(sidecar.turn, 1);
+        assert!(!sidecar.needs_frame());
+        let mut known = written.clone();
+        known.turn(1, Some(mask::Turned::new(1, 1.5)));
+        assert_eq!(sidecar.current, known);
         assert_eq!(
             sidecar.current.geometry.crop,
             Some(geometry::Crop {
@@ -1865,7 +2632,18 @@ mod tests {
                 h: 0.5
             })
         );
-        assert_eq!(sidecar.current.adjustments[0].mask, before);
+        assert_eq!(*sidecar.current_written(), written);
+        assert_eq!(
+            sidecar.written_shape(),
+            Some(Measured {
+                turn: 0,
+                aspect: 1.5
+            })
+        );
+        // Read back with no frame to measure, it shows the same.
+        let back = Sidecar::from_json(&sidecar.to_json(), &crate::Edit::default()).unwrap();
+        assert_eq!(back, sidecar);
+        assert_eq!(back.current, known);
     }
 
     #[test]
@@ -1894,13 +2672,13 @@ mod tests {
     fn a_sidecar_can_hold_meta_with_no_edit_and_an_edit_with_no_meta() {
         // Rated before it was ever developed: the frame opens at the
         // default edit.
-        let only_meta: Sidecar = serde_json::from_str(r#"{"meta":{"rating":2}}"#).unwrap();
+        let only_meta: Sidecar = crate::sidecar::plain(r#"{"meta":{"rating":2}}"#).unwrap();
         assert_eq!(only_meta.meta.rating, 2);
         assert_eq!(only_meta.current, Edit::default());
         assert!(only_meta.history.is_empty());
         // Written before there was a meta section at all.
         let only_edit: Sidecar =
-            serde_json::from_str(r#"{"current":{"version":3,"light":{"exposure":0.5}}}"#).unwrap();
+            crate::sidecar::plain(r#"{"current":{"version":3,"light":{"exposure":0.5}}}"#).unwrap();
         assert_eq!(only_edit.current.light.exposure, 0.5);
         assert!(only_edit.meta.is_empty());
         // And the meta is no part of an edit: a preset or a look
@@ -1944,7 +2722,7 @@ mod before_versions {
         );
         s.meta.rating = 3;
         s.meta.keywords = vec!["harbor".into(), "dusk".into()];
-        s.turn_by(1, None);
+        s.turn_by(1, Some(1.5));
         s.xmp = Some(xmp::Adopted {
             file: "IMG_0001.xmp".into(),
             len: 1234,
@@ -1984,7 +2762,7 @@ mod before_versions {
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("IMG_0001.CR3.gcd");
         std::fs::write(&path, BEFORE_VERSIONS).unwrap();
-        let read = Sidecar::read(&path).unwrap();
+        let read = Sidecar::read_as_file(&path).unwrap();
         greycard_core::testing::remove_dir_retry(&dir);
 
         // What a build at schema 4 wrote, the same today: the states and
@@ -2004,14 +2782,17 @@ mod before_versions {
             .map(|(e, l, x)| (kept_zero(e), l, x))
             .collect();
         assert_eq!(states(&read.line), made_states);
+        // Their ids are made at the read, of each as this build writes
+        // it: so of the edit with its zero kept.
         let mut made_snapshots = made.snapshots.clone();
         for s in &mut made_snapshots {
             s.edit = kept_zero(s.edit.clone());
+            s.id = crate::line::snapshot_id(&s.written.edit(&s.edit), s.taken, 0);
         }
         assert_eq!(read.snapshots, made_snapshots);
         assert_eq!(read.last_export, made.last_export);
         assert_eq!(read.meta, made.meta);
-        let raw: Sidecar = serde_json::from_str(BEFORE_VERSIONS).unwrap();
+        let raw: Sidecar = crate::sidecar::plain(BEFORE_VERSIONS).unwrap();
         assert_eq!(read.meta_at, raw.meta_at);
         assert_eq!(read.turn, made.turn);
         assert_eq!(read.xmp, made.xmp);
@@ -2036,7 +2817,7 @@ mod before_versions {
         let written = read.to_json();
         assert!(written.contains(&format!("\"version\": {VERSION}")));
         assert!(!written.contains("\"version\": 4"));
-        let again = Sidecar::from_json(&written).unwrap();
+        let again = Sidecar::from_json(&written, &crate::Edit::default()).unwrap();
         assert_eq!(again, read);
         assert_eq!(again.to_json(), written);
     }
@@ -2048,8 +2829,8 @@ mod before_versions {
         let ours = s.to_json();
         let pretty = serde_json::to_string_pretty(s).unwrap();
         assert_eq!(
-            Sidecar::from_json(&ours).unwrap(),
-            Sidecar::from_json(&pretty).unwrap()
+            Sidecar::from_json(&ours, &crate::Edit::default()).unwrap(),
+            Sidecar::from_json(&pretty, &crate::Edit::default()).unwrap()
         );
         let tree = |t: &str| serde_json::from_str::<serde_json::Value>(t).unwrap();
         assert_eq!(tree(&ours), tree(&pretty));
@@ -2075,7 +2856,7 @@ mod before_versions {
         use crate::retouch::{Method, Patch};
 
         // The fixture, from before versions, as read.
-        let old = Sidecar::from_json(BEFORE_VERSIONS).unwrap();
+        let old = Sidecar::from_json(BEFORE_VERSIONS, &crate::Edit::default()).unwrap();
         laid_out_as_pretty(&old);
 
         let stroke = |n: usize, op| Stroke {

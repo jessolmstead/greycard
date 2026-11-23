@@ -199,7 +199,7 @@ fn look(checks: &[Check], folder: Option<&Path>, png: Option<&Path>) -> Found {
 /// read, or none at all, cannot tell. A read of the disk, so off the
 /// window's thread.
 pub(crate) fn version_presence(source: &Path, id: &str) -> Presence {
-    match greycard_edit::Sidecar::load(source) {
+    match greycard_edit::Sidecar::load_as_file(source) {
         Ok(Some(s)) if s.version(id).is_some() => Presence::There,
         Ok(Some(_)) => Presence::Deleted,
         Ok(None) | Err(_) => Presence::Unsure,

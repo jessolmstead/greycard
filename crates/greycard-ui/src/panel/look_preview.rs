@@ -796,7 +796,7 @@ mod tests {
         wait(crate::panel::edit::SAVE_MS + 100);
         assert_eq!(states(), before + 1, "one history step");
         assert_eq!(
-            s.state.borrow().sidecars[0].current.look_lut.lut.name(),
+            s.state.borrow().sidecars[0].current().look_lut.lut.name(),
             "Neon"
         );
         // Resting on the row now kept asks for nothing.

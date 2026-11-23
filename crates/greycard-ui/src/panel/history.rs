@@ -145,10 +145,19 @@ pub(crate) fn record_export(
         .file_by_path(source)
         .filter(|&f| crate::rows::file_is_loaded(st, f))
     {
+        // A newer build's sidecar is read-only (§724): the export went,
+        // and is not recorded in it.
+        if let Err(e) = st.sidecars[file].writable() {
+            tracing::warn!(
+                "{}: sidecar: {e}; export not recorded",
+                crate::panel::browser::file_name(source)
+            );
+            return;
+        }
         // A line never opened: its blend was seeded for the export as
         // its first open would have, and that line takes the seed now.
         take_seed(&mut st.sidecars[file], source, version, edit);
-        let Some(line) = st.sidecars[file].line_mut(version) else {
+        let Some(mut line) = st.sidecars[file].line_mut(version) else {
             no_version(source, version);
             return;
         };
@@ -173,6 +182,9 @@ pub(crate) fn record_export(
             exported,
             st.window.placement,
             st.window.xmp_sidecars,
+            // On the window's thread: the header through a memory map,
+            // never a raw read whole (§724).
+            crate::panel::browser::header_shape,
         )
     {
         if let Some(indexer) = &st.views.index {
@@ -436,7 +448,7 @@ fn take_current_settled_with(st: &mut State, app: &App, worker: &Worker, save: b
     if st.culling.cull.is_some() {
         return;
     }
-    let Some(edit) = st.line(c).map(|l| l.current.clone()) else {
+    let Some(edit) = st.line(c).map(|l| l.current().clone()) else {
         return;
     };
     if st
@@ -570,7 +582,7 @@ fn step_last(
 
 /// The current frame's edit a step back (`back`) or forward.
 fn step_edit(st: &mut State, app: &App, worker: &Worker, back: bool) {
-    let Some(line) = st.current.and_then(|c| st.line_mut(c)) else {
+    let Some(mut line) = st.current.and_then(|c| st.line_mut(c)) else {
         return;
     };
     let moved = if back { line.undo() } else { line.redo() };
@@ -750,7 +762,7 @@ pub(crate) fn install(app: &App, state: &Rc<Shared>, worker: &Rc<Worker>) {
             // goes to the row on its own, and the leaving develops it.
             if st.culling.cull.is_some() {
                 st.develop.status_kept = None;
-                if st.line_mut(c).is_some_and(|l| l.go_to(index)) {
+                if st.line_mut(c).is_some_and(|mut l| l.go_to(index)) {
                     leave_cull(&mut st, &app, &worker, None);
                 }
                 return;
@@ -758,13 +770,28 @@ pub(crate) fn install(app: &App, state: &Rc<Shared>, worker: &Rc<Worker>) {
             let Some(line) = st.line(c) else {
                 return;
             };
+            // An undone state whose masks wait on the frame's shape
+            // (§724), clicked over a panel that moved: it would follow
+            // the panel as a new step, its masks where they were placed
+            // under another turn. Refused, the panel left as it is; with
+            // the panel unmoved it is gone to, as written.
+            let position = line.position();
+            if index > position
+                && line.waits_at(index)
+                && read_edit(&app, &st.develop.edit, st.develop.target) != line.current().clone()
+            {
+                tracing::warn!(
+                    "{}: nothing can measure the frame, so that step was not taken again",
+                    crate::panel::browser::file_name(st.path_of(c))
+                );
+                return;
+            }
             let target = line.state(index).cloned();
             // Whatever the panel holds is a state first. If that was
             // news to the history, what was undone is gone, and an
             // undone row's state follows the panel's as a step.
-            let position = line.position();
             let dirty = record_panel(&mut st, &app);
-            let Some(line) = st.line_mut(c) else {
+            let Some(mut line) = st.line_mut(c) else {
                 return;
             };
             let moved = if dirty && index > position {
@@ -854,7 +881,7 @@ pub(crate) fn install(app: &App, state: &Rc<Shared>, worker: &Rc<Worker>) {
             if st.culling.cull.is_none() {
                 record_panel(&mut st, &app);
             }
-            let Some(line) = st.line_mut(c) else {
+            let Some(mut line) = st.line_mut(c) else {
                 return;
             };
             let name = format!("Snapshot {}", line.snapshots.len() + 1);
@@ -891,7 +918,7 @@ pub(crate) fn install(app: &App, state: &Rc<Shared>, worker: &Rc<Worker>) {
                 st.develop.status_kept = None;
                 if st
                     .line_mut(c)
-                    .is_some_and(|l| l.restore_snapshot(i as usize))
+                    .is_some_and(|mut l| l.restore_snapshot(i as usize))
                 {
                     leave_cull(&mut st, &app, &worker, None);
                     app.set_status(tr!("{name} restored", name = name).into());
@@ -902,7 +929,7 @@ pub(crate) fn install(app: &App, state: &Rc<Shared>, worker: &Rc<Worker>) {
             st.develop.status_kept = None;
             if !st
                 .line_mut(c)
-                .is_some_and(|l| l.restore_snapshot(i as usize))
+                .is_some_and(|mut l| l.restore_snapshot(i as usize))
             {
                 // The sidecar is there already, but a panel still
                 // showing the command line's overrides is not: it
@@ -955,14 +982,12 @@ pub(crate) fn install(app: &App, state: &Rc<Shared>, worker: &Rc<Worker>) {
             let Some(c) = st.current else {
                 return;
             };
-            let name = name.trim();
-            if name.is_empty() {
+            let renamed = st
+                .line_mut(c)
+                .is_some_and(|l| l.into_line().rename_snapshot(i as usize, &name));
+            if !renamed {
                 return;
             }
-            let Some(s) = st.line_mut(c).and_then(|l| l.snapshots.get_mut(i as usize)) else {
-                return;
-            };
-            s.name = name.to_string();
             write_sidecar(&mut st, c);
             show_history(&st, &app);
         });
@@ -980,13 +1005,12 @@ pub(crate) fn install(app: &App, state: &Rc<Shared>, worker: &Rc<Worker>) {
             let Some(c) = st.current else {
                 return;
             };
-            let Some(line) = st.line_mut(c) else {
+            let Some(removed) = st
+                .line_mut(c)
+                .and_then(|l| l.into_line().remove_snapshot(i as usize))
+            else {
                 return;
             };
-            if (i as usize) >= line.snapshots.len() {
-                return;
-            }
-            let removed = line.snapshots.remove(i as usize);
             peek(&mut st, &app, None, "");
             write_sidecar(&mut st, c);
             show_history(&st, &app);

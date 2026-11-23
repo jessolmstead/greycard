@@ -53,6 +53,12 @@ use crate::mask::{LandscapeGroup, Shape};
 /// read by default, 2026-11-15.
 pub const DEVELOP_RECIPE: u32 = 6;
 
+/// The [`crate::PROCESS`] the key was last raised for. A state's
+/// process is not in the key while one exists; a new one renders
+/// differently, so raising it raises [`DEVELOP_RECIPE`] (or takes the
+/// process into the key) and this with it.
+pub const PROCESS_KEYED: u32 = 1;
+
 /// The capture sharpen's guide, by version: taken into the key of an
 /// edit whose sharpen reads one ([`Edit::sharpen_reads_guide`]), so
 /// the pictures kept of such an edit are made again when it changes,
@@ -283,10 +289,12 @@ impl Edit {
         pipelines: impl Fn(&Shape) -> Vec<String>,
     ) -> u64 {
         // What reaches no pixel is taken out: the version the edit was
-        // written at and whether it waits on its frame (a migration that
-        // changes nothing changes no picture), an adjustment's name, and
-        // the light a mask's
-        // switched-off white balance keeps for when it goes on again.
+        // written at, the process it was made under while only one
+        // renders ([`PROCESS_KEYED`]; left out of the text below), and
+        // whether it waits on its frame (a migration that changes
+        // nothing changes no picture), an adjustment's name, and the
+        // light a mask's switched-off white balance keeps for when it
+        // goes on again.
         let mut edit = self.clone();
         edit.version = 0;
         edit.frame_pending = false;
@@ -299,8 +307,9 @@ impl Edit {
         hasher.update(&DEVELOP_RECIPE.to_le_bytes());
         // Serde writes a struct's fields in their order and a list in
         // its, and nothing in an edit is a map, so equal edits write
-        // equal bytes.
-        let json = serde_json::to_vec(&edit).expect("an edit serializes");
+        // equal bytes; the process left out, as the key had it before
+        // there was one.
+        let json = edit.json_but_process().into_bytes();
         hasher.update(&(json.len() as u64).to_le_bytes());
         hasher.update(&json);
         // The learned masks' stages, each once, in order: only an edit
@@ -379,6 +388,19 @@ impl Edit {
 
 #[cfg(test)]
 mod tests {
+    /// A new process renders differently, so the pictures kept under
+    /// the old one must be made again: raising [`crate::PROCESS`]
+    /// without the key fails here.
+    #[test]
+    fn a_new_process_re_keys_the_pictures() {
+        assert_eq!(
+            crate::PROCESS,
+            super::PROCESS_KEYED,
+            "PROCESS was raised: raise DEVELOP_RECIPE (or take the process into \
+             the key) and set PROCESS_KEYED to it"
+        );
+    }
+
     use super::*;
     use crate::Sidecar;
 
@@ -591,7 +613,7 @@ mod tests {
         let mut hasher = blake3::Hasher::new();
         hasher.update(b"greycard develop key\0");
         hasher.update(&DEVELOP_RECIPE.to_le_bytes());
-        let json = serde_json::to_vec(&stripped).expect("an edit serializes");
+        let json = stripped.json_but_process().into_bytes();
         hasher.update(&(json.len() as u64).to_le_bytes());
         hasher.update(&json);
         if edit.lens.enabled && edit.lens.profile {
@@ -635,25 +657,35 @@ mod tests {
         let mut sidecar = Sidecar::default();
         let before = key(&sidecar.current, None);
         let first = sidecar.current.clone();
-        sidecar.current.light.exposure += 1.0;
+        {
+            let mut e = sidecar.current().clone();
+            e.light.exposure += 1.0;
+            sidecar.record(e);
+        }
         let brightened = key(&sidecar.current, None);
         assert_ne!(before, brightened, "a brightening is another picture");
-        // Undo: the edit as it was, from the history's copy.
-        sidecar.current = first.clone();
+        // Back: the edit as it was, from the history's copy.
+        sidecar.record(first.clone());
         assert_eq!(key(&sidecar.current, None), before);
-        // Redo, by setting the same value again rather than by a copy.
-        sidecar.current.light.exposure += 1.0;
+        // Forward, by setting the same value again rather than by a copy.
+        let mut e = sidecar.current().clone();
+        e.light.exposure += 1.0;
+        sidecar.record(e);
         assert_eq!(key(&sidecar.current, None), brightened);
         // Through the sidecar's own file and back.
         let json = serde_json::to_string(&sidecar).unwrap();
-        let read: Sidecar = serde_json::from_str(&json).unwrap();
+        let read: Sidecar = crate::sidecar::plain(&json).unwrap();
         assert_eq!(key(&read.current, None), brightened);
     }
 
     #[test]
     fn a_rating_a_name_and_the_turn_change_no_key_and_the_crop_does() {
         let mut sidecar = Sidecar::default();
-        sidecar.current.light.exposure = 0.7;
+        {
+            let mut e = sidecar.current().clone();
+            e.light.exposure = 0.7;
+            sidecar.record(e);
+        }
         let k = key(&sidecar.current, None);
         sidecar.meta.rating = 4;
         sidecar.meta.keywords.push("kept".into());
@@ -662,24 +694,44 @@ mod tests {
             k,
             "a rating is not the picture"
         );
-        sidecar.current.version = 1;
+        {
+            let mut e = sidecar.current().clone();
+            e.version = 1;
+            sidecar.record(e);
+        }
         assert_eq!(key(&sidecar.current, None), k, "nor is the schema version");
-        sidecar.current.frame_pending = true;
+        {
+            let mut e = sidecar.current().clone();
+            e.frame_pending = true;
+            sidecar.record(e);
+        }
         assert_eq!(key(&sidecar.current, None), k, "nor the wait on the frame");
-        sidecar.current.frame_pending = false;
+        {
+            let mut e = sidecar.current().clone();
+            e.frame_pending = false;
+            sidecar.record(e);
+        }
         sidecar.current.adjustments.push(crate::Adjustment {
             id: 3,
             name: "Sky".into(),
             ..Default::default()
         });
         let with = key(&sidecar.current, None);
-        sidecar.current.adjustments[0].name = "The sky".into();
+        {
+            let mut e = sidecar.current().clone();
+            e.adjustments[0].name = "The sky".into();
+            sidecar.record(e);
+        }
         assert_eq!(
             key(&sidecar.current, None),
             with,
             "a mask's name is not the picture"
         );
-        sidecar.current.adjustments[0].enabled = false;
+        {
+            let mut e = sidecar.current().clone();
+            e.adjustments[0].enabled = false;
+            sidecar.record(e);
+        }
         assert_ne!(key(&sidecar.current, None), with);
         sidecar.current.adjustments.clear();
         assert_eq!(key(&sidecar.current, None), k);

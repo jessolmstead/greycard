@@ -227,12 +227,71 @@ fn send_move(st: &mut State, app: &App, which: Timed, low: bool) {
 /// How long they must rest before the sidecar is written.
 pub(crate) const SAVE_MS: u64 = 800;
 
+/// Whether the panel's change to the frame on screen is refused: what
+/// is placed on its state waits on a shape nothing can measure (§724),
+/// and no step is recorded on it. The panel is put back to the state,
+/// so it never shows one that is not the frame's, and the change is
+/// neither developed nor saved; the log says why.
+pub(crate) fn refused_waiting(st: &mut State, app: &App) -> bool {
+    if st.culling.cull.is_some() {
+        return false;
+    }
+    // The wait cleared since the panel took the copy: the panel takes
+    // the state as measured, and the change made over the old copy
+    // goes with it.
+    if crate::panel::browser::panel_settled(st, app) {
+        return true;
+    }
+    let Some(c) = st.current else {
+        return false;
+    };
+    if !crate::rows::panel_is_frames(st, c) {
+        return false;
+    }
+    // A newer build's sidecar is read-only (§724): put back as a wait's.
+    let read_only = st.sidecar_at(c).is_some_and(|s| s.read_only());
+    let Some(edit) = st
+        .line(c)
+        .filter(|l| read_only || l.current_waits())
+        .map(|l| l.current().clone())
+    else {
+        return false;
+    };
+    if read_edit(app, &st.develop.edit, st.develop.target) == edit {
+        return false;
+    }
+    if read_only {
+        tracing::warn!(
+            "{}: read-only (a newer greycard made it), so the change was not kept",
+            crate::panel::browser::file_name(st.path_of(c))
+        );
+    } else {
+        tracing::warn!(
+            "{}: nothing can measure the frame, so the change was not kept",
+            crate::panel::browser::file_name(st.path_of(c))
+        );
+    }
+    let target = st.develop.target.filter(|&m| m < edit.adjustments.len());
+    st.develop.target = target;
+    show_edit(st, &edit, app, target);
+    st.develop.edit = edit;
+    if read_only {
+        crate::panel::browser::say_newer(st);
+    } else {
+        crate::panel::browser::say_read_only(st, app, c);
+    }
+    true
+}
+
 /// Write the current file's sidecar once the panel has rested.
 pub(crate) fn schedule_save(st: &mut State, app_weak: slint::Weak<App>) {
     // The history's Reset to Original follows the panel at once, not
     // the step the timer records; and a wheel in hand is put down by
     // a control of another section.
     if let Some(app) = app_weak.upgrade() {
+        if refused_waiting(st, &app) {
+            return;
+        }
         crate::panel::reset::show_panel_resettable(st, &app);
         crate::panel::color::keep_wheel(st, &app);
     }
@@ -312,7 +371,7 @@ pub(crate) fn record_panel(st: &mut State, app: &App) -> bool {
         return false;
     }
     let edit = read_edit(app, &st.develop.edit, st.develop.target);
-    panel_state(st, edit).is_some_and(|edit| st.line_mut(c).is_some_and(|l| l.record(edit)))
+    panel_state(st, edit).is_some_and(|edit| st.line_mut(c).is_some_and(|mut l| l.record(edit)))
 }
 
 /// Record `edit` as the current file's, and write its sidecar if that
@@ -343,9 +402,9 @@ pub(crate) fn save_edit(st: &mut State, edit: Edit) -> bool {
         return false;
     };
     if !crate::rows::panel_is_frames(st, c) {
-        return st.line(c).is_some_and(|l| l.current != edit);
+        return st.line(c).is_some_and(|l| *l.current() != edit);
     }
-    if !st.line_mut(c).is_some_and(|l| l.record(edit)) {
+    if !st.line_mut(c).is_some_and(|mut l| l.record(edit)) {
         return false;
     }
     if crate::sidecars::writable(st, c) {
@@ -356,8 +415,9 @@ pub(crate) fn save_edit(st: &mut State, edit: Edit) -> bool {
 
 /// Put the repair sources the engine chose into `st.edit` and into
 /// the current file's sidecar, and write it if that changed anything;
-/// true when it did. A chosen source completes the state that placed
-/// its patch, in place, and is never a step: recorded as one, a slow
+/// true when it did. A chosen source is kept beside the states, under
+/// its patch, and shown with every state that has the patch (§724); it
+/// is never a step, and no state changes: recorded as one, a slow
 /// develop that landed after the save made the source a state of its
 /// own, and undoing it re-developed the sourceless state, chose the
 /// same source, and recorded it again over the redo (issue 7).
@@ -376,7 +436,7 @@ pub(crate) fn take_sources(st: &mut State, sources: &[greycard_edit::retouch::Pa
     if crate::panel::queue_view::frozen(st) {
         return false;
     }
-    if !st.line_mut(c).is_some_and(|l| l.take_sources(sources)) {
+    if !st.line_mut(c).is_some_and(|mut l| l.take_sources(sources)) {
         return false;
     }
     if crate::sidecars::writable(st, c) {
@@ -462,6 +522,10 @@ pub(crate) fn develop_soon(
     // In Cull drawn developed the panel is the frame's: the mode ends,
     // and the change develops as it would in Develop.
     crate::panel::cull::leave_developed(st, &app);
+    // A frame whose state waits on its shape takes no change.
+    if refused_waiting(st, &app) {
+        return;
+    }
     crate::panel::original::off(st, &app, true);
     app.window().request_redraw();
     schedule_save(st, app_weak.clone());

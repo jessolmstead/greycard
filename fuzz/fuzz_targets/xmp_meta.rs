@@ -24,7 +24,8 @@ fuzz_target!(|data: &[u8]| {
         ..Sidecar::default()
     };
     greycard_fuzz::sidecar_round_trips(&sidecar, "xmp meta in a sidecar");
-    let back = Sidecar::from_json(&sidecar.to_json()).expect("read back above");
+    let back = Sidecar::from_json(&sidecar.to_json(), &greycard_edit::Edit::default())
+        .expect("read back above");
     assert_eq!(
         back.meta, meta,
         "the meta reads back from the sidecar changed"

@@ -938,7 +938,7 @@ mod tests {
         let mut edit = greycard_edit::Edit::for_picture();
         edit.light.exposure = 1.5;
         let mut sidecar = greycard_edit::Sidecar {
-            line: greycard_edit::Line::of(edit.clone()),
+            line: greycard_edit::Line::of(edit.clone(), 0).unwrap(),
             ..greycard_edit::Sidecar::default()
         };
         sidecar.save(&kept).unwrap();

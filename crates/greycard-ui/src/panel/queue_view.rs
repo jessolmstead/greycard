@@ -1140,7 +1140,7 @@ mod tests {
             assert_eq!(st.sidecars[f].turn, 0);
             assert!(st.sidecars[f].versions.is_empty());
             assert_eq!(st.sidecars[f].history.len(), 1);
-            assert!((st.sidecars[f].current.light.exposure - 0.1).abs() < 1e-6);
+            assert!((st.sidecars[f].current().light.exposure - 0.1).abs() < 1e-6);
             assert!((st.develop.edit.light.exposure - 1.1).abs() < 1e-6);
         };
         // A turn.
@@ -1218,8 +1218,8 @@ mod tests {
         s.app.invoke_queue_view_picked();
         crate::roots::land_sent(&s.state, &s.app, &s.worker);
         assert_eq!(s.state.borrow().views.view, View::Queue);
-        let on_disk = Sidecar::load(&s.files[0]).unwrap().unwrap();
-        assert!((on_disk.current.light.exposure - 0.7).abs() < 1e-6);
+        let on_disk = Sidecar::load_as_file(&s.files[0]).unwrap().unwrap();
+        assert!((on_disk.current().light.exposure - 0.7).abs() < 1e-6);
         crate::roots::open_listing(
             &s.state,
             &s.app,

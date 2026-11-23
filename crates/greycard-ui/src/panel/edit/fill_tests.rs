@@ -64,7 +64,7 @@ fn save(app: &App, state: &Rc<Shared>) {
 }
 
 fn current(state: &Rc<Shared>, i: usize) -> Edit {
-    state.borrow().line(i).unwrap().current.clone()
+    state.borrow().line(i).unwrap().current().clone()
 }
 
 fn history_rows(app: &App) -> Vec<String> {
@@ -375,10 +375,10 @@ fn the_switch_in_cull_lays_the_fill_over_the_frame_alone() {
     let mut st = state.borrow_mut();
     let edit = read_edit(&app, &st.develop.edit, st.develop.target);
     save_edit(&mut st, edit);
-    let frame = &st.line(1).unwrap().current;
+    let frame = &st.line(1).unwrap().current();
     assert_eq!(frame.light.exposure, 0.7);
     assert_eq!(frame.highlight_fill.as_deref(), Some("hl-2"));
-    assert_eq!(st.line(0).unwrap().current.highlight_fill, None);
+    assert_eq!(st.line(0).unwrap().current().highlight_fill, None);
 }
 
 /// A virtual copy keeps its own switch: on for the copy, the file's
@@ -399,8 +399,8 @@ fn a_virtual_copy_keeps_its_own_fill() {
     {
         let st = state.borrow();
         let line = &st.sidecars[0].version(&id).unwrap().line;
-        assert_eq!(line.current.highlight_fill.as_deref(), Some("hl-2"));
-        assert_eq!(st.sidecars[0].current.highlight_fill, None);
+        assert_eq!(line.current().highlight_fill.as_deref(), Some("hl-2"));
+        assert_eq!(st.sidecars[0].current().highlight_fill, None);
     }
     app.invoke_select(0);
     assert!(!app.get_highlight_fill(), "the file's own");

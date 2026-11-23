@@ -4177,7 +4177,7 @@ fn walk_timing() {
                 Job::Open {
                     path: path.clone(),
                     version: None,
-                    edit: sidecar.line.current.clone(),
+                    edit: sidecar.line.current().clone(),
                     generation,
                     seed_blend: false,
                     turn: sidecar.turn,
@@ -8571,7 +8571,7 @@ fn white_at(temperature: f64) -> Edit {
 /// and the frame at `turn`.
 fn write_sidecar(raw: &std::path::Path, edit: Edit, turn: u8) {
     let mut sidecar = greycard_edit::Sidecar {
-        line: greycard_edit::Line::of(edit),
+        line: greycard_edit::Line::of(edit, 0).unwrap(),
         turn,
         ..greycard_edit::Sidecar::default()
     };
@@ -8763,6 +8763,7 @@ fn the_read_first_takes_no_lightroom_develop() {
         b,
         Some(greycard_edit::Placement::Beside),
         greycard_edit_io::on_disk::Fresh::default(),
+        |_, _| None,
     );
     assert_ne!(folder_as_it_is(&dir), before, "the window's read takes it");
     crate::testing::remove_dir_retry(&dir);
@@ -8778,13 +8779,16 @@ fn a_virtual_copy_s_line_is_the_one_read_first() {
     let b = &paths[0];
     let (cool, warm) = (white_at(4000.0), white_at(6500.0));
     let mut sidecar = greycard_edit::Sidecar {
-        line: greycard_edit::Line::of(cool.clone()),
+        line: greycard_edit::Line::of(cool.clone(), 0).unwrap(),
         ..greycard_edit::Sidecar::default()
     };
     let id = sidecar
         .new_version(None, Some("Warm"))
         .expect("a version made");
-    sidecar.line_mut(Some(&id)).expect("the version").current = warm.clone();
+    sidecar
+        .line_mut(Some(&id))
+        .expect("the version")
+        .record(warm.clone());
     sidecar
         .save_in(b, greycard_edit::Placement::Beside)
         .expect("written");
@@ -9000,14 +9004,16 @@ fn a_line_never_developed_is_read_first_with_its_seed_to_come() {
         turn: 2,
         ..greycard_edit::Sidecar::default()
     };
-    let fresh = sidecar.new_version_from_original(Edit::default(), Some("Fresh"));
+    let fresh = sidecar
+        .new_version_from_original(Edit::default(), Some("Fresh"))
+        .unwrap();
     let edited = sidecar
         .new_version(None, Some("Warm"))
         .expect("a version made");
     sidecar
         .line_mut(Some(&edited))
         .expect("the version")
-        .current = white_at(6500.0);
+        .record(white_at(6500.0));
     sidecar
         .save_in(b, greycard_edit::Placement::Beside)
         .expect("written");

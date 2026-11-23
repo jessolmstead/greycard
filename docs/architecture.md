@@ -275,12 +275,14 @@ beside it as the placement setting says: JSON of the edit, its
 history, its versions, its meta, and its exports (`Sidecar` in
 `crates/greycard-edit/src/sidecar.rs`). The schema version is
 `VERSION` in `crates/greycard-edit/src/lib.rs`; every field has a
-default, a changed meaning bumps the version, and a newer sidecar is
-refused. The migrations are greycard-edit's (`migration.rs`); the step
+default and is left out of a state at it, no default changes within
+a version, and a changed meaning bumps the version. A newer sidecar
+is refused only past its read floor; past its write floor it opens
+read-only (§734). The migrations are greycard-edit's (`migration.rs`); the step
 that waits on the frame's shape runs at an open, in edit-io's
 `on_disk.rs`, which also merges an `.xmp` beside the frame (§16,
-§463, §464). Revisions and the join of two machines' copies are §243
-and §244.
+§463, §464). Revisions and the join of two machines' copies are §243,
+§244, and §734.
 
 **The index.** `library.sqlite` under the data folder, owned by
 greycard-library, a cache the files can rebuild (§72). Its version is

@@ -800,7 +800,7 @@ fn handed_as(what: &str, write: &dyn Fn(&Path)) -> (Heard, PathBuf) {
         let mut sidecar = greycard_edit::Sidecar::default();
         let mut edit = Edit::for_picture();
         edit.light.exposure = 0.25;
-        sidecar.line = greycard_edit::Line::of(edit);
+        sidecar.line = greycard_edit::Line::of(edit, 0).unwrap();
         sidecar.save(&out).unwrap();
     }
     h.listed(&out);

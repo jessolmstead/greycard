@@ -1593,42 +1593,42 @@ msgid "excluded"
 msgstr "wykluczone"
 
 #. Filter bar: the rating row
-#: crates/greycard-slint/ui/panel/filter.slint:428
+#: crates/greycard-slint/ui/panel/filter.slint:446
 msgid "Stars"
 msgstr "Gwiazdki"
 
 #. Filter bar: the rating's two modes
-#: crates/greycard-slint/ui/panel/filter.slint:436
+#: crates/greycard-slint/ui/panel/filter.slint:454
 msgid "exactly"
 msgstr "dokładnie"
 
 #. Filter bar: the rating's two modes
-#: crates/greycard-slint/ui/panel/filter.slint:436
+#: crates/greycard-slint/ui/panel/filter.slint:454
 msgid "or more"
 msgstr "lub więcej"
 
 #. Filter bar: the flag row
-#: crates/greycard-slint/ui/panel/filter.slint:499
+#: crates/greycard-slint/ui/panel/filter.slint:517
 msgid "Flag"
 msgstr "Flaga"
 
 #. Filter bar: the label row
-#: crates/greycard-slint/ui/panel/filter.slint:543
+#: crates/greycard-slint/ui/panel/filter.slint:561
 msgid "Label"
 msgstr "Etykieta"
 
 #. Filter bar's search hint; camera: and iso>= stay English
-#: crates/greycard-slint/ui/panel/filter.slint:657
+#: crates/greycard-slint/ui/panel/filter.slint:675
 msgid "Name, keyword, or camera:R6 iso>=3200"
 msgstr "Nazwa, słowo kluczowe lub camera:R6 iso>=3200"
 
 #. Filter bar: frames shown of the frames in the folder
-#: crates/greycard-slint/ui/panel/filter.slint:694
+#: crates/greycard-slint/ui/panel/filter.slint:712
 msgid "{} of {}"
 msgstr "{} z {}"
 
 #. Filter bar: save the filter as a smart collection
-#: crates/greycard-slint/ui/panel/filter.slint:704
+#: crates/greycard-slint/ui/panel/filter.slint:722
 msgid "Save..."
 msgstr "Zapisz..."
 
@@ -1841,18 +1841,18 @@ msgstr "{} do {}..."
 msgid "{} to"
 msgstr "{} do"
 
-#: crates/greycard-slint/ui/panel/grid.slint:424
+#: crates/greycard-slint/ui/panel/grid.slint:429
 msgid "{} and {n} other"
 msgid_plural "{} and {n} others"
 msgstr[0] "{} i {n} inne"
 msgstr[1] "{} i {n} inne"
 msgstr[2] "{} i {n} innych"
 
-#: crates/greycard-slint/ui/panel/grid.slint:484
+#: crates/greycard-slint/ui/panel/grid.slint:489
 msgid "Export every queued set, in order"
 msgstr "Eksportuj kolejno każdy zestaw z kolejki"
 
-#: crates/greycard-slint/ui/panel/grid.slint:493
+#: crates/greycard-slint/ui/panel/grid.slint:498
 msgid "{n} frame"
 msgid_plural "{n} frames"
 msgstr[0] "{n} zdjęcie"
@@ -1860,19 +1860,19 @@ msgstr[1] "{n} zdjęcia"
 msgstr[2] "{n} zdjęć"
 
 #. Grid header: 'by capture time', after the frame count
-#: crates/greycard-slint/ui/panel/grid.slint:495
+#: crates/greycard-slint/ui/panel/grid.slint:500
 msgid "by {}"
 msgstr "według: {}"
 
-#: crates/greycard-slint/ui/panel/grid.slint:505
+#: crates/greycard-slint/ui/panel/grid.slint:510
 msgid "Tile size"
 msgstr "Rozmiar miniatur"
 
-#: crates/greycard-slint/ui/panel/grid.slint:546
+#: crates/greycard-slint/ui/panel/grid.slint:551
 msgid "Rejects"
 msgstr "Odrzucone"
 
-#: crates/greycard-slint/ui/panel/grid.slint:547
+#: crates/greycard-slint/ui/panel/grid.slint:552
 msgid "{n} reject"
 msgid_plural "{n} rejects"
 msgstr[0] "{n} odrzucone"
@@ -1880,27 +1880,27 @@ msgstr[1] "{n} odrzucone"
 msgstr[2] "{n} odrzuconych"
 
 #. Spoken by a screen reader: a folder tile
-#: crates/greycard-slint/ui/panel/grid.slint:688
+#: crates/greycard-slint/ui/panel/grid.slint:693
 msgid "Folder {}"
 msgstr "Folder {}"
 
 #. A tile's word when its picture could not be read
-#: crates/greycard-slint/ui/panel/grid.slint:920
+#: crates/greycard-slint/ui/panel/grid.slint:925
 msgid "Unreadable"
 msgstr "Nieczytelne"
 
 #. A tile's word while its picture is made
-#: crates/greycard-slint/ui/panel/grid.slint:934
+#: crates/greycard-slint/ui/panel/grid.slint:939
 msgid "Developing"
 msgstr "Wywoływanie"
 
 #. Spoken by a screen reader: the grid's scroll bar
-#: crates/greycard-slint/ui/panel/grid.slint:1256
+#: crates/greycard-slint/ui/panel/grid.slint:1261
 msgid "Grid scroll"
 msgstr "Przewijanie siatki"
 
 #. language.
-#: crates/greycard-slint/ui/panel/grid.slint:1330
+#: crates/greycard-slint/ui/panel/grid.slint:1335
 msgid "Close lightbox"
 msgstr "Zamknij podświetlarkę"
 
@@ -3207,28 +3207,28 @@ msgstr ""
 msgid "drawing in software on {name} and developing on the CPU, which is slow"
 msgstr "rysowanie programowe na {name} i wywoływanie na CPU, co jest wolne"
 
-#: crates/greycard-ui/src/archive.rs:477 crates/greycard-ui/src/archive.rs:962
-#: crates/greycard-ui/src/archive.rs:963
+#: crates/greycard-ui/src/archive.rs:483 crates/greycard-ui/src/archive.rs:968
+#: crates/greycard-ui/src/archive.rs:969
 msgid "reading it: {e}"
 msgstr "odczyt: {e}"
 
-#: crates/greycard-ui/src/archive.rs:479
+#: crates/greycard-ui/src/archive.rs:485
 msgid "reading the copy: {e}"
 msgstr "odczyt kopii: {e}"
 
-#: crates/greycard-ui/src/archive.rs:490
+#: crates/greycard-ui/src/archive.rs:496
 msgid "writing it: {e}"
 msgstr "zapis: {e}"
 
-#: crates/greycard-ui/src/archive.rs:493
+#: crates/greycard-ui/src/archive.rs:499
 msgid "writing the copy: {e}"
 msgstr "zapis kopii: {e}"
 
-#: crates/greycard-ui/src/archive.rs:753
+#: crates/greycard-ui/src/archive.rs:759
 msgid "not a file"
 msgstr "to nie jest plik"
 
-#: crates/greycard-ui/src/archive.rs:1378
+#: crates/greycard-ui/src/archive.rs:1384
 msgid "{n} byte"
 msgid_plural "{n} bytes"
 msgstr[0] "{n} bajt"
@@ -3755,7 +3755,7 @@ msgstr "karta dała dwa różne odczyty"
 msgid "{} (with {})"
 msgstr "{} (z {})"
 
-#: crates/greycard-ui/src/import.rs:1790 crates/greycard-ui/src/import.rs:1807
+#: crates/greycard-ui/src/import.rs:1805 crates/greycard-ui/src/import.rs:1822
 msgid "the backup copy"
 msgstr "kopia zapasowa"
 
@@ -4036,7 +4036,7 @@ msgid "Filter the folder by rating, flag, label or words"
 msgstr "Filtruj folder według oceny, flagi, etykiety lub słów"
 
 #: crates/greycard-ui/src/keys.rs:469
-#: crates/greycard-ui/src/panel/startup.rs:1842
+#: crates/greycard-ui/src/panel/startup.rs:1847
 msgid "Open a folder"
 msgstr "Otwórz folder"
 
@@ -4232,7 +4232,7 @@ msgid "a backup is still under way"
 msgstr "archiwizacja wciąż trwa"
 
 #: crates/greycard-ui/src/panel/archive.rs:531
-#: crates/greycard-ui/src/panel/sync.rs:1627
+#: crates/greycard-ui/src/panel/sync.rs:1633
 msgid ": nothing to copy"
 msgstr ": nic do skopiowania"
 
@@ -5346,101 +5346,109 @@ msgid "a preset needs a name"
 msgstr "preset wymaga nazwy"
 
 #: crates/greycard-ui/src/panel/assets.rs:2202
-#: crates/greycard-ui/src/panel/assets.rs:2217
+#: crates/greycard-ui/src/panel/assets.rs:2229
 msgid "choose what the preset carries"
 msgstr "wybierz, co zawiera preset"
 
-#: crates/greycard-ui/src/panel/assets.rs:2225
+#: crates/greycard-ui/src/panel/assets.rs:2237
 msgid "saved {name} ({carried}) to {path}"
 msgstr "zapisano {name} ({carried}) w {path}"
 
-#: crates/greycard-ui/src/panel/assets.rs:2238
+#: crates/greycard-ui/src/panel/assets.rs:2250
 msgid "saving {name}: {why}"
 msgstr "zapisywanie {name}: {why}"
 
-#: crates/greycard-ui/src/panel/assets.rs:2245
+#: crates/greycard-ui/src/panel/assets.rs:2257
 msgid "no configuration directory to save into"
 msgstr "brak katalogu konfiguracji do zapisu"
 
-#: crates/greycard-ui/src/panel/assets.rs:2283
+#: crates/greycard-ui/src/panel/assets.rs:2295
 msgid "{name} removed; Settings can restore it"
 msgstr "usunięto {name}; można go przywrócić w Ustawieniach"
 
-#: crates/greycard-ui/src/panel/assets.rs:2285
-#: crates/greycard-ui/src/panel/history.rs:993
+#: crates/greycard-ui/src/panel/assets.rs:2297
+#: crates/greycard-ui/src/panel/history.rs:1017
 msgid "{name} removed"
 msgstr "usunięto {name}"
 
-#: crates/greycard-ui/src/panel/assets.rs:2293
+#: crates/greycard-ui/src/panel/assets.rs:2305
 msgid "removing {name}: {why}"
 msgstr "usuwanie {name}: {why}"
 
-#: crates/greycard-ui/src/panel/assets.rs:2317
+#: crates/greycard-ui/src/panel/assets.rs:2329
 msgid "every default preset is in the list"
 msgstr "wszystkie domyślne presety są na liście"
 
-#: crates/greycard-ui/src/panel/assets.rs:2321
+#: crates/greycard-ui/src/panel/assets.rs:2333
 msgid "restored {names}"
 msgstr "przywrócono {names}"
 
-#: crates/greycard-ui/src/panel/assets.rs:2325
+#: crates/greycard-ui/src/panel/assets.rs:2337
 msgid "restoring the default presets: {why}"
 msgstr "przywracanie domyślnych presetów: {why}"
 
-#: crates/greycard-ui/src/panel/assets.rs:2328
+#: crates/greycard-ui/src/panel/assets.rs:2340
 msgid "no configuration directory to restore into"
 msgstr "brak katalogu konfiguracji do przywrócenia"
 
-#: crates/greycard-ui/src/panel/assets.rs:2342
+#: crates/greycard-ui/src/panel/assets.rs:2354
 msgid "choosing presets to import..."
 msgstr "wybieranie presetów do importu..."
 
-#: crates/greycard-ui/src/panel/assets.rs:2346
+#: crates/greycard-ui/src/panel/assets.rs:2358
 msgid "Import presets"
 msgstr "Importuj presety"
 
 #. The file chooser's filter name for preset files
-#: crates/greycard-ui/src/panel/assets.rs:2350
+#: crates/greycard-ui/src/panel/assets.rs:2362
 msgid "Presets"
 msgstr "Presety"
 
-#: crates/greycard-ui/src/panel/assets.rs:2373
+#: crates/greycard-ui/src/panel/assets.rs:2385
 #: crates/greycard-ui/src/panel/lightroom.rs:662
 msgid "import canceled"
 msgstr "import anulowany"
 
-#: crates/greycard-ui/src/panel/browser.rs:484
+#: crates/greycard-ui/src/panel/browser.rs:486
 msgid "With the camera's JPEG, {}"
 msgstr "Z plikiem JPEG z aparatu, {}"
 
-#: crates/greycard-ui/src/panel/browser.rs:889
+#: crates/greycard-ui/src/panel/browser.rs:912
 #: crates/greycard-ui/src/panel/cull.rs:446
-#: crates/greycard-ui/src/panel/deliver.rs:1661
-#: crates/greycard-ui/src/panel/deliver.rs:1695
-#: crates/greycard-ui/src/panel/edit.rs:480
-#: crates/greycard-ui/src/panel/edit.rs:1276
-#: crates/greycard-ui/src/panel/history.rs:473
+#: crates/greycard-ui/src/panel/deliver.rs:1670
+#: crates/greycard-ui/src/panel/deliver.rs:1704
+#: crates/greycard-ui/src/panel/edit.rs:544
+#: crates/greycard-ui/src/panel/edit.rs:1340
+#: crates/greycard-ui/src/panel/history.rs:485
 msgid "developing..."
 msgstr "wywoływanie..."
 
-#: crates/greycard-ui/src/panel/browser.rs:1931
+#: crates/greycard-ui/src/panel/browser.rs:1360
+msgid "Read-only: made with a newer greycard"
+msgstr ""
+
+#: crates/greycard-ui/src/panel/browser.rs:1392
+msgid "Read-only: {file}'s masks cannot be placed until its raw is reachable"
+msgstr ""
+
+#: crates/greycard-ui/src/panel/browser.rs:2143
 #: crates/greycard-ui/src/roots/landing.rs:179
 msgid "nothing to open"
 msgstr "nic do otwarcia"
 
-#: crates/greycard-ui/src/panel/browser.rs:3298
+#: crates/greycard-ui/src/panel/browser.rs:3525
 msgid "{word}; hidden by the filter"
 msgstr "{word}; ukryte przez filtr"
 
-#: crates/greycard-ui/src/panel/browser.rs:3796
+#: crates/greycard-ui/src/panel/browser.rs:4023
 msgid "choosing a folder to open..."
 msgstr "wybieranie folderu do otwarcia..."
 
-#: crates/greycard-ui/src/panel/browser.rs:3797
+#: crates/greycard-ui/src/panel/browser.rs:4024
 msgid "Open folder"
 msgstr "Otwórz folder"
 
-#: crates/greycard-ui/src/panel/browser.rs:3815
+#: crates/greycard-ui/src/panel/browser.rs:4042
 msgid "open folder canceled"
 msgstr "otwieranie folderu anulowane"
 
@@ -5452,7 +5460,7 @@ msgstr "odczyt pliku pomocniczego {}..."
 msgid ": nothing to develop, and no change is kept"
 msgstr ": nic do wywołania i żadna zmiana nie zostaje zachowana"
 
-#: crates/greycard-ui/src/panel/browser/open.rs:719
+#: crates/greycard-ui/src/panel/browser/open.rs:728
 msgid "decoding..."
 msgstr "dekodowanie..."
 
@@ -5881,7 +5889,7 @@ msgstr[2] "folder odrzuconych w każdym folderze, w którym są (folderów: {n})
 #: crates/greycard-ui/src/panel/cull.rs:2853
 #: crates/greycard-ui/src/panel/delete.rs:207
 #: crates/greycard-ui/src/panel/delete.rs:565
-#: crates/greycard-ui/src/panel/versions.rs:621
+#: crates/greycard-ui/src/panel/versions.rs:624
 msgid "a delete is still under way"
 msgstr "usuwanie wciąż trwa"
 
@@ -5960,12 +5968,12 @@ msgstr[0] "folderu nad {n} folderem odrzuconych"
 msgstr[1] "folderu nad każdym z {n} folderów odrzuconych"
 msgstr[2] "folderu nad każdym z {n} folderów odrzuconych"
 
-#: crates/greycard-ui/src/panel/cull.rs:3295
+#: crates/greycard-ui/src/panel/cull.rs:3306
 msgid "filter: {why}"
 msgstr "filtr: {why}"
 
-#: crates/greycard-ui/src/panel/cull.rs:3333
-#: crates/greycard-ui/src/panel/cull.rs:3371
+#: crates/greycard-ui/src/panel/cull.rs:3344
+#: crates/greycard-ui/src/panel/cull.rs:3382
 msgid "nothing to cull: open a folder"
 msgstr "nic do selekcji: otwórz folder"
 
@@ -6199,67 +6207,67 @@ msgstr "{name}: bez zmian, usuwanie wymaga GPU"
 msgid "{name} left as it was: the fill model failed ({why})"
 msgstr "{name}: bez zmian, model wypełnienia zawiódł ({why})"
 
-#: crates/greycard-ui/src/panel/deliver.rs:1087
+#: crates/greycard-ui/src/panel/deliver.rs:1096
 msgid "developing... the fill model is at work on {name}, {at} of {of}"
 msgstr "wywoływanie... model wypełnienia pracuje nad {name}, {at} z {of}"
 
-#: crates/greycard-ui/src/panel/deliver.rs:1094
+#: crates/greycard-ui/src/panel/deliver.rs:1103
 msgid "developing... the fill model is at work on {name}"
 msgstr "wywoływanie... model wypełnienia pracuje nad {name}"
 
-#: crates/greycard-ui/src/panel/deliver.rs:1121
+#: crates/greycard-ui/src/panel/deliver.rs:1130
 msgid "failed: {message}"
 msgstr "błąd: {message}"
 
-#: crates/greycard-ui/src/panel/deliver.rs:1240
+#: crates/greycard-ui/src/panel/deliver.rs:1249
 msgid "{name} found on {provider} in {seconds} s"
 msgstr "{name} znaleziono na {provider} w {seconds} s"
 
-#: crates/greycard-ui/src/panel/deliver.rs:1307
+#: crates/greycard-ui/src/panel/deliver.rs:1316
 msgid "mask: {message}"
 msgstr "maska: {message}"
 
-#: crates/greycard-ui/src/panel/deliver.rs:1324
+#: crates/greycard-ui/src/panel/deliver.rs:1333
 msgid "downloading {name}: {done} of {total} MB"
 msgstr "pobieranie {name}: {done} z {total} MB"
 
-#: crates/greycard-ui/src/panel/deliver.rs:1339
+#: crates/greycard-ui/src/panel/deliver.rs:1348
 msgid "{name} is ready"
 msgstr "gotowe: {name}"
 
-#: crates/greycard-ui/src/panel/deliver.rs:1384
+#: crates/greycard-ui/src/panel/deliver.rs:1393
 msgid "{name} is ready: the AI features run on the CPU, slower"
 msgstr "gotowe: {name}; funkcje AI działają na CPU, wolniej"
 
-#: crates/greycard-ui/src/panel/deliver.rs:1440
+#: crates/greycard-ui/src/panel/deliver.rs:1449
 msgid "downloading the lens profiles: {done} of {total} KB"
 msgstr "pobieranie profili obiektywów: {done} z {total} KB"
 
-#: crates/greycard-ui/src/panel/deliver.rs:1483
+#: crates/greycard-ui/src/panel/deliver.rs:1492
 msgid "the lens profiles are ready"
 msgstr "profile obiektywów są gotowe"
 
-#: crates/greycard-ui/src/panel/deliver.rs:1513
+#: crates/greycard-ui/src/panel/deliver.rs:1522
 msgid "the lens profiles could not be fetched: {message}"
 msgstr "nie udało się pobrać profili obiektywów: {message}"
 
-#: crates/greycard-ui/src/panel/deliver.rs:1575
+#: crates/greycard-ui/src/panel/deliver.rs:1584
 msgid "{name} is there already: nothing exported"
 msgstr "{name} już istnieje: nic nie wyeksportowano"
 
-#: crates/greycard-ui/src/panel/deliver.rs:1818
+#: crates/greycard-ui/src/panel/deliver.rs:1833
 msgid " ({note})"
 msgstr " ({note})"
 
-#: crates/greycard-ui/src/panel/deliver.rs:1824
+#: crates/greycard-ui/src/panel/deliver.rs:1839
 msgid ", without {what}"
 msgstr ", bez: {what}"
 
-#: crates/greycard-ui/src/panel/deliver.rs:1828
+#: crates/greycard-ui/src/panel/deliver.rs:1843
 msgid "exported {name} in {seconds} s{said}"
 msgstr "wyeksportowano {name} w {seconds} s{said}"
 
-#: crates/greycard-ui/src/panel/deliver.rs:1839
+#: crates/greycard-ui/src/panel/deliver.rs:1854
 msgid "one thing the edit names that this machine has not got (see the log)"
 msgid_plural ""
 "{n} things the edit names that this machine has not got (see the log)"
@@ -6270,142 +6278,142 @@ msgstr[1] ""
 msgstr[2] ""
 "{n} rzeczy z edycji, których brak na tym komputerze (szczegóły w dzienniku)"
 
-#: crates/greycard-ui/src/panel/deliver.rs:1999
+#: crates/greycard-ui/src/panel/deliver.rs:2014
 msgid "nothing to export"
 msgstr "nic do eksportu"
 
-#: crates/greycard-ui/src/panel/deliver.rs:2041
+#: crates/greycard-ui/src/panel/deliver.rs:2056
 msgid "exporting {n} frame..."
 msgid_plural "exporting {n} frames..."
 msgstr[0] "eksportowanie {n} zdjęcia..."
 msgstr[1] "eksportowanie {n} zdjęć..."
 msgstr[2] "eksportowanie {n} zdjęć..."
 
-#: crates/greycard-ui/src/panel/deliver.rs:2090
+#: crates/greycard-ui/src/panel/deliver.rs:2105
 msgid "{name} is there already"
 msgstr "{name} już istnieje"
 
-#: crates/greycard-ui/src/panel/deliver.rs:2091
+#: crates/greycard-ui/src/panel/deliver.rs:2106
 msgid "{n} file is there already"
 msgid_plural "{n} files are there already"
 msgstr[0] "{n} plik już istnieje"
 msgstr[1] "{n} pliki już istnieją"
 msgstr[2] "{n} plików już istnieje"
 
-#: crates/greycard-ui/src/panel/deliver.rs:2101
+#: crates/greycard-ui/src/panel/deliver.rs:2116
 msgid "{title}: overwrite?"
 msgstr "{title}: nadpisać?"
 
-#: crates/greycard-ui/src/panel/deliver.rs:2123
+#: crates/greycard-ui/src/panel/deliver.rs:2138
 msgid "export canceled"
 msgstr "eksport anulowany"
 
-#: crates/greycard-ui/src/panel/deliver.rs:2149
+#: crates/greycard-ui/src/panel/deliver.rs:2164
 msgid " beside each original"
 msgstr " obok każdego oryginału"
 
-#: crates/greycard-ui/src/panel/deliver.rs:2230
+#: crates/greycard-ui/src/panel/deliver.rs:2245
 msgid "Export to a folder"
 msgstr "Eksportuj do folderu"
 
-#: crates/greycard-ui/src/panel/deliver.rs:2262
+#: crates/greycard-ui/src/panel/deliver.rs:2277
 #: crates/greycard-ui/src/panel/export_queue.rs:504
 msgid "{folder} is not there"
 msgstr "{folder} nie istnieje"
 
-#: crates/greycard-ui/src/panel/deliver.rs:2263
+#: crates/greycard-ui/src/panel/deliver.rs:2278
 msgid "{folder} is not a folder"
 msgstr "{folder} nie jest folderem"
 
-#: crates/greycard-ui/src/panel/deliver.rs:2282
-#: crates/greycard-ui/src/sidecars.rs:243
+#: crates/greycard-ui/src/panel/deliver.rs:2297
+#: crates/greycard-ui/src/sidecars.rs:244
 msgid "{folder} cannot be written to"
 msgstr "nie można zapisywać w {folder}"
 
-#: crates/greycard-ui/src/panel/deliver.rs:2352
+#: crates/greycard-ui/src/panel/deliver.rs:2367
 msgid "choosing the folder exports go to..."
 msgstr "wybieranie folderu eksportu..."
 
-#: crates/greycard-ui/src/panel/deliver.rs:2366
+#: crates/greycard-ui/src/panel/deliver.rs:2381
 msgid "exports go to {folder}"
 msgstr "eksporty trafiają do {folder}"
 
-#: crates/greycard-ui/src/panel/deliver.rs:2368
+#: crates/greycard-ui/src/panel/deliver.rs:2383
 msgid "the export folder is as it was"
 msgstr "folder eksportu bez zmian"
 
-#: crates/greycard-ui/src/panel/deliver.rs:2376
+#: crates/greycard-ui/src/panel/deliver.rs:2391
 msgid "; the export waiting on {folder} was not started"
 msgstr "; eksport czekający na {folder} nie został rozpoczęty"
 
-#: crates/greycard-ui/src/panel/deliver.rs:2408
+#: crates/greycard-ui/src/panel/deliver.rs:2423
 msgid "stopping the export after the frame in hand..."
 msgstr "zatrzymywanie eksportu po bieżącym zdjęciu..."
 
-#: crates/greycard-ui/src/panel/deliver.rs:2479
+#: crates/greycard-ui/src/panel/deliver.rs:2494
 msgid "export preset {name}"
 msgstr "preset eksportu {name}"
 
-#: crates/greycard-ui/src/panel/deliver.rs:2496
+#: crates/greycard-ui/src/panel/deliver.rs:2511
 msgid "{none} is the picker's; choose another name"
 msgstr "{none} to nazwa z listy wyboru; wybierz inną nazwę"
 
-#: crates/greycard-ui/src/panel/deliver.rs:2508
+#: crates/greycard-ui/src/panel/deliver.rs:2523
 msgid "export preset {name} saved"
 msgstr "zapisano preset eksportu {name}"
 
-#: crates/greycard-ui/src/panel/deliver.rs:2533
+#: crates/greycard-ui/src/panel/deliver.rs:2548
 msgid "export preset {name} deleted"
 msgstr "usunięto preset eksportu {name}"
 
 #. The frame on screen with a panel that is not its own (its
 #. root offline, its sidecar not read): nothing to export, and
 #. the worker's open picture is another frame's.
-#: crates/greycard-ui/src/panel/deliver.rs:2673
+#: crates/greycard-ui/src/panel/deliver.rs:2688
 msgid "nothing is exported"
 msgstr "nic nie jest eksportowane"
 
-#: crates/greycard-ui/src/panel/deliver.rs:2720
-#: crates/greycard-ui/src/panel/deliver.rs:2727
-#: crates/greycard-ui/src/panel/deliver.rs:2815
+#: crates/greycard-ui/src/panel/deliver.rs:2743
+#: crates/greycard-ui/src/panel/deliver.rs:2750
+#: crates/greycard-ui/src/panel/deliver.rs:2838
 msgid "not exported: {why}"
 msgstr "nie wyeksportowano: {why}"
 
-#: crates/greycard-ui/src/panel/deliver.rs:2763
+#: crates/greycard-ui/src/panel/deliver.rs:2786
 msgid "exporting to {folder}..."
 msgstr "eksportowanie do {folder}..."
 
-#: crates/greycard-ui/src/panel/deliver.rs:2795
+#: crates/greycard-ui/src/panel/deliver.rs:2818
 #: crates/greycard-ui/src/panel/edit_in.rs:361
 msgid "not exported: another export is under way"
 msgstr "nie wyeksportowano: trwa inny eksport"
 
-#: crates/greycard-ui/src/panel/deliver.rs:2803
+#: crates/greycard-ui/src/panel/deliver.rs:2826
 msgid "{why}: choose another folder"
 msgstr "{why}: wybierz inny folder"
 
-#: crates/greycard-ui/src/panel/deliver.rs:2820
+#: crates/greycard-ui/src/panel/deliver.rs:2843
 msgid "not exported: {why}; {failed}"
 msgstr "nie wyeksportowano: {why}; {failed}"
 
-#: crates/greycard-ui/src/panel/edit.rs:525
+#: crates/greycard-ui/src/panel/edit.rs:589
 msgid "no demosaic for this mosaic"
 msgstr "brak demozaikowania dla tej mozaiki"
 
-#: crates/greycard-ui/src/panel/edit.rs:526
+#: crates/greycard-ui/src/panel/edit.rs:590
 msgid "not a mosaic"
 msgstr "to nie jest mozaika"
 
-#: crates/greycard-ui/src/panel/edit.rs:527
+#: crates/greycard-ui/src/panel/edit.rs:591
 msgid "the raw could not be read"
 msgstr "nie można odczytać pliku raw"
 
-#: crates/greycard-ui/src/panel/edit.rs:528
+#: crates/greycard-ui/src/panel/edit.rs:592
 msgid "reading the raw"
 msgstr "odczyt pliku raw"
 
 #. The adjustments list: the whole-picture row above the masks
-#: crates/greycard-ui/src/panel/edit.rs:709
+#: crates/greycard-ui/src/panel/edit.rs:773
 msgid "Global"
 msgstr "Globalne"
 
@@ -6512,37 +6520,37 @@ msgstr "Oryginał"
 msgid "Earliest kept"
 msgstr "Najwcześniejszy zachowany"
 
-#: crates/greycard-ui/src/panel/history.rs:251
+#: crates/greycard-ui/src/panel/history.rs:263
 msgid "; the {what} shown once restored"
 msgstr "; po przywróceniu widoczne: {what}"
 
-#: crates/greycard-ui/src/panel/history.rs:252
+#: crates/greycard-ui/src/panel/history.rs:264
 msgid " and "
 msgstr " i "
 
-#: crates/greycard-ui/src/panel/history.rs:290
+#: crates/greycard-ui/src/panel/history.rs:302
 msgid "{name}, {taken}; click to restore it"
 msgstr "{name}, {taken}; kliknij, aby przywrócić"
 
-#: crates/greycard-ui/src/panel/history.rs:295
+#: crates/greycard-ui/src/panel/history.rs:307
 msgid "{name}, {taken}; click to rename it"
 msgstr "{name}, {taken}; kliknij, aby zmienić nazwę"
 
-#: crates/greycard-ui/src/panel/history.rs:300
+#: crates/greycard-ui/src/panel/history.rs:312
 msgid "{name}, {taken}; click to remove it"
 msgstr "{name}, {taken}; kliknij, aby usunąć"
 
-#: crates/greycard-ui/src/panel/history.rs:305
+#: crates/greycard-ui/src/panel/history.rs:317
 msgid "{name}, {taken}; click to restore, double-click to rename"
 msgstr ""
 "{name}, {taken}; kliknij, aby przywrócić, kliknij dwukrotnie, aby zmienić "
 "nazwę"
 
-#: crates/greycard-ui/src/panel/history.rs:803
+#: crates/greycard-ui/src/panel/history.rs:830
 msgid " with the export preset {name}"
 msgstr " z presetem eksportu {name}"
 
-#: crates/greycard-ui/src/panel/history.rs:807
+#: crates/greycard-ui/src/panel/history.rs:834
 msgid ""
 "{file}, exported {when}{preset}; click to go back to the state it was "
 "exported from"
@@ -6550,25 +6558,25 @@ msgstr ""
 "{file}, wyeksportowano {when}{preset}; kliknij, aby wrócić do stanu, z "
 "którego go wyeksportowano"
 
-#: crates/greycard-ui/src/panel/history.rs:817
+#: crates/greycard-ui/src/panel/history.rs:844
 msgid "the current state: {name}"
 msgstr "bieżący stan: {name}"
 
-#: crates/greycard-ui/src/panel/history.rs:820
+#: crates/greycard-ui/src/panel/history.rs:847
 msgid "step {i}: {name}; click to make it current"
 msgstr "krok {i}: {name}; kliknij, aby uczynić go bieżącym"
 
-#: crates/greycard-ui/src/panel/history.rs:865
+#: crates/greycard-ui/src/panel/history.rs:892
 msgid "{name} taken; type a name for it"
 msgstr "utworzono migawkę {name}; wpisz jej nazwę"
 
-#: crates/greycard-ui/src/panel/history.rs:897
-#: crates/greycard-ui/src/panel/history.rs:911
-#: crates/greycard-ui/src/panel/history.rs:918
+#: crates/greycard-ui/src/panel/history.rs:924
+#: crates/greycard-ui/src/panel/history.rs:938
+#: crates/greycard-ui/src/panel/history.rs:945
 msgid "{name} restored"
 msgstr "przywrócono {name}"
 
-#: crates/greycard-ui/src/panel/history.rs:914
+#: crates/greycard-ui/src/panel/history.rs:941
 msgid "{name} is the current state"
 msgstr "{name} to bieżący stan"
 
@@ -6988,7 +6996,7 @@ msgid "; {} not removed: {why}"
 msgstr "; nie usunięto {}: {why}"
 
 #: crates/greycard-ui/src/panel/look_remove.rs:544
-#: crates/greycard-ui/src/panel/look_rename.rs:796
+#: crates/greycard-ui/src/panel/look_rename.rs:810
 #: crates/greycard-ui/src/roots/view.rs:366
 msgid "{n} file"
 msgid_plural "{n} files"
@@ -7046,7 +7054,7 @@ msgstr[1] "{n} zdjęcia"
 msgstr[2] "{n} zdjęć"
 
 #: crates/greycard-ui/src/panel/look_rename.rs:303
-#: crates/greycard-ui/src/rows.rs:416
+#: crates/greycard-ui/src/rows.rs:432
 msgid "{n} preset"
 msgid_plural "{n} presets"
 msgstr[0] "{n} preset"
@@ -7145,27 +7153,27 @@ msgstr "nie można utworzyć {} ({e})"
 msgid "its new copy is not whole"
 msgstr "jego nowa kopia jest niekompletna"
 
-#: crates/greycard-ui/src/panel/look_rename.rs:804
+#: crates/greycard-ui/src/panel/look_rename.rs:818
 msgid "renamed {old} to {new}: {}"
 msgstr "zmieniono nazwę {old} na {new}: {}"
 
-#: crates/greycard-ui/src/panel/look_rename.rs:812
+#: crates/greycard-ui/src/panel/look_rename.rs:826
 msgid "{n} picture's edit"
 msgid_plural "{n} pictures' edits"
 msgstr[0] "edycja {n} zdjęcia"
 msgstr[1] "edycje {n} zdjęć"
 msgstr[2] "edycje {n} zdjęć"
 
-#: crates/greycard-ui/src/panel/look_rename.rs:816
-#: crates/greycard-ui/src/rows.rs:525
+#: crates/greycard-ui/src/panel/look_rename.rs:830
+#: crates/greycard-ui/src/rows.rs:541
 msgid "{} and {}"
 msgstr "{} i {}"
 
-#: crates/greycard-ui/src/panel/look_rename.rs:819
+#: crates/greycard-ui/src/panel/look_rename.rs:833
 msgid "{what} could not be read or written and still name {old}"
 msgstr "{what}: nie udało się odczytać ani zapisać, nadal wskazują {old}"
 
-#: crates/greycard-ui/src/panel/look_rename.rs:826
+#: crates/greycard-ui/src/panel/look_rename.rs:840
 msgid ""
 "{} could not be reached (offline, on an archive and not read yet, or "
 "sidecars off) and may still name {old}"
@@ -7173,67 +7181,67 @@ msgstr ""
 "{}: brak dostępu (niedostępne, na archiwum i jeszcze nieodczytane lub pliki "
 "pomocnicze wyłączone); mogą nadal wskazywać {old}"
 
-#: crates/greycard-ui/src/panel/look_rename.rs:828
+#: crates/greycard-ui/src/panel/look_rename.rs:842
 msgid "{n} picture's sidecar"
 msgid_plural "{n} pictures' sidecars"
 msgstr[0] "plik pomocniczy {n} zdjęcia"
 msgstr[1] "pliki pomocnicze {n} zdjęć"
 msgstr[2] "pliki pomocnicze {n} zdjęć"
 
-#: crates/greycard-ui/src/panel/look_rename.rs:834
+#: crates/greycard-ui/src/panel/look_rename.rs:848
 msgid "{} to an archive's copy, which is written later"
 msgstr "{} do kopii w archiwum, zapisywanej później"
 
-#: crates/greycard-ui/src/panel/look_rename.rs:835
+#: crates/greycard-ui/src/panel/look_rename.rs:849
 msgid "{n} picture's edit goes"
 msgid_plural "{n} pictures' edits go"
 msgstr[0] "edycja {n} zdjęcia trafi"
 msgstr[1] "edycje {n} zdjęć trafią"
 msgstr[2] "edycje {n} zdjęć trafią"
 
-#: crates/greycard-ui/src/panel/look_rename.rs:840
+#: crates/greycard-ui/src/panel/look_rename.rs:854
 msgid "; {}, so {old}'s files stay under that name too until you remove them"
 msgstr "; {}, więc pliki {old} też zostają pod tą nazwą do czasu ich usunięcia"
 
-#: crates/greycard-ui/src/panel/look_rename.rs:846
+#: crates/greycard-ui/src/panel/look_rename.rs:860
 msgid "; {} stays under the old name ({why})"
 msgstr "; {} zostaje pod starą nazwą ({why})"
 
-#: crates/greycard-ui/src/panel/look_rename.rs:869
+#: crates/greycard-ui/src/panel/look_rename.rs:883
 msgid "{old} has no file in the look directory now; nothing was renamed"
 msgstr "{old} nie ma już pliku w katalogu looków; nie zmieniono nazwy"
 
-#: crates/greycard-ui/src/panel/look_rename.rs:874
+#: crates/greycard-ui/src/panel/look_rename.rs:888
 msgid "{old} is its name already"
 msgstr "{old} to już jego nazwa"
 
-#: crates/greycard-ui/src/panel/look_rename.rs:878
+#: crates/greycard-ui/src/panel/look_rename.rs:892
 msgid "{old} was not renamed: {why}"
 msgstr "nie zmieniono nazwy {old}: {why}"
 
-#: crates/greycard-ui/src/panel/look_rename.rs:882
+#: crates/greycard-ui/src/panel/look_rename.rs:896
 msgid "{old} was not renamed: {} is a link"
 msgstr "nie zmieniono nazwy {old}: {} jest dowiązaniem"
 
-#: crates/greycard-ui/src/panel/look_rename.rs:890
+#: crates/greycard-ui/src/panel/look_rename.rs:904
 msgid "{old} was not renamed: {why}; nothing changed"
 msgstr "nie zmieniono nazwy {old}: {why}; nic się nie zmieniło"
 
-#: crates/greycard-ui/src/panel/look_rename.rs:987
+#: crates/greycard-ui/src/panel/look_rename.rs:1010
 msgid "renaming {old} to {new}..."
 msgstr "zmiana nazwy {old} na {new}..."
 
-#: crates/greycard-ui/src/panel/look_rename.rs:1434
+#: crates/greycard-ui/src/panel/look_rename.rs:1457
 msgid "not renamed: a capture, an export or a timing run never renames"
 msgstr ""
 "nie zmieniono nazwy: przechwytywanie, eksport ani pomiar czasu nigdy nie "
 "zmieniają nazw"
 
-#: crates/greycard-ui/src/panel/look_rename.rs:1439
+#: crates/greycard-ui/src/panel/look_rename.rs:1462
 msgid "not renamed: the folder's edits were still being read"
 msgstr "nie zmieniono nazwy: edycje folderu były jeszcze odczytywane"
 
-#: crates/greycard-ui/src/panel/look_rename.rs:1457
+#: crates/greycard-ui/src/panel/look_rename.rs:1480
 msgid "Renaming: the edits are being read and written..."
 msgstr "Zmiana nazwy: odczyt i zapis edycji..."
 
@@ -7319,7 +7327,7 @@ msgstr[0] "najwyżej {n} korekta"
 msgstr[1] "najwyżej {n} korekty"
 msgstr[2] "najwyżej {n} korekt"
 
-#: crates/greycard-ui/src/panel/mask.rs:1844
+#: crates/greycard-ui/src/panel/mask.rs:1856
 msgid "nothing placed"
 msgstr "nic nie umieszczono"
 
@@ -7327,47 +7335,48 @@ msgstr "nic nie umieszczono"
 msgid "could not show {}: {e}"
 msgstr "nie można pokazać {}: {e}"
 
-#: crates/greycard-ui/src/panel/merge.rs:190
+#: crates/greycard-ui/src/panel/merge.rs:214
 msgid "choose two frames or more to merge"
 msgstr "wybierz co najmniej dwa zdjęcia do scalenia"
 
-#: crates/greycard-ui/src/panel/merge.rs:331
+#: crates/greycard-ui/src/panel/merge.rs:374
 msgid "these frames are merged once the merge in hand is done"
 msgstr "te zdjęcia zostaną scalone po zakończeniu bieżącego scalania"
 
-#: crates/greycard-ui/src/panel/merge.rs:338
-#: crates/greycard-ui/src/panel/merge.rs:632
-#: crates/greycard-ui/src/panel/merge.rs:696
+#: crates/greycard-ui/src/panel/merge.rs:381
+#: crates/greycard-ui/src/panel/merge.rs:676
+#: crates/greycard-ui/src/panel/merge.rs:740
 msgid "merging frame {index} of {of}"
 msgstr "scalanie zdjęcia {index} z {of}"
 
-#: crates/greycard-ui/src/panel/merge.rs:340
+#: crates/greycard-ui/src/panel/merge.rs:383
 msgid "merging: placing the frames"
 msgstr "scalanie: dopasowanie zdjęć"
 
-#: crates/greycard-ui/src/panel/merge.rs:342
+#: crates/greycard-ui/src/panel/merge.rs:385
 msgid "merging: blending frame {index} of {of}"
 msgstr "scalanie: mieszanie zdjęcia {index} z {of}"
 
-#: crates/greycard-ui/src/panel/merge.rs:346
+#: crates/greycard-ui/src/panel/merge.rs:389
 msgid "merging: writing the file"
 msgstr "scalanie: zapis pliku"
 
-#: crates/greycard-ui/src/panel/merge.rs:735
+#: crates/greycard-ui/src/panel/merge.rs:779
 msgid "no learned denoise on this graphics card"
 msgstr "brak wyuczonego odszumiania na tej karcie graficznej"
 
 #. WORDING PENDING the owner's sign-off.
-#: crates/greycard-ui/src/panel/merge.rs:737
+#: crates/greycard-ui/src/panel/merge.rs:781
 #, fuzzy
 msgid "no learned denoise in an X-Trans merge"
 msgstr "brak wyuczonego odszumiania dla X-Trans"
 
-#: crates/greycard-ui/src/panel/merge.rs:748
+#: crates/greycard-ui/src/panel/merge.rs:792
+#: crates/greycard-ui/src/panel/merge/tests.rs:1116
 msgid "not merged: {why}"
 msgstr "nie scalono: {why}"
 
-#: crates/greycard-ui/src/panel/merge.rs:758
+#: crates/greycard-ui/src/panel/merge.rs:802
 msgid "merged {n} frame into {name}"
 msgid_plural "merged {n} frames into {name}"
 msgstr[0] "scalono {n} zdjęcie w {name}"
@@ -7375,7 +7384,7 @@ msgstr[1] "scalono {n} zdjęcia w {name}"
 msgstr[2] "scalono {n} zdjęć w {name}"
 
 #. The finished line, then why the learned denoise did not run.
-#: crates/greycard-ui/src/panel/merge.rs:763
+#: crates/greycard-ui/src/panel/merge.rs:807
 msgid "{line}; {why}"
 msgstr "{line}; {why}"
 
@@ -7572,18 +7581,18 @@ msgstr[2] "; nie można sprawdzić: {n}"
 msgid "this mask no longer has the person picked"
 msgstr "ta maska nie ma już wybranej osoby"
 
-#: crates/greycard-ui/src/panel/parts_all.rs:354
+#: crates/greycard-ui/src/panel/parts_all.rs:355
 msgid "the other pictures no longer have this mask"
 msgstr "pozostałe zdjęcia nie mają już tej maski"
 
-#: crates/greycard-ui/src/panel/parts_all.rs:380
+#: crates/greycard-ui/src/panel/parts_all.rs:381
 msgid "looking for this person on {n} more picture"
 msgid_plural "looking for this person on {n} more pictures"
 msgstr[0] "szukanie tej osoby na kolejnym {n} zdjęciu"
 msgstr[1] "szukanie tej osoby na kolejnych {n} zdjęciach"
 msgstr[2] "szukanie tej osoby na kolejnych {n} zdjęciach"
 
-#: crates/greycard-ui/src/panel/parts_all.rs:533
+#: crates/greycard-ui/src/panel/parts_all.rs:536
 msgid "looking for this person: {looked} of {n} picture looked at"
 msgid_plural "looking for this person: {looked} of {n} pictures looked at"
 msgstr[0] "szukanie tej osoby: sprawdzono {looked} z {n} zdjęcia"
@@ -7873,27 +7882,27 @@ msgstr "porównywanie stosu {name}"
 msgid "{left} more of the stack left out"
 msgstr "pominięto jeszcze {left} ze stosu"
 
-#: crates/greycard-ui/src/panel/startup.rs:2258
+#: crates/greycard-ui/src/panel/startup.rs:2263
 msgid "{}'s profile from {}"
 msgstr "profil {} z {}"
 
-#: crates/greycard-ui/src/panel/startup.rs:2262
+#: crates/greycard-ui/src/panel/startup.rs:2267
 msgid "{} knows no display profile"
 msgstr "{} nie zna profilu wyświetlacza"
 
-#: crates/greycard-ui/src/panel/startup.rs:2294
+#: crates/greycard-ui/src/panel/startup.rs:2299
 msgid "{from}: nothing changed on the way to the screen"
 msgstr "{from}: bez zmian w drodze na ekran"
 
-#: crates/greycard-ui/src/panel/startup.rs:2306
+#: crates/greycard-ui/src/panel/startup.rs:2311
 msgid "{from}: up to {d} of 255 from sRGB"
 msgstr "{from}: do {d} z 255 względem sRGB"
 
-#: crates/greycard-ui/src/panel/startup.rs:2317
+#: crates/greycard-ui/src/panel/startup.rs:2322
 msgid "{from}: cannot be read; nothing changed on the way to the screen"
 msgstr "{from}: nie można odczytać; bez zmian w drodze na ekran"
 
-#: crates/greycard-ui/src/panel/startup.rs:2938
+#: crates/greycard-ui/src/panel/startup.rs:2947
 msgid ""
 "Library and Loupe, top left (or G), switch between the grid and one frame; "
 "Cull and Develop (C and D) are the Loupe's two modes; ? lists the keys"
@@ -7940,12 +7949,12 @@ msgid ", each shifted {}"
 msgstr ", każde przesunięte o {}"
 
 #: crates/greycard-ui/src/panel/sync.rs:791
-#: crates/greycard-ui/src/panel/sync.rs:1971
+#: crates/greycard-ui/src/panel/sync.rs:1980
 msgid "put the tool down first (Esc), then sync"
 msgstr "najpierw odłóż narzędzie (Esc), potem synchronizuj"
 
 #: crates/greycard-ui/src/panel/sync.rs:796
-#: crates/greycard-ui/src/panel/sync.rs:1978
+#: crates/greycard-ui/src/panel/sync.rs:1987
 msgid "choose the frames to sync onto: Ctrl+click or Shift+click"
 msgstr "wybierz zdjęcia do synchronizacji: Ctrl+klik lub Shift+klik"
 
@@ -7960,7 +7969,7 @@ msgid ": nothing to sync from"
 msgstr ": brak źródła synchronizacji"
 
 #: crates/greycard-ui/src/panel/sync.rs:873
-#: crates/greycard-ui/src/panel/sync.rs:2169
+#: crates/greycard-ui/src/panel/sync.rs:2178
 msgid "choose what goes across"
 msgstr "wybierz, co skopiować"
 
@@ -7986,139 +7995,139 @@ msgstr "{} K przy {k} K tego zdjęcia, "
 msgid "Temperature {t} mired ({here}{} K at 3000 K, {} K at 6500 K)"
 msgstr "Temperatura {t} mired ({here}{} K przy 3000 K, {} K przy 6500 K)"
 
-#: crates/greycard-ui/src/panel/sync.rs:1275
+#: crates/greycard-ui/src/panel/sync.rs:1281
 msgid ": the preset is not applied"
 msgstr ": preset nie został zastosowany"
 
-#: crates/greycard-ui/src/panel/sync.rs:1329
-#: crates/greycard-ui/src/panel/sync.rs:1367
+#: crates/greycard-ui/src/panel/sync.rs:1335
+#: crates/greycard-ui/src/panel/sync.rs:1373
 msgid "{} is on already{left_off_tail}"
 msgstr "{} jest już zastosowany{left_off_tail}"
 
-#: crates/greycard-ui/src/panel/sync.rs:1352
-#: crates/greycard-ui/src/panel/sync.rs:1384
+#: crates/greycard-ui/src/panel/sync.rs:1358
+#: crates/greycard-ui/src/panel/sync.rs:1390
 msgid "{} applied{left_off_tail}"
 msgstr "zastosowano {}{left_off_tail}"
 
-#: crates/greycard-ui/src/panel/sync.rs:1501
+#: crates/greycard-ui/src/panel/sync.rs:1507
 msgid " and {more} more"
 msgstr " i {more} więcej"
 
-#: crates/greycard-ui/src/panel/sync.rs:1510
+#: crates/greycard-ui/src/panel/sync.rs:1516
 msgid "; the camera profile left off {} (made for another camera)"
 msgstr "; profil aparatu pominięty dla: {} (stworzony dla innego aparatu)"
 
-#: crates/greycard-ui/src/panel/sync.rs:1516
+#: crates/greycard-ui/src/panel/sync.rs:1522
 msgid "; the demosaic left off {} (a method of another mosaic)"
 msgstr "; demozaikowanie pominięte dla: {} (metoda innej mozaiki)"
 
-#: crates/greycard-ui/src/panel/sync.rs:1532
+#: crates/greycard-ui/src/panel/sync.rs:1538
 msgid "{n} section"
 msgid_plural "{n} sections"
 msgstr[0] "{n} sekcja"
 msgstr[1] "{n} sekcje"
 msgstr[2] "{n} sekcji"
 
-#: crates/greycard-ui/src/panel/sync.rs:1533
+#: crates/greycard-ui/src/panel/sync.rs:1539
 msgid "{n} part"
 msgid_plural "{n} parts"
 msgstr[0] "{n} część"
 msgstr[1] "{n} części"
 msgstr[2] "{n} części"
 
-#: crates/greycard-ui/src/panel/sync.rs:1538
+#: crates/greycard-ui/src/panel/sync.rs:1544
 msgid "{sections} and {parts}"
 msgstr "{sections} i {parts}"
 
-#: crates/greycard-ui/src/panel/sync.rs:1549
+#: crates/greycard-ui/src/panel/sync.rs:1555
 msgid "the other {n} frame had these already"
 msgid_plural "the other {n} frames had these already"
 msgstr[0] "pozostałe {n} zdjęcie już to miało"
 msgstr[1] "pozostałe {n} zdjęcia już to miały"
 msgstr[2] "pozostałych {n} zdjęć już to miało"
 
-#: crates/greycard-ui/src/panel/sync.rs:1553
+#: crates/greycard-ui/src/panel/sync.rs:1559
 msgid "synced {what} onto {n} frame"
 msgid_plural "synced {what} onto {n} frames"
 msgstr[0] "zsynchronizowano {what} na {n} zdjęcie"
 msgstr[1] "zsynchronizowano {what} na {n} zdjęcia"
 msgstr[2] "zsynchronizowano {what} na {n} zdjęć"
 
-#: crates/greycard-ui/src/panel/sync.rs:1573
+#: crates/greycard-ui/src/panel/sync.rs:1579
 msgid "{name} is on already"
 msgstr "{name} jest już zastosowany"
 
-#: crates/greycard-ui/src/panel/sync.rs:1576
+#: crates/greycard-ui/src/panel/sync.rs:1582
 msgid "{name} onto {n} frame"
 msgid_plural "{name} onto {n} frames"
 msgstr[0] "{name} na {n} zdjęcie"
 msgstr[1] "{name} na {n} zdjęcia"
 msgstr[2] "{name} na {n} zdjęć"
 
-#: crates/greycard-ui/src/panel/sync.rs:1582
+#: crates/greycard-ui/src/panel/sync.rs:1588
 msgid "; {already} had it already"
 msgstr "; już miało: {already}"
 
-#: crates/greycard-ui/src/panel/sync.rs:1594
+#: crates/greycard-ui/src/panel/sync.rs:1600
 msgid "open a frame to copy its settings"
 msgstr "otwórz zdjęcie, aby skopiować jego ustawienia"
 
-#: crates/greycard-ui/src/panel/sync.rs:1665
+#: crates/greycard-ui/src/panel/sync.rs:1674
 msgid "copied the settings of {name}"
 msgstr "skopiowano ustawienia {name}"
 
-#: crates/greycard-ui/src/panel/sync.rs:1718
+#: crates/greycard-ui/src/panel/sync.rs:1727
 msgid "Onto {onto}; {}, which they came from, is left as it is."
 msgstr "Na: {onto}; {}, skąd pochodzą, pozostaje bez zmian."
 
-#: crates/greycard-ui/src/panel/sync.rs:1723
+#: crates/greycard-ui/src/panel/sync.rs:1732
 msgid "Onto {onto}."
 msgstr "Na: {onto}."
 
-#: crates/greycard-ui/src/panel/sync.rs:1733
+#: crates/greycard-ui/src/panel/sync.rs:1742
 msgid "nothing copied yet: right-click a frame for Copy settings, or Ctrl+C"
 msgstr ""
 "nic jeszcze nie skopiowano: kliknij zdjęcie prawym przyciskiem i wybierz "
 "Kopiuj ustawienia lub naciśnij Ctrl+C"
 
-#: crates/greycard-ui/src/panel/sync.rs:1738
-#: crates/greycard-ui/src/panel/sync.rs:2054
+#: crates/greycard-ui/src/panel/sync.rs:1747
+#: crates/greycard-ui/src/panel/sync.rs:2063
 msgid "put the tool down first (Esc), then paste"
 msgstr "najpierw odłóż narzędzie (Esc), potem wklej"
 
-#: crates/greycard-ui/src/panel/sync.rs:1748
+#: crates/greycard-ui/src/panel/sync.rs:1757
 msgid "{} is the frame these came from; choose the frames to paste onto"
 msgstr "{} to zdjęcie źródłowe; wybierz zdjęcia, na które wkleić"
 
-#: crates/greycard-ui/src/panel/sync.rs:1789
-#: crates/greycard-ui/src/panel/sync.rs:1823
+#: crates/greycard-ui/src/panel/sync.rs:1798
+#: crates/greycard-ui/src/panel/sync.rs:1832
 msgid "{} from {}"
 msgstr "{} z {}"
 
-#: crates/greycard-ui/src/panel/sync.rs:1938
+#: crates/greycard-ui/src/panel/sync.rs:1947
 msgid "the {n} frame had these already"
 msgid_plural "the {n} frames had these already"
 msgstr[0] "{n} zdjęcie już to miało"
 msgstr[1] "{n} zdjęcia już to miały"
 msgstr[2] "{n} zdjęć już to miało"
 
-#: crates/greycard-ui/src/panel/sync.rs:1941
+#: crates/greycard-ui/src/panel/sync.rs:1950
 msgid "pasted {what} onto {n} frame"
 msgid_plural "pasted {what} onto {n} frames"
 msgstr[0] "wklejono {what} na {n} zdjęcie"
 msgstr[1] "wklejono {what} na {n} zdjęcia"
 msgstr[2] "wklejono {what} na {n} zdjęć"
 
-#: crates/greycard-ui/src/panel/sync.rs:2186
+#: crates/greycard-ui/src/panel/sync.rs:2195
 msgid "the selection changed while the sheet was open; nothing pasted"
 msgstr "zaznaczenie zmieniło się, gdy okno było otwarte; nic nie wklejono"
 
-#: crates/greycard-ui/src/panel/sync.rs:2237
+#: crates/greycard-ui/src/panel/sync.rs:2246
 msgid "the selection changed while the sheet was open; nothing synced"
 msgstr ""
 "zaznaczenie zmieniło się, gdy okno było otwarte; nic nie zsynchronizowano"
 
-#: crates/greycard-ui/src/panel/sync.rs:2242
+#: crates/greycard-ui/src/panel/sync.rs:2251
 msgid "nothing to sync onto"
 msgstr "brak zdjęć do synchronizacji"
 
@@ -8231,27 +8240,27 @@ msgstr "trwa usuwanie"
 msgid "no version is made"
 msgstr "nie utworzono wersji"
 
-#: crates/greycard-ui/src/panel/versions.rs:82
+#: crates/greycard-ui/src/panel/versions.rs:85
 msgid "no frame to make a version of"
 msgstr "brak zdjęcia do utworzenia wersji"
 
-#: crates/greycard-ui/src/panel/versions.rs:107
+#: crates/greycard-ui/src/panel/versions.rs:110
 msgid "the version it was to be made from is gone"
 msgstr "wersja źródłowa już nie istnieje"
 
-#: crates/greycard-ui/src/panel/versions.rs:138
+#: crates/greycard-ui/src/panel/versions.rs:141
 msgid "made {name} of {file}"
 msgstr "utworzono {name} z {file}"
 
-#: crates/greycard-ui/src/panel/versions.rs:156
+#: crates/greycard-ui/src/panel/versions.rs:159
 msgid "Name the new version"
 msgstr "Nazwij nową wersję"
 
-#: crates/greycard-ui/src/panel/versions.rs:158
+#: crates/greycard-ui/src/panel/versions.rs:161
 msgid "Rename the version"
 msgstr "Zmień nazwę wersji"
 
-#: crates/greycard-ui/src/panel/versions.rs:164
+#: crates/greycard-ui/src/panel/versions.rs:167
 msgid ""
 "A version of {file}, with an edit of its own; the rating, flag, label and "
 "keywords are the file's"
@@ -8259,108 +8268,108 @@ msgstr ""
 "Wersja {file} z własną edycją; ocena, flaga, etykieta i słowa kluczowe "
 "należą do pliku"
 
-#: crates/greycard-ui/src/panel/versions.rs:171
+#: crates/greycard-ui/src/panel/versions.rs:174
 msgid "The version's name"
 msgstr "Nazwa wersji"
 
-#: crates/greycard-ui/src/panel/versions.rs:182
+#: crates/greycard-ui/src/panel/versions.rs:185
 msgid "the file's own frame is renamed as a file, not as a version"
 msgstr "nazwę zdjęcia samego pliku zmienia się jak plikowi, nie jak wersji"
 
-#: crates/greycard-ui/src/panel/versions.rs:194
+#: crates/greycard-ui/src/panel/versions.rs:197
 msgid "that version is gone; nothing renamed"
 msgstr "tej wersji już nie ma; nie zmieniono nazwy"
 
-#: crates/greycard-ui/src/panel/versions.rs:215
+#: crates/greycard-ui/src/panel/versions.rs:218
 msgid "{was} of {file} is {now} now"
 msgstr "{was} z {file} to teraz {now}"
 
-#: crates/greycard-ui/src/panel/versions.rs:255
+#: crates/greycard-ui/src/panel/versions.rs:258
 msgid "the original is swapped from one of its versions"
 msgstr "oryginał zamienia się z jedną z jego wersji"
 
-#: crates/greycard-ui/src/panel/versions.rs:275
+#: crates/greycard-ui/src/panel/versions.rs:278
 msgid "that version of {file} is gone; nothing swapped"
 msgstr "tej wersji {file} już nie ma; nic nie zamieniono"
 
-#: crates/greycard-ui/src/panel/versions.rs:320
+#: crates/greycard-ui/src/panel/versions.rs:323
 msgid "{name} and the original of {file} swapped"
 msgstr "zamieniono {name} z oryginałem {file}"
 
-#: crates/greycard-ui/src/panel/versions.rs:346
+#: crates/greycard-ui/src/panel/versions.rs:349
 msgid "no version is chosen"
 msgstr "nie wybrano wersji"
 
-#: crates/greycard-ui/src/panel/versions.rs:351
+#: crates/greycard-ui/src/panel/versions.rs:354
 msgid "Delete the version {name} of {file}?"
 msgstr "Usunąć wersję {name} pliku {file}?"
 
-#: crates/greycard-ui/src/panel/versions.rs:355
+#: crates/greycard-ui/src/panel/versions.rs:358
 msgid "Delete {n} version?"
 msgid_plural "Delete {n} versions?"
 msgstr[0] "Usunąć {n} wersję?"
 msgstr[1] "Usunąć {n} wersje?"
 msgstr[2] "Usunąć {n} wersji?"
 
-#: crates/greycard-ui/src/panel/versions.rs:358
+#: crates/greycard-ui/src/panel/versions.rs:361
 msgid "The file and its other versions stay."
 msgstr "Plik i jego pozostałe wersje zostają."
 
-#: crates/greycard-ui/src/panel/versions.rs:360
+#: crates/greycard-ui/src/panel/versions.rs:363
 msgid "The files and their other versions stay."
 msgstr "Pliki i ich pozostałe wersje zostają."
 
-#: crates/greycard-ui/src/panel/versions.rs:364
+#: crates/greycard-ui/src/panel/versions.rs:367
 msgid "Its edit, history and snapshots go with it."
 msgstr "Jej edycja, historia i migawki zostaną usunięte razem z nią."
 
-#: crates/greycard-ui/src/panel/versions.rs:370
+#: crates/greycard-ui/src/panel/versions.rs:373
 msgid "Delete version"
 msgstr "Usuń wersję"
 
-#: crates/greycard-ui/src/panel/versions.rs:372
+#: crates/greycard-ui/src/panel/versions.rs:375
 msgid "Delete versions"
 msgstr "Usuń wersje"
 
-#: crates/greycard-ui/src/panel/versions.rs:416
+#: crates/greycard-ui/src/panel/versions.rs:419
 msgid "{name} of {file}"
 msgstr "{name} z {file}"
 
-#: crates/greycard-ui/src/panel/versions.rs:435
+#: crates/greycard-ui/src/panel/versions.rs:438
 msgid "nothing deleted"
 msgstr "nic nie usunięto"
 
-#: crates/greycard-ui/src/panel/versions.rs:436
+#: crates/greycard-ui/src/panel/versions.rs:439
 msgid "deleted the version {name}"
 msgstr "usunięto wersję {name}"
 
-#: crates/greycard-ui/src/panel/versions.rs:437
+#: crates/greycard-ui/src/panel/versions.rs:440
 msgid "deleted {n} version"
 msgid_plural "deleted {n} versions"
 msgstr[0] "usunięto {n} wersję"
 msgstr[1] "usunięto {n} wersje"
 msgstr[2] "usunięto {n} wersji"
 
-#: crates/greycard-ui/src/panel/versions.rs:473
+#: crates/greycard-ui/src/panel/versions.rs:476
 msgid "no frame to compare"
 msgstr "brak zdjęcia do porównania"
 
-#: crates/greycard-ui/src/panel/versions.rs:483
+#: crates/greycard-ui/src/panel/versions.rs:486
 msgid "{name} has no versions to compare"
 msgstr "{name} nie ma wersji do porównania"
 
-#: crates/greycard-ui/src/panel/versions.rs:502
+#: crates/greycard-ui/src/panel/versions.rs:505
 msgid "comparing {name} and {n} of its versions; {left}"
 msgid_plural "comparing {name} and {n} of its versions; {left}"
 msgstr[0] "porównywanie {name} i {n} z jego wersji; {left}"
 msgstr[1] "porównywanie {name} i {n} z jego wersji; {left}"
 msgstr[2] "porównywanie {name} i {n} z jego wersji; {left}"
 
-#: crates/greycard-ui/src/panel/versions.rs:508
+#: crates/greycard-ui/src/panel/versions.rs:511
 msgid "comparing {name} and its versions"
 msgstr "porównywanie {name} i jego wersji"
 
-#: crates/greycard-ui/src/panel/versions.rs:518
+#: crates/greycard-ui/src/panel/versions.rs:521
 msgid "{n} more version of {name} left out"
 msgid_plural "{n} more versions of {name} left out"
 msgstr[0] "pominięto jeszcze {n} wersję {name}"
@@ -8530,7 +8539,7 @@ msgstr "brak nazwy pliku"
 msgid "{} is in {} already"
 msgstr "{} jest już w {}"
 
-#: crates/greycard-ui/src/rejects.rs:368
+#: crates/greycard-ui/src/rejects.rs:376
 msgid "{owner} there answers to {} too"
 msgstr "{owner} tam też odpowiada nazwie {}"
 
@@ -8585,11 +8594,11 @@ msgstr "nie można odczytać indeksu biblioteki"
 msgid "{} isn't reachable"
 msgstr "{} jest niedostępny"
 
-#: crates/greycard-ui/src/roots/look.rs:446
+#: crates/greycard-ui/src/roots/look.rs:447
 msgid "no pictures in {}"
 msgstr "brak zdjęć w {}"
 
-#: crates/greycard-ui/src/roots/look.rs:452
+#: crates/greycard-ui/src/roots/look.rs:453
 msgid "{}: not a folder"
 msgstr "{}: to nie jest folder"
 
@@ -8679,7 +8688,7 @@ msgstr "otwieranie indeksu biblioteki..."
 msgid "that collection is gone"
 msgstr "tej kolekcji już nie ma"
 
-#: crates/greycard-ui/src/roots/view.rs:293 crates/greycard-ui/src/rows.rs:829
+#: crates/greycard-ui/src/roots/view.rs:293 crates/greycard-ui/src/rows.rs:845
 msgid "reading {n} frame..."
 msgid_plural "reading {n} frames..."
 msgstr[0] "odczyt {n} zdjęcia..."
@@ -8712,196 +8721,196 @@ msgstr "Oczekiwanie na {root}..."
 msgid "Reading sidecars... {read} of {total}"
 msgstr "Odczyt plików pomocniczych... {read} z {total}"
 
-#: crates/greycard-ui/src/rows.rs:168
+#: crates/greycard-ui/src/rows.rs:184
 msgid "{}'s sidecar could not be read ({e}); nothing is written over it"
 msgstr ""
 "nie można odczytać pliku pomocniczego {} ({e}); nic nie zostanie nadpisane"
 
-#: crates/greycard-ui/src/rows.rs:213
+#: crates/greycard-ui/src/rows.rs:229
 msgid "{name} is offline{what}"
 msgstr "{name} jest niedostępny{what}"
 
-#: crates/greycard-ui/src/rows.rs:262
+#: crates/greycard-ui/src/rows.rs:278
 msgid "the change is not kept"
 msgstr "zmiana nie zostaje zachowana"
 
-#: crates/greycard-ui/src/rows.rs:279
+#: crates/greycard-ui/src/rows.rs:295
 msgid "the panel is not {name}'s own yet: {what}"
 msgstr "panel nie należy jeszcze do {name}: {what}"
 
-#: crates/greycard-ui/src/rows.rs:286
+#: crates/greycard-ui/src/rows.rs:302
 msgid "{name} is offline: {what}"
 msgstr "{name} jest niedostępny: {what}"
 
-#: crates/greycard-ui/src/rows.rs:293
+#: crates/greycard-ui/src/rows.rs:309
 msgid "{name}'s sidecar could not be read: {what}"
 msgstr "nie można odczytać pliku pomocniczego {name}: {what}"
 
-#: crates/greycard-ui/src/rows.rs:299
+#: crates/greycard-ui/src/rows.rs:315
 msgid "{name}'s sidecar is still being read: {what}"
 msgstr "plik pomocniczy {name} jest wciąż odczytywany: {what}"
 
-#: crates/greycard-ui/src/rows.rs:305
+#: crates/greycard-ui/src/rows.rs:321
 msgid "{name}'s sidecar did not come in: {what}"
 msgstr "plik pomocniczy {name} nie dotarł: {what}"
 
 #. The request's name in 'X was not applied to it' and 'X dropped'
-#: crates/greycard-ui/src/rows.rs:382
+#: crates/greycard-ui/src/rows.rs:398
 msgid "the open of {name}"
 msgstr "otwarcie {name}"
 
-#: crates/greycard-ui/src/rows.rs:383
+#: crates/greycard-ui/src/rows.rs:399
 msgid "the rating key"
 msgstr "klawisz oceny"
 
-#: crates/greycard-ui/src/rows.rs:384
+#: crates/greycard-ui/src/rows.rs:400
 msgid "the flag key"
 msgstr "klawisz flagi"
 
-#: crates/greycard-ui/src/rows.rs:385
+#: crates/greycard-ui/src/rows.rs:401
 msgid "the label key"
 msgstr "klawisz etykiety"
 
-#: crates/greycard-ui/src/rows.rs:386
+#: crates/greycard-ui/src/rows.rs:402
 msgid "the keyword"
 msgstr "słowo kluczowe"
 
-#: crates/greycard-ui/src/rows.rs:387
+#: crates/greycard-ui/src/rows.rs:403
 msgid "the title"
 msgstr "tytuł"
 
-#: crates/greycard-ui/src/rows.rs:388
+#: crates/greycard-ui/src/rows.rs:404
 msgid "the time shift"
 msgstr "przesunięcie czasu"
 
-#: crates/greycard-ui/src/rows.rs:389
+#: crates/greycard-ui/src/rows.rs:405
 msgid "the turn"
 msgstr "obrót"
 
-#: crates/greycard-ui/src/rows.rs:390
+#: crates/greycard-ui/src/rows.rs:406
 msgid "the export"
 msgstr "eksport"
 
-#: crates/greycard-ui/src/rows.rs:391
+#: crates/greycard-ui/src/rows.rs:407
 msgid "the queue"
 msgstr "kolejka"
 
-#: crates/greycard-ui/src/rows.rs:392
+#: crates/greycard-ui/src/rows.rs:408
 msgid "the reset"
 msgstr "reset"
 
-#: crates/greycard-ui/src/rows.rs:393
+#: crates/greycard-ui/src/rows.rs:409
 msgid "the preset"
 msgstr "preset"
 
-#: crates/greycard-ui/src/rows.rs:394
+#: crates/greycard-ui/src/rows.rs:410
 msgid "the paste"
 msgstr "wklejenie"
 
-#: crates/greycard-ui/src/rows.rs:395
+#: crates/greycard-ui/src/rows.rs:411
 msgid "the sync"
 msgstr "synchronizacja"
 
-#: crates/greycard-ui/src/rows.rs:396
+#: crates/greycard-ui/src/rows.rs:412
 msgid "the undo"
 msgstr "cofnięcie"
 
-#: crates/greycard-ui/src/rows.rs:397
+#: crates/greycard-ui/src/rows.rs:413
 msgid "the redo"
 msgstr "ponowienie"
 
-#: crates/greycard-ui/src/rows.rs:406
+#: crates/greycard-ui/src/rows.rs:422
 msgid "{n} rating key"
 msgid_plural "{n} rating keys"
 msgstr[0] "{n} naciśnięcie klawisza oceny"
 msgstr[1] "{n} naciśnięcia klawisza oceny"
 msgstr[2] "{n} naciśnięć klawisza oceny"
 
-#: crates/greycard-ui/src/rows.rs:407
+#: crates/greycard-ui/src/rows.rs:423
 msgid "{n} flag key"
 msgid_plural "{n} flag keys"
 msgstr[0] "{n} naciśnięcie klawisza flagi"
 msgstr[1] "{n} naciśnięcia klawisza flagi"
 msgstr[2] "{n} naciśnięć klawisza flagi"
 
-#: crates/greycard-ui/src/rows.rs:408
+#: crates/greycard-ui/src/rows.rs:424
 msgid "{n} label key"
 msgid_plural "{n} label keys"
 msgstr[0] "{n} naciśnięcie klawisza etykiety"
 msgstr[1] "{n} naciśnięcia klawisza etykiety"
 msgstr[2] "{n} naciśnięć klawisza etykiety"
 
-#: crates/greycard-ui/src/rows.rs:409
+#: crates/greycard-ui/src/rows.rs:425
 msgid "{n} keyword"
 msgid_plural "{n} keywords"
 msgstr[0] "{n} słowo kluczowe"
 msgstr[1] "{n} słowa kluczowe"
 msgstr[2] "{n} słów kluczowych"
 
-#: crates/greycard-ui/src/rows.rs:410
+#: crates/greycard-ui/src/rows.rs:426
 msgid "{n} title"
 msgid_plural "{n} titles"
 msgstr[0] "{n} tytuł"
 msgstr[1] "{n} tytuły"
 msgstr[2] "{n} tytułów"
 
-#: crates/greycard-ui/src/rows.rs:411
+#: crates/greycard-ui/src/rows.rs:427
 msgid "{n} time shift"
 msgid_plural "{n} time shifts"
 msgstr[0] "{n} przesunięcie czasu"
 msgstr[1] "{n} przesunięcia czasu"
 msgstr[2] "{n} przesunięć czasu"
 
-#: crates/greycard-ui/src/rows.rs:412
+#: crates/greycard-ui/src/rows.rs:428
 msgid "{n} turn"
 msgid_plural "{n} turns"
 msgstr[0] "{n} obrót"
 msgstr[1] "{n} obroty"
 msgstr[2] "{n} obrotów"
 
-#: crates/greycard-ui/src/rows.rs:413
+#: crates/greycard-ui/src/rows.rs:429
 msgid "{n} export"
 msgid_plural "{n} exports"
 msgstr[0] "{n} eksport"
 msgstr[1] "{n} eksporty"
 msgstr[2] "{n} eksportów"
 
-#: crates/greycard-ui/src/rows.rs:414
+#: crates/greycard-ui/src/rows.rs:430
 msgid "{n} queue"
 msgid_plural "{n} queues"
 msgstr[0] "{n} kolejka"
 msgstr[1] "{n} kolejki"
 msgstr[2] "{n} kolejek"
 
-#: crates/greycard-ui/src/rows.rs:415
+#: crates/greycard-ui/src/rows.rs:431
 msgid "{n} reset"
 msgid_plural "{n} resets"
 msgstr[0] "{n} reset"
 msgstr[1] "{n} resety"
 msgstr[2] "{n} resetów"
 
-#: crates/greycard-ui/src/rows.rs:417
+#: crates/greycard-ui/src/rows.rs:433
 msgid "{n} paste"
 msgid_plural "{n} pastes"
 msgstr[0] "{n} wklejenie"
 msgstr[1] "{n} wklejenia"
 msgstr[2] "{n} wklejeń"
 
-#: crates/greycard-ui/src/rows.rs:418
+#: crates/greycard-ui/src/rows.rs:434
 msgid "{n} sync"
 msgid_plural "{n} syncs"
 msgstr[0] "{n} synchronizacja"
 msgstr[1] "{n} synchronizacje"
 msgstr[2] "{n} synchronizacji"
 
-#: crates/greycard-ui/src/rows.rs:419
+#: crates/greycard-ui/src/rows.rs:435
 msgid "{n} undo"
 msgid_plural "{n} undos"
 msgstr[0] "{n} cofnięcie"
 msgstr[1] "{n} cofnięcia"
 msgstr[2] "{n} cofnięć"
 
-#: crates/greycard-ui/src/rows.rs:420
+#: crates/greycard-ui/src/rows.rs:436
 msgid "{n} redo"
 msgid_plural "{n} redos"
 msgstr[0] "{n} ponowienie"
@@ -8909,138 +8918,138 @@ msgstr[1] "{n} ponowienia"
 msgstr[2] "{n} ponowień"
 
 #. A pick names its one frame.
-#: crates/greycard-ui/src/rows.rs:429
+#: crates/greycard-ui/src/rows.rs:445
 msgid "not opened"
 msgstr "nie otwarto"
 
-#: crates/greycard-ui/src/rows.rs:430
+#: crates/greycard-ui/src/rows.rs:446
 msgid "the rating key was not applied to it"
 msgid_plural "the rating key was not applied to them"
 msgstr[0] "nie zastosowano do niego klawisza oceny"
 msgstr[1] "nie zastosowano do nich klawisza oceny"
 msgstr[2] "nie zastosowano do nich klawisza oceny"
 
-#: crates/greycard-ui/src/rows.rs:433
+#: crates/greycard-ui/src/rows.rs:449
 msgid "the flag key was not applied to it"
 msgid_plural "the flag key was not applied to them"
 msgstr[0] "nie zastosowano do niego klawisza flagi"
 msgstr[1] "nie zastosowano do nich klawisza flagi"
 msgstr[2] "nie zastosowano do nich klawisza flagi"
 
-#: crates/greycard-ui/src/rows.rs:437
+#: crates/greycard-ui/src/rows.rs:453
 msgid "the label key was not applied to it"
 msgid_plural "the label key was not applied to them"
 msgstr[0] "nie zastosowano do niego klawisza etykiety"
 msgstr[1] "nie zastosowano do nich klawisza etykiety"
 msgstr[2] "nie zastosowano do nich klawisza etykiety"
 
-#: crates/greycard-ui/src/rows.rs:441
+#: crates/greycard-ui/src/rows.rs:457
 msgid "the keyword was not applied to it"
 msgid_plural "the keyword was not applied to them"
 msgstr[0] "nie zastosowano do niego słowa kluczowego"
 msgstr[1] "nie zastosowano do nich słowa kluczowego"
 msgstr[2] "nie zastosowano do nich słowa kluczowego"
 
-#: crates/greycard-ui/src/rows.rs:444
+#: crates/greycard-ui/src/rows.rs:460
 msgid "the title was not applied to it"
 msgid_plural "the title was not applied to them"
 msgstr[0] "nie zastosowano do niego tytułu"
 msgstr[1] "nie zastosowano do nich tytułu"
 msgstr[2] "nie zastosowano do nich tytułu"
 
-#: crates/greycard-ui/src/rows.rs:446
+#: crates/greycard-ui/src/rows.rs:462
 msgid "the time shift was not applied to it"
 msgid_plural "the time shift was not applied to them"
 msgstr[0] "nie zastosowano do niego przesunięcia czasu"
 msgstr[1] "nie zastosowano do nich przesunięcia czasu"
 msgstr[2] "nie zastosowano do nich przesunięcia czasu"
 
-#: crates/greycard-ui/src/rows.rs:449
+#: crates/greycard-ui/src/rows.rs:465
 msgid "the turn was not applied to it"
 msgid_plural "the turn was not applied to them"
 msgstr[0] "nie zastosowano do niego obrotu"
 msgstr[1] "nie zastosowano do nich obrotu"
 msgstr[2] "nie zastosowano do nich obrotu"
 
-#: crates/greycard-ui/src/rows.rs:452
+#: crates/greycard-ui/src/rows.rs:468
 msgid "the export was not applied to it"
 msgid_plural "the export was not applied to them"
 msgstr[0] "nie zastosowano do niego eksportu"
 msgstr[1] "nie zastosowano do nich eksportu"
 msgstr[2] "nie zastosowano do nich eksportu"
 
-#: crates/greycard-ui/src/rows.rs:455
+#: crates/greycard-ui/src/rows.rs:471
 msgid "the queue was not applied to it"
 msgid_plural "the queue was not applied to them"
 msgstr[0] "nie zastosowano do niego kolejki"
 msgstr[1] "nie zastosowano do nich kolejki"
 msgstr[2] "nie zastosowano do nich kolejki"
 
-#: crates/greycard-ui/src/rows.rs:458
+#: crates/greycard-ui/src/rows.rs:474
 msgid "the reset was not applied to it"
 msgid_plural "the reset was not applied to them"
 msgstr[0] "nie zastosowano do niego resetu"
 msgstr[1] "nie zastosowano do nich resetu"
 msgstr[2] "nie zastosowano do nich resetu"
 
-#: crates/greycard-ui/src/rows.rs:461
+#: crates/greycard-ui/src/rows.rs:477
 msgid "the preset was not applied to it"
 msgid_plural "the preset was not applied to them"
 msgstr[0] "nie zastosowano do niego presetu"
 msgstr[1] "nie zastosowano do nich presetu"
 msgstr[2] "nie zastosowano do nich presetu"
 
-#: crates/greycard-ui/src/rows.rs:464
+#: crates/greycard-ui/src/rows.rs:480
 msgid "the paste was not applied to it"
 msgid_plural "the paste was not applied to them"
 msgstr[0] "nie zastosowano do niego wklejenia"
 msgstr[1] "nie zastosowano do nich wklejenia"
 msgstr[2] "nie zastosowano do nich wklejenia"
 
-#: crates/greycard-ui/src/rows.rs:467
+#: crates/greycard-ui/src/rows.rs:483
 msgid "the sync was not applied to it"
 msgid_plural "the sync was not applied to them"
 msgstr[0] "nie zastosowano do niego synchronizacji"
 msgstr[1] "nie zastosowano do nich synchronizacji"
 msgstr[2] "nie zastosowano do nich synchronizacji"
 
-#: crates/greycard-ui/src/rows.rs:470
+#: crates/greycard-ui/src/rows.rs:486
 msgid "the undo was not applied to it"
 msgid_plural "the undo was not applied to them"
 msgstr[0] "nie zastosowano do niego cofnięcia"
 msgstr[1] "nie zastosowano do nich cofnięcia"
 msgstr[2] "nie zastosowano do nich cofnięcia"
 
-#: crates/greycard-ui/src/rows.rs:473
+#: crates/greycard-ui/src/rows.rs:489
 msgid "the redo was not applied to it"
 msgid_plural "the redo was not applied to them"
 msgstr[0] "nie zastosowano do niego ponowienia"
 msgstr[1] "nie zastosowano do nich ponowienia"
 msgstr[2] "nie zastosowano do nich ponowienia"
 
-#: crates/greycard-ui/src/rows.rs:1175
+#: crates/greycard-ui/src/rows.rs:1209
 msgid "{frame} moved or is gone; {not_applied}"
 msgstr "{frame}: przeniesione lub usunięte; {not_applied}"
 
-#: crates/greycard-ui/src/rows.rs:1180
+#: crates/greycard-ui/src/rows.rs:1214
 msgid "{n} frame moved or is gone; {not_applied}"
 msgid_plural "{n} frames moved or are gone; {not_applied}"
 msgstr[0] "{n} zdjęcie przeniesione lub usunięte; {not_applied}"
 msgstr[1] "{n} zdjęcia przeniesione lub usunięte; {not_applied}"
 msgstr[2] "{n} zdjęć przeniesionych lub usuniętych; {not_applied}"
 
-#: crates/greycard-ui/src/rows.rs:1303
+#: crates/greycard-ui/src/rows.rs:1337
 msgid "{} dropped: the sidecars did not come in"
 msgstr "{}: porzucone, pliki pomocnicze nie dotarły"
 
-#: crates/greycard-ui/src/rows.rs:1439
+#: crates/greycard-ui/src/rows.rs:1486
 msgid ": left out"
 msgstr ": pominięto"
 
 #. A version, edited or not, is data the default must not go
 #. over: its cell would go at the next turn, and the next save
 #. would write a sidecar without it over the real one.
-#: crates/greycard-ui/src/rows.rs:1521
+#: crates/greycard-ui/src/rows.rs:1577
 msgid ""
 "{}'s sidecar was not found, though the library has an edit, an export or a "
 "version of it on record; nothing is written over it"
@@ -9048,7 +9057,7 @@ msgstr ""
 "nie znaleziono pliku pomocniczego {}, choć biblioteka ma zapisaną jego "
 "edycję, eksport lub wersję; nic nie zostanie nadpisane"
 
-#: crates/greycard-ui/src/sidecars.rs:238
+#: crates/greycard-ui/src/sidecars.rs:239
 msgid "its sidecar is from a newer greycard; update to save"
 msgid_plural "their sidecars are from a newer greycard; update to save"
 msgstr[0] ""
@@ -9058,38 +9067,38 @@ msgstr[1] ""
 msgstr[2] ""
 "ich pliki pomocnicze pochodzą z nowszego greycard; zaktualizuj, aby zapisać"
 
-#: crates/greycard-ui/src/sidecars.rs:240
+#: crates/greycard-ui/src/sidecars.rs:241
 msgid "the disk is full"
 msgstr "dysk jest pełny"
 
-#: crates/greycard-ui/src/sidecars.rs:241
+#: crates/greycard-ui/src/sidecars.rs:242
 msgid "the disk is read-only"
 msgstr "dysk jest tylko do odczytu"
 
-#: crates/greycard-ui/src/sidecars.rs:298
+#: crates/greycard-ui/src/sidecars.rs:299
 msgid "{n} edit not saved"
 msgid_plural "{n} edits not saved"
 msgstr[0] "nie zapisano {n} edycji"
 msgstr[1] "nie zapisano {n} edycji"
 msgstr[2] "nie zapisano {n} edycji"
 
-#: crates/greycard-ui/src/sidecars.rs:350
+#: crates/greycard-ui/src/sidecars.rs:351
 msgid "{name} was edited elsewhere; other copy kept as {file}"
 msgstr "{name} edytowano gdzie indziej; druga kopia zachowana jako {file}"
 
-#: crates/greycard-ui/src/sidecars.rs:354
+#: crates/greycard-ui/src/sidecars.rs:355
 msgid "{n} frame was edited elsewhere; other copy kept beside it"
 msgid_plural "{n} frames were edited elsewhere; other copies kept beside them"
 msgstr[0] "{n} zdjęcie edytowano gdzie indziej; druga kopia zachowana obok"
 msgstr[1] "{n} zdjęcia edytowano gdzie indziej; drugie kopie zachowane obok"
 msgstr[2] "{n} zdjęć edytowano gdzie indziej; drugie kopie zachowane obok"
 
-#: crates/greycard-ui/src/sidecars.rs:370
+#: crates/greycard-ui/src/sidecars.rs:371
 msgid "{name}: unreadable sidecar kept as {file}; edit saved"
 msgstr ""
 "{name}: nieczytelny plik pomocniczy zachowany jako {file}; edycja zapisana"
 
-#: crates/greycard-ui/src/sidecars.rs:374
+#: crates/greycard-ui/src/sidecars.rs:375
 msgid "{n} unreadable sidecar kept beside its frame; edit saved"
 msgid_plural "{n} unreadable sidecars kept beside their frames; edits saved"
 msgstr[0] ""
@@ -9099,19 +9108,19 @@ msgstr[1] ""
 msgstr[2] ""
 "{n} nieczytelnych plików pomocniczych zachowanych obok zdjęć; edycje zapisane"
 
-#: crates/greycard-ui/src/sidecars.rs:563
+#: crates/greycard-ui/src/sidecars.rs:564
 msgid "the edit of {name} is not saved: {why}"
 msgstr "nie zapisano edycji {name}: {why}"
 
-#: crates/greycard-ui/src/sidecars.rs:567
+#: crates/greycard-ui/src/sidecars.rs:568
 msgid "the edit of {name} is not saved; see the log"
 msgstr "nie zapisano edycji {name}; szczegóły w dzienniku"
 
-#: crates/greycard-ui/src/sidecars.rs:574
+#: crates/greycard-ui/src/sidecars.rs:575
 msgid "the edits of {names} are not saved: {why}"
 msgstr "nie zapisano edycji {names}: {why}"
 
-#: crates/greycard-ui/src/sidecars.rs:579
+#: crates/greycard-ui/src/sidecars.rs:580
 msgid "the edits of {names} are not saved; see the log"
 msgstr "nie zapisano edycji {names}; szczegóły w dzienniku"
 
@@ -9203,25 +9212,25 @@ msgstr "Data edycji"
 msgid "Focus"
 msgstr "Ostrość"
 
-#: crates/greycard-ui/src/sync.rs:1710
+#: crates/greycard-ui/src/sync.rs:1744
 msgid "{n} edit waiting for {name}"
 msgid_plural "{n} edits waiting for {name}"
 msgstr[0] "{n} edycja czeka na {name}"
 msgstr[1] "{n} edycje czekają na {name}"
 msgstr[2] "{n} edycji czeka na {name}"
 
-#: crates/greycard-ui/src/sync.rs:1717
+#: crates/greycard-ui/src/sync.rs:1751
 msgid "; {n} can't tell which copy is its own"
 msgid_plural "; {n} can't tell which copy are their own"
 msgstr[0] "; {n} nie rozpoznaje własnej kopii"
 msgstr[1] "; {n} nie rozpoznają własnej kopii"
 msgstr[2] "; {n} nie rozpoznaje własnej kopii"
 
-#: crates/greycard-ui/src/sync.rs:1974
+#: crates/greycard-ui/src/sync.rs:2008
 msgid "its root"
 msgstr "jego folder główny"
 
-#: crates/greycard-ui/src/sync.rs:1977
+#: crates/greycard-ui/src/sync.rs:2011
 msgid "{which} is offline: {} is open from its copy on {where_}"
 msgstr "{which} jest niedostępny: {} otwarto z kopii na {where_}"
 

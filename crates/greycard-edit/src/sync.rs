@@ -23,7 +23,7 @@ use std::collections::{HashMap, HashSet};
 
 use serde::{Deserialize, Serialize};
 
-use crate::line::Order;
+use crate::line::{Order, Written};
 use crate::meta::Facts;
 use crate::{Edit, Exported, HISTORY, Line, Sidecar, Snapshot, Step, Version};
 
@@ -77,46 +77,112 @@ fn repeat_at(entries: &[(&Edit, Option<&str>)], i: usize) -> bool {
 pub const ABSORBED: usize = 64;
 
 /// The id of the state `edit` recorded with `label` makes after the
-/// state `parent`: blake3 over the parent's id, the edit as compact
-/// JSON and the label, each ended by a newline the first two cannot
-/// contain. Computed once, when the state is recorded, and stored
-/// (`id` beside the edit's fields); never from a loaded file, since a
-/// field added with a default or a serde alias changes the bytes.
+/// state `parent`: blake3 over the parent's id, the state as written
+/// (its sparse form, [`crate::sparse`]: what differs from the default,
+/// keys sorted, compact) and the label, each ended by a newline the
+/// first two cannot contain. Computed once, when the state is
+/// recorded, from the edit in memory, and stored (`id` beside the
+/// edit's fields); never from a loaded file. A field added with its
+/// default left out changes no id.
 pub fn state_id(parent: &str, edit: &Edit, label: Option<&str>) -> String {
+    id_of(parent, &crate::sparse::written_text(edit), label)
+}
+
+/// The id the original's line is given when it has none (§724): made
+/// from its root state's id, so two copies of one file agree on it.
+pub fn line_id_of_root(line: &Line) -> String {
+    let root = state_ids(line).into_iter().next().unwrap_or_default();
+    id_of(ZERO_ID, &root, Some("line"))[..16].to_string()
+}
+
+/// The hash an id is: `parent`, the state's text, and `label`.
+pub(crate) fn id_of(parent: &str, text: &str, label: Option<&str>) -> String {
     let mut hasher = blake3::Hasher::new();
     hasher.update(parent.as_bytes());
     hasher.update(b"\n");
-    hasher.update(
-        serde_json::to_string(edit)
-            .expect("an edit serializes")
-            .as_bytes(),
-    );
+    hasher.update(text.as_bytes());
     hasher.update(b"\n");
     hasher.update(label.unwrap_or("").as_bytes());
     hasher.finalize().to_hex().to_string()
 }
 
+/// [`state_id`] as builds before version 10 made it: over the whole
+/// edit as compact JSON, every field written but `process`, which those
+/// builds had not. What a state read at 9 is checked by and filled
+/// from, and nothing else.
+pub(crate) fn whole_id(parent: &str, edit: &Edit, label: Option<&str>) -> String {
+    id_of(parent, &edit.json_but_process(), label)
+}
+
+/// The schema version the builds before §724 wrote every state at, and
+/// so made ids from.
+const BEFORE_PLACED: u32 = 9;
+
+/// The state `edit`, as written, in the shape a build before version 10
+/// had it: at version 9 and with no `placed_under`. What a state with no
+/// id is given one from ([`filled_id`]), and the second of the two ways
+/// an id is checked ([`verifies`]): every state such a build wrote had
+/// its id made so, and the step to version 10 changes nothing else in
+/// it.
+fn as_before_placed(edit: &Edit) -> std::borrow::Cow<'_, Edit> {
+    if edit.version == BEFORE_PLACED && edit.placed_under == 0 {
+        return std::borrow::Cow::Borrowed(edit);
+    }
+    let mut before = edit.clone();
+    before.version = BEFORE_PLACED;
+    before.placed_under = 0;
+    std::borrow::Cow::Owned(before)
+}
+
+/// The id of a state that has none after the state `parent`, for one a
+/// build before version 10 wrote: as that build filled it
+/// ([`as_before_placed`]), so a file from before ids given its ids here
+/// and by such a build gets the same ones, and the two copies still
+/// share their states ([`crate::Written::filled_id`]). A state recorded
+/// now gets its id from [`state_id`] over the state as written.
+pub(crate) fn filled_id(parent: &str, edit: &Edit, label: Option<&str>) -> String {
+    whole_id(parent, &as_before_placed(edit), label)
+}
+
+/// Whether `id` is the id of the state `edit` (as written) recorded with
+/// `label` after the state `parent`: made from it as written now, or as a
+/// build before version 10 made it ([`filled_id`]), whose states come
+/// here at version 10 with their ids as they were.
+pub(crate) fn verifies(parent: &str, edit: &Edit, label: Option<&str>, id: &str) -> bool {
+    whole_id(parent, edit, label) == id || filled_id(parent, edit, label) == id
+}
+
 /// The hash of a revision: blake3 over the previous revision's hash
 /// ([`ZERO_ID`] for the first) and the file's content, the first
 /// sixteen bytes as hex. The content is the sidecar as compact JSON,
-/// in the order it is written, with the revision list and the meta's
-/// times taken out, and nothing else: the edit, the labels, the ids,
-/// the exports, the meta, the turn, the XMP mark, the save count, the
-/// history and the snapshots. The list cannot be in it, and the times
-/// are not because they name this very revision: the hash is made
-/// first and the fields that changed are stamped with it. The two are
-/// taken out and put back rather than copied, and the JSON goes
-/// straight into the hasher, so a sidecar of some megabytes is not
-/// built twice on the window's thread for every save.
+/// in the order it is written, with the revision list, the meta's
+/// times, and the XMP marks taken out, and nothing else: the edit, the
+/// labels, the ids, the exports, the meta, the turn, the save count,
+/// the history and the snapshots. The list cannot be in it, and the
+/// times are not because they name this very revision: the hash is
+/// made first and the fields that changed are stamped with it. The
+/// marks say what was last read from or written to an XMP beside the
+/// frame, which a batch save learns only after the revision, from the
+/// packet it writes: in the hash, a copy saved so would never be as its
+/// revision left it ([`Sidecar::at_its_revision`]). (Builds before
+/// version 10 hashed the marks; nothing hashes a revision again, so
+/// their files keep their revisions as written.) What is taken out is
+/// put back rather than copied, and the JSON goes straight into the
+/// hasher, so a sidecar of some megabytes is not built twice on the
+/// window's thread for every save.
 pub(crate) fn revision_hash(previous: Option<&str>, sidecar: &mut Sidecar) -> String {
     let revisions = std::mem::take(&mut sidecar.revisions);
     let meta_at = std::mem::take(&mut sidecar.meta_at);
+    let xmp = sidecar.xmp.take();
+    let xmp_shared = sidecar.xmp_shared.take();
     let mut hasher = blake3::Hasher::new();
     hasher.update(previous.unwrap_or(ZERO_ID).as_bytes());
     hasher.update(b"\n");
     serde_json::to_writer(&mut hasher, sidecar).expect("a sidecar serializes");
     sidecar.revisions = revisions;
     sidecar.meta_at = meta_at;
+    sidecar.xmp = xmp;
+    sidecar.xmp_shared = xmp_shared;
     hasher.finalize().to_hex()[..32].to_string()
 }
 
@@ -139,6 +205,35 @@ impl Stamp {
             host: host(),
         }
     }
+}
+
+/// This install's id (§724): sixteen hex digits at random, made once by
+/// the editor and kept in its own state, never from the machine's or the
+/// user's name; given here at start ([`set_install`]). Empty until then,
+/// and so written nowhere: a tool or a test that sets none writes none.
+static INSTALL: std::sync::RwLock<String> = std::sync::RwLock::new(String::new());
+
+/// Say this install's id ([`install`]): the editor's at start, a test's
+/// own.
+pub fn set_install(id: &str) {
+    if let Ok(mut i) = INSTALL.write() {
+        *i = id.trim().to_string();
+    }
+}
+
+/// This install's id, as given ([`set_install`]); empty when none was.
+pub fn install() -> String {
+    #[cfg(test)]
+    if let Some(id) = crate::testing::INSTALL.with_borrow(Clone::clone) {
+        return id;
+    }
+    INSTALL.read().map(|i| i.clone()).unwrap_or_default()
+}
+
+/// A new install id: sixteen hex digits at random, of nothing about
+/// the machine or its user.
+pub fn new_install_id() -> String {
+    crate::versions::random_id()
 }
 
 /// This machine's name, as the system has it; empty when it has none
@@ -376,26 +471,39 @@ fn exports_of(line: &Line) -> impl Iterator<Item = &[Exported]> {
 /// last: as stored, and computed from the first state forward where
 /// a state has none.
 pub(crate) fn state_ids(sidecar: &Line) -> Vec<String> {
+    // A line nobody developed holds no state (§724).
+    if !sidecar.recorded {
+        return Vec::new();
+    }
     let mut ids = Vec::with_capacity(sidecar.history.len() + 1);
     let mut parent = ZERO_ID.to_string();
-    for (edit, label, id) in sidecar
-        .history
-        .iter()
-        .map(|s| (&s.edit, s.label.as_deref(), s.id.as_deref()))
-        .chain(std::iter::once((
-            &sidecar.current,
-            sidecar.current_label.as_deref(),
-            sidecar.current_id.as_deref(),
-        )))
-    {
-        let id = match id {
-            Some(id) => id.to_string(),
-            None => state_id(&parent, edit, label),
+    // Made only for a state with none, from it as written in the shape
+    // a build before version 10 made ids from ([`filled_id`]).
+    for s in &sidecar.history {
+        let id = match &s.id {
+            Some(id) => id.clone(),
+            None => s.written.filled_id(&s.edit, &parent, s.label.as_deref()),
         };
         parent = id.clone();
         ids.push(id);
     }
+    ids.push(match &sidecar.current_id {
+        Some(id) => id.clone(),
+        None => sidecar.current_written.filled_id(
+            &sidecar.current,
+            &parent,
+            sidecar.current_label.as_deref(),
+        ),
+    });
     ids
+}
+
+#[cfg(test)]
+thread_local! {
+    /// The join's chain check made as it was before §724 wrote parents:
+    /// an id made again from the child's content. Only for the tests
+    /// that hold the two to the same answers.
+    pub(crate) static BY_CONTENT: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
 /// One sidecar of two copies that differ (§233's "Joining two
@@ -433,6 +541,11 @@ pub(crate) fn state_ids(sidecar: &Line) -> Vec<String> {
 /// than diverged from it again. The result has no new revision:
 /// saving it makes one, and from then on both inputs read as behind
 /// it.
+///
+/// Each copy is as its last revision left it ([`Sidecar::at_its_revision`]):
+/// a change made since is not seen in the revision list, so a copy
+/// that went on from the other's last revision without a save reads as
+/// one the other has seen whole, and the change can go.
 pub fn join(local: &Sidecar, other: &Sidecar) -> Sidecar {
     let (mut newer, mut older) = match newer_of(local, other) {
         Side::Local => (local.clone(), other.clone()),
@@ -442,8 +555,13 @@ pub fn join(local: &Sidecar, other: &Sidecar) -> Sidecar {
     older.fill_ids();
     newer.pin_times();
     older.pin_times();
+    // Every state as written, each placed under its own turn (§724):
+    // the two copies may show them under two turns, and the joined
+    // file shows them all again under the joined turn below.
     for line in newer.lines_mut().chain(older.lines_mut()) {
-        line.redo.clear();
+        // What was undone is kept as undone (§724).
+        line.leave_redo();
+        *line = std::mem::take(line).into_written();
     }
     let host = older
         .revisions
@@ -460,18 +578,33 @@ pub fn join(local: &Sidecar, other: &Sidecar) -> Sidecar {
     // whole; a join met again with its input is this case.)
     let seen = older.revisions.last().is_some_and(|r| newer.knows(&r.hash));
 
+    // Lines by their ids, each placed once (§724).
+    let (line, versions) = join_lines(&newer, &older, host.as_deref(), seen);
     let mut joined = Sidecar {
-        line: join_line(&newer.line, &older.line, host.as_deref(), seen),
+        line,
         xmp: newer.xmp.clone().or(older.xmp.clone()),
         xmp_shared: newer.xmp_shared.clone().or(older.xmp_shared.clone()),
+        // Owed by the packet whose mark is kept, as the mark is.
+        turn_owed: if newer.xmp.is_some() {
+            newer.turn_owed
+        } else {
+            older.turn_owed
+        },
         // What a Lightroom import laid, the newer copy's first, field by
         // field; a field is Lightroom's only while the joined meta still
         // holds the value laid, so the older's record can only say less.
         lightroom: newer.lightroom.clone().then(&older.lightroom),
         saved: newer.saved.max(older.saved),
-        versions: join_versions(&newer.versions, &older.versions, host.as_deref(), seen),
+        versions,
+        original_at: newer.original_at.max(older.original_at),
         ..Sidecar::default()
     };
+    // Every version either copy deleted, at the later time, less those
+    // the join keeps (§243: one copy edited it): a file never holds a
+    // tombstone for what it holds (§724).
+    joined.removed = crate::line::joined_tombstones(&newer.removed, &older.removed, |id| {
+        joined.versions.iter().any(|v| v.id == id)
+    });
 
     // The meta and the turn, by field.
     fn lineage(s: &Sidecar) -> Vec<&str> {
@@ -514,6 +647,25 @@ pub fn join(local: &Sidecar, other: &Sidecar) -> Sidecar {
     joined.turn = facts.turn;
     joined.meta_at = meta_at;
     joined.baseline = Some(joined.facts());
+    // Every state shown under the joined turn, from where it was
+    // placed: the copy whose turn lost shows its states as right as the
+    // other's. One frame, so either copy's shape is the frame's; failing
+    // both, what waits on it waits for the reader holding the frame
+    // (`Sidecar::settle_shape`).
+    joined.shape = local.shape.or(other.shape);
+    joined.show();
+    // A line nobody developed is the local reader's start, seed and all
+    // (§724), whichever copy it came from: the other copy's was its
+    // reader's.
+    // The seed taken on either side is kept: the more specific start.
+    joined.start = local.start.clone();
+    joined.keep_starts_of(other);
+    joined.keep_starts_of(local);
+    // States either copy could not read are lost to the join too, and
+    // the join is not written while they are (`Sidecar::unread`).
+    joined.line.unread = local.unread() + other.unread();
+    // And a newer build's file is read-only to the join it is in.
+    joined.newer = local.newer.max(other.newer);
 
     // The revisions of both, each once, by time; and both copies'
     // latest absorbed, the lines a copy left stale will be looked for
@@ -547,42 +699,264 @@ pub fn join(local: &Sidecar, other: &Sidecar) -> Sidecar {
     joined
 }
 
-/// The versions of two copies joined, by id: a version on both has its
-/// two lines joined as version 0's are ([`join_line`]) and takes the
-/// newer copy's name; a version on one copy alone is kept, whether it
-/// was made there or deleted on the other, since a join keeps rather
-/// than loses. The one exception is a version the older copy alone has
-/// when the newer copy has `seen` the whole of the older (its latest
-/// revision is in the newer's lineage): the newer copy had it and
-/// deleted it. The list is ordered by when each was made, the id
-/// breaking a tie, so both sides of a join make the same list.
-fn join_versions(
-    newer: &[Version],
-    older: &[Version],
+/// The joined original and versions (§724), every line of either copy
+/// placed once.
+///
+/// The copy that swapped later (the newer on a tie) wins the
+/// arrangement: its original is the join's, and each of its versions
+/// holds the line it holds there. A line is joined with the line of its
+/// id on the other copy, wherever that one sits; by place only where one
+/// of the two has no id (a line nobody developed, or read before ids).
+/// The versions are the newer copy's and, unless the newer has seen the
+/// older whole, the older's it lacks (§243). A version only the losing
+/// copy has keeps its own line there where the winner did not place it,
+/// or else the line it was made with; failing both, the losing copy's
+/// original or a line there no listed version holds or was made with.
+/// A version a join made gives way to a real one holding its line. A
+/// line of the losing copy still unplaced is kept as a version of its
+/// own, under an id made from the line's, unless the newer copy dropped
+/// it having seen it.
+fn join_lines(
+    newer: &Sidecar,
+    older: &Sidecar,
     host: Option<&str>,
     seen: bool,
-) -> Vec<Version> {
-    let mut versions: Vec<Version> = newer
-        .iter()
-        .map(|n| match older.iter().find(|o| o.id == n.id) {
-            Some(o) => Version {
-                id: n.id.clone(),
-                name: n.name.clone(),
-                made: n.made,
-                line: join_line(&n.line, &o.line, host, seen),
-            },
-            None => n.clone(),
-        })
-        .collect();
-    if !seen {
-        for o in older {
-            if !newer.iter().any(|n| n.id == o.id) {
-                versions.push(o.clone());
-            }
+) -> (Line, Vec<Version>) {
+    let newer_won = newer.original_at >= older.original_at;
+    let (w, l) = if newer_won {
+        (newer, older)
+    } else {
+        (older, newer)
+    };
+    let slots = |s: &Sidecar| -> Vec<(Option<String>, Line)> {
+        std::iter::once((None, s.line.clone()))
+            .chain(
+                s.versions
+                    .iter()
+                    .map(|v| (Some(v.id.clone()), v.line.clone())),
+            )
+            .collect()
+    };
+    let (ws, ls) = (slots(w), slots(l));
+    let mut partner: Vec<Option<usize>> = vec![None; ws.len()];
+    let mut used = vec![false; ls.len()];
+    // By id, wherever the line sits.
+    for (i, (_, wl)) in ws.iter().enumerate() {
+        if wl.line_id.is_empty() {
+            continue;
+        }
+        if let Some(j) = (0..ls.len()).find(|&j| !used[j] && ls[j].1.line_id == wl.line_id) {
+            partner[i] = Some(j);
+            used[j] = true;
         }
     }
+    // By place, only where one of the two has no id: two set ids that
+    // differ are two lines.
+    for (i, (slot, wl)) in ws.iter().enumerate() {
+        if partner[i].is_some() {
+            continue;
+        }
+        let found = (0..ls.len()).find(|&j| {
+            !used[j] && ls[j].0 == *slot && (wl.line_id.is_empty() || ls[j].1.line_id.is_empty())
+        });
+        if let Some(j) = found {
+            partner[i] = Some(j);
+            used[j] = true;
+        }
+    }
+    let join_two = |wl: &Line, ll: Option<&Line>| -> Line {
+        let mut joined = match ll {
+            Some(ll) if newer_won => join_line(wl, ll, host, seen),
+            Some(ll) => join_line(ll, wl, host, seen),
+            None => wl.clone(),
+        };
+        if joined.recorded {
+            joined.line_id = [Some(wl), ll]
+                .into_iter()
+                .flatten()
+                .map(|x| x.line_id.as_str())
+                .find(|id| !id.is_empty())
+                .unwrap_or_default()
+                .to_string();
+        }
+        joined
+    };
+    let original = join_two(&ws[0].1, partner[0].map(|j| &ls[j].1));
+
+    // Which versions, and whose name and time each keeps: the newer
+    // copy's; the later name's winning is the new join's (step 7).
+    let mut listed: Vec<&Version> = newer.versions.iter().collect();
+    if !seen {
+        listed.extend(
+            older
+                .versions
+                .iter()
+                .filter(|o| newer.version(&o.id).is_none()),
+        );
+    }
+    // The line of each version only the losing copy has.
+    let own_of = |v: &Version| {
+        let slot = Some(v.id.clone());
+        (!ws.iter().any(|(s, _)| *s == slot)).then(|| {
+            ls.iter()
+                .position(|(s, _)| *s == slot)
+                .expect("on one copy")
+        })
+    };
+    // A version an earlier join made for a line left over gives way to
+    // a version the losing copy has holding the same line: the line is
+    // the one version's on every machine, whichever copy won.
+    let mut gives_way: HashMap<usize, usize> = HashMap::new();
+    for (k, x) in listed.iter().enumerate() {
+        let Some(i) = ws
+            .iter()
+            .position(|(s, _)| s.as_deref() == Some(x.id.as_str()))
+        else {
+            continue;
+        };
+        let Some(j) = partner[i] else {
+            continue;
+        };
+        if !made_by_a_join(x) {
+            continue;
+        }
+        let real = listed
+            .iter()
+            .position(|y| own_of(y) == Some(j) && !made_by_a_join(y));
+        if let Some(y) = real {
+            gives_way.insert(k, y);
+        }
+    }
+    let taken_over: HashSet<usize> = gives_way.values().copied().collect();
+    // Which of the losing copy's lines each version only it has takes,
+    // every version's claim before any fallback, so no version's
+    // fallback takes another's line: first the line it holds there,
+    // where the winner did not place it; then the line it was made
+    // with, which a swap left elsewhere; then, but for one a join made,
+    // the losing copy's original or a line no listed version holds or
+    // was made with. With none, the version's line is the join's
+    // elsewhere and its entry goes.
+    let listed_ids: HashSet<&str> = listed.iter().map(|v| v.id.as_str()).collect();
+    let mut take: Vec<Option<usize>> = vec![None; listed.len()];
+    let losing_only: Vec<usize> = (0..listed.len())
+        .filter(|&k| !taken_over.contains(&k) && own_of(listed[k]).is_some())
+        .collect();
+    for &k in &losing_only {
+        let own = own_of(listed[k]).expect("only the losing copy's");
+        if !used[own] {
+            used[own] = true;
+            take[k] = Some(own);
+        }
+    }
+    for &k in &losing_only {
+        if take[k].is_some() {
+            continue;
+        }
+        let made_with = (0..ls.len())
+            .find(|&j| !used[j] && ls[j].1.recorded && ls[j].1.line_id == listed[k].id);
+        if let Some(j) = made_with {
+            used[j] = true;
+            take[k] = Some(j);
+        }
+    }
+    for &k in &losing_only {
+        if take[k].is_some() || made_by_a_join(listed[k]) {
+            continue;
+        }
+        let free = (0..ls.len()).find(|&j| {
+            !used[j]
+                && ls[j].1.recorded
+                && ls[j].0.as_deref().is_none_or(|id| !listed_ids.contains(id))
+                && !listed_ids.contains(ls[j].1.line_id.as_str())
+        });
+        if let Some(j) = free {
+            used[j] = true;
+            take[k] = Some(j);
+        }
+    }
+    let mut versions: Vec<Version> = Vec::with_capacity(listed.len());
+    for (k, v) in listed.iter().enumerate() {
+        if taken_over.contains(&k) {
+            continue;
+        }
+        let line = if own_of(v).is_some() {
+            let Some(j) = take[k] else {
+                continue;
+            };
+            ls[j].1.clone()
+        } else {
+            let i = ws
+                .iter()
+                .position(|(s, _)| s.as_deref() == Some(v.id.as_str()))
+                .expect("on the winner");
+            join_two(&ws[i].1, partner[i].map(|j| &ls[j].1))
+        };
+        let entry = gives_way.get(&k).map_or(*v, |&y| listed[y]);
+        versions.push(Version {
+            line,
+            ..entry.clone()
+        });
+    }
+    // The losing copy's lines still unplaced: each a version of its own,
+    // but those the newer dropped having seen them.
+    let keep_rest = !seen || !newer_won;
+    for j in 0..ls.len() {
+        if used[j] || !ls[j].1.recorded || !keep_rest {
+            continue;
+        }
+        let line = ls[j].1.clone();
+        // The line's id, or one made from it where a version holds that
+        // id already (a line left behind by swaps): the same join on two
+        // machines writes the same id.
+        let mut id = if line.line_id.is_empty() {
+            line_id_of_root(&line)
+        } else {
+            line.line_id.clone()
+        };
+        while versions.iter().any(|v| v.id == id) {
+            id = id_of(&id, "", Some("version"))[..16].to_string();
+        }
+        let mut n = versions.len() + 2;
+        let name = loop {
+            let name = format!("Version {n}");
+            if !versions.iter().any(|v| v.name == name) {
+                break name;
+            }
+            n += 1;
+        };
+        versions.push(Version {
+            id,
+            name,
+            made: line.head_at.as_ref().map_or(0, |h| h.at),
+            named: 0,
+            line,
+        });
+    }
     versions.sort_by(|a, b| (a.made, &a.id).cmp(&(b.made, &b.id)));
-    versions
+    debug_assert!(
+        {
+            let ids: Vec<&str> = std::iter::once(&original)
+                .chain(versions.iter().map(|v| &v.line))
+                .map(|l| l.line_id.as_str())
+                .filter(|i| !i.is_empty())
+                .collect();
+            let unique: HashSet<&str> = ids.iter().copied().collect();
+            unique.len() == ids.len()
+        },
+        "a line placed twice"
+    );
+    (original, versions)
+}
+
+/// Whether `v` is a version a join made for a line left over
+/// ([`join_lines`]): under the id of an original's line, or under one
+/// made from its line's id.
+fn made_by_a_join(v: &Version) -> bool {
+    let line = &v.line.line_id;
+    !line.is_empty()
+        && v.line.recorded
+        && ((v.id == *line && line_id_of_root(&v.line) == *line)
+            || v.id == id_of(line, "", Some("version"))[..16])
 }
 
 /// One line of two copies' lines of one version, the newer copy's
@@ -591,6 +965,33 @@ fn join_versions(
 /// labels; `seen` is whether the newer copy has seen the whole of the
 /// older ([`join`]).
 fn join_line(newer: &Line, older: &Line, host: Option<&str>, seen: bool) -> Line {
+    // The sources both copies chose (§724), the lower on a tie, so both
+    // sides agree; every shown copy on either side takes them first, so
+    // a state is one state on both whichever side chose its source.
+    let (newer, older) = &Line::joined_sources(newer, older);
+    let (newer, older) = &Line::joined_parents(newer, older);
+    // A line nobody developed holds no state (§724): the other copy's
+    // line is the join, its start the newer's when neither has one.
+    if !newer.recorded || !older.recorded {
+        let mut joined = if newer.recorded || !older.recorded {
+            newer.clone()
+        } else {
+            older.clone()
+        };
+        joined.redo.clear();
+        joined.last_export = match (&newer.last_export, &older.last_export) {
+            (Some(a), Some(b)) => Some(if a.at >= b.at { a } else { b }.clone()),
+            (a, b) => a.clone().or_else(|| b.clone()),
+        };
+        joined.snapshots_removed = crate::line::joined_tombstones(
+            &newer.snapshots_removed,
+            &older.snapshots_removed,
+            |id| joined.snapshots.iter().any(|s| s.id == id),
+        );
+        joined.head_at = crate::line::HeadAt::later(&newer.head_at, &older.head_at);
+        joined.undone = joined_undone(&joined, newer, older);
+        return joined;
+    }
     // The states of each, oldest first, the current last.
     let newer_states = states_of(newer);
     let older_states = states_of(older);
@@ -699,10 +1100,19 @@ fn join_line(newer: &Line, older: &Line, host: Option<&str>, seen: bool) -> Line
             }
         }
     }
+    // Whether `child` was made from `parent`, as its written parent
+    // says (§724): no id is made again from content to tell.
     let verified_child = |parent: &Step, child: &Step| {
-        parent.id.as_deref().is_some_and(|p| {
-            child.id.as_deref() == Some(state_id(p, &child.edit, child.label.as_deref()).as_str())
-        })
+        #[cfg(test)]
+        if BY_CONTENT.get() {
+            return parent.id.as_deref().is_some_and(|p| {
+                child
+                    .id
+                    .as_deref()
+                    .is_some_and(|id| verifies(p, &child.written(), child.label.as_deref(), id))
+            });
+        }
+        parent.id.is_some() && child.parent == parent.id
     };
     let mut shared_at: HashSet<usize> = HashSet::new();
     // Rule (ii)'s states to bring back, in the older copy's order,
@@ -756,8 +1166,13 @@ fn join_line(newer: &Line, older: &Line, host: Option<&str>, seen: bool) -> Line
             // One whose edit stands here already is a repeat the cap
             // took, and comes back as a repeat the cap would take
             // again: its records go to that entry and it stays gone.
-            // The rest come back before the shared state they led to.
-            if list.iter().any(|(_, t)| t.edit == s.edit) {
+            // So is one whose edit an earlier state brought back has
+            // (two copies of a version 9 frame turned apart: the same
+            // states, placed under two turns). The rest come back
+            // before the shared state they led to.
+            if list.iter().any(|(_, t)| t.edit == s.edit)
+                || capped.iter().any(|(_, c)| c.edit == s.edit)
+            {
                 orphans.push((s.edit.clone(), with_exports(s.clone()).exports));
             } else {
                 let anchor = older_states[k + 1..]
@@ -844,12 +1259,15 @@ fn join_line(newer: &Line, older: &Line, host: Option<&str>, seen: bool) -> Line
             .last()
             .and_then(|(_, s)| s.id.clone())
             .unwrap_or_else(|| ZERO_ID.to_string());
+        // As written, as every state of the list is (`Line::into_written`).
         Step {
             edit: edit.clone(),
             id: Some(state_id(&parent, edit, label.as_deref())),
+            parent: (parent != ZERO_ID).then_some(parent),
             label,
             exports: Vec::new(),
             order: Order::BEFORE,
+            written: Written::at(edit.placed_under),
         }
     };
     let last_edit = |list: &[(Kind, Step)]| list.last().map(|(_, s)| s.edit.clone());
@@ -1035,12 +1453,14 @@ fn join_line(newer: &Line, older: &Line, host: Option<&str>, seen: bool) -> Line
         }
     }
     let mut joined = Line {
+        recorded: true,
         // The later of the two exports: the frame was exported on
         // either side, whichever state it was.
         last_export: match (&newer.last_export, &older.last_export) {
             (Some(a), Some(b)) => Some(if a.at >= b.at { a } else { b }.clone()),
             (a, b) => a.clone().or_else(|| b.clone()),
         },
+        sources: newer.sources.clone(),
         ..Line::default()
     };
     // The first state of the list is the current; the rest follow it
@@ -1051,13 +1471,17 @@ fn join_line(newer: &Line, older: &Line, host: Option<&str>, seen: bool) -> Line
         joined.current_label = first.label;
         joined.current_exports = first.exports;
         joined.current_id = first.id;
+        joined.current_parent = first.parent;
         joined.current_order = first.order;
+        joined.current_written = first.written;
     }
     for state in states {
         joined.push_state(state);
     }
 
-    // The snapshots, by name.
+    // The snapshots, by name, as §243 has it: one renamed on a copy is
+    // kept under both names, the older copy's given an id of its own, so
+    // no two share one. That the later name wins is the new join's.
     joined.snapshots = newer.snapshots.clone();
     for s in &older.snapshots {
         if joined.snapshots.contains(s) {
@@ -1066,20 +1490,59 @@ fn join_line(newer: &Line, older: &Line, host: Option<&str>, seen: bool) -> Line
         let snapshot = match joined.snapshots.iter().find(|n| n.name == s.name) {
             Some(n) if n.edit == s.edit => continue,
             Some(_) => Snapshot {
+                id: s.id.clone(),
+                named: s.named,
                 name: match host {
                     Some(host) => format!("{} (on {host})", s.name),
                     None => format!("{} (on the other copy)", s.name),
                 },
                 taken: s.taken,
                 edit: s.edit.clone(),
+                written: s.written.clone(),
             },
             None => s.clone(),
         };
         if !joined.snapshots.contains(&snapshot) {
+            let mut snapshot = snapshot;
+            // Two of one id (renamed on one copy, or one state kept under
+            // two names in one second): the one renamed earlier, then by
+            // name, keeps it; the other takes one made from it and its
+            // name. So which copy is newer decides nothing, and an id
+            // names one snapshot on every machine (§724).
+            if let Some(k) = joined.snapshots.iter().position(|n| n.id == snapshot.id) {
+                let x = snapshot.id.clone();
+                let kept = &joined.snapshots[k];
+                let gives = if (snapshot.named, &snapshot.name) < (kept.named, &kept.name) {
+                    &mut joined.snapshots[k]
+                } else {
+                    &mut snapshot
+                };
+                gives.id = id_of(&x, "", Some(&gives.name));
+            }
             joined.snapshots.push(snapshot);
         }
     }
+    // The tombstones of both, each at the later time, less those of the
+    // snapshots kept: a file never holds one for what it holds (§724).
+    joined.snapshots_removed =
+        crate::line::joined_tombstones(&newer.snapshots_removed, &older.snapshots_removed, |id| {
+            joined.snapshots.iter().any(|s| s.id == id)
+        });
+    // The later move of the two (§724); which head it keeps by is the
+    // new join's.
+    joined.head_at = crate::line::HeadAt::later(&newer.head_at, &older.head_at);
+    joined.undone = joined_undone(&joined, newer, older);
     joined
+}
+
+/// Both copies' undone ids (§724), the older copy's first, each once,
+/// less those the joined line holds, the last [`HISTORY`]. What a copy
+/// undid and the other still holds is the other's: which wins is the
+/// new join's.
+fn joined_undone(joined: &Line, newer: &Line, older: &Line) -> Vec<String> {
+    let mut out: Vec<String> = older.undone.iter().chain(&newer.undone).cloned().collect();
+    crate::line::cap_undone(&mut out, &joined.held_ids());
+    out
 }
 
 /// Which copy is the newer: the one written later
@@ -1111,7 +1574,9 @@ fn states_of(sidecar: &Line) -> Vec<Step> {
         label: sidecar.current_label.clone(),
         exports: sidecar.current_exports.clone(),
         id: sidecar.current_id.clone(),
+        parent: sidecar.current_parent.clone(),
         order: sidecar.current_order,
+        written: sidecar.current_written.clone(),
     });
     states
 }
@@ -1163,14 +1628,31 @@ impl Sidecar {
         self.meta_at.pin(&facts, at)
     }
 
-    /// [`Line::fill_ids`] on every version's line; true when any state
-    /// was given an id.
+    /// [`Line::fill_ids`] on every version's line, and each recorded
+    /// line with no id of its own given one ([`Line::line_id`]): the
+    /// original's from its root, a version's its version's id; true
+    /// when any state was given an id.
     pub fn fill_ids(&mut self) -> bool {
         let mut filled = false;
         for line in self.lines_mut() {
             filled |= line.fill_ids();
         }
+        self.fill_line_ids();
         filled
+    }
+
+    /// Each recorded line with no id of its own given one
+    /// ([`Line::line_id`]), and nothing else: the states' ids are left
+    /// as they are.
+    pub fn fill_line_ids(&mut self) {
+        if self.line.recorded && self.line.line_id.is_empty() {
+            self.line.line_id = line_id_of_root(&self.line);
+        }
+        for v in &mut self.versions {
+            if v.line.recorded && v.line.line_id.is_empty() {
+                v.line.line_id = v.id.clone();
+            }
+        }
     }
 }
 
@@ -1182,19 +1664,34 @@ impl Line {
     pub fn fill_ids(&mut self) -> bool {
         let mut filled = false;
         let mut parent = ZERO_ID.to_string();
+        // Each state as written, in the shape a build before version
+        // 10 filled its ids from ([`filled_id`]), so both fill alike.
+        // A state given its id here hangs off the one before it, by
+        // the id's own making: that is its parent (§724).
+        let made_from = |parent: &str| (parent != ZERO_ID).then(|| parent.to_string());
         for step in &mut self.history {
             if step.id.is_none() {
-                step.id = Some(state_id(&parent, &step.edit, step.label.as_deref()));
+                let id = step
+                    .written
+                    .filled_id(&step.edit, &parent, step.label.as_deref());
+                step.id = Some(id);
+                step.parent = made_from(&parent);
                 filled = true;
             }
             parent = step.id.clone().expect("just filled");
         }
+        // A line nobody developed has no state to give one (§724).
+        if !self.recorded {
+            return filled;
+        }
         if self.current_id.is_none() {
-            self.current_id = Some(state_id(
-                &parent,
+            let id = self.current_written.filled_id(
                 &self.current,
+                &parent,
                 self.current_label.as_deref(),
-            ));
+            );
+            self.current_id = Some(id);
+            self.current_parent = made_from(&parent);
             filled = true;
         }
         // The redo stack is newest first; its last is the current
@@ -1202,7 +1699,11 @@ impl Line {
         parent = self.current_id.clone().expect("just filled");
         for step in self.redo.iter_mut().rev() {
             if step.id.is_none() {
-                step.id = Some(state_id(&parent, &step.edit, step.label.as_deref()));
+                let id = step
+                    .written
+                    .filled_id(&step.edit, &parent, step.label.as_deref());
+                step.id = Some(id);
+                step.parent = made_from(&parent);
                 filled = true;
             }
             parent = step.id.clone().expect("just filled");
@@ -1220,7 +1721,9 @@ impl Line {
             label: std::mem::replace(&mut self.current_label, state.label),
             exports: std::mem::replace(&mut self.current_exports, state.exports),
             id: std::mem::replace(&mut self.current_id, state.id),
+            parent: std::mem::replace(&mut self.current_parent, state.parent),
             order: std::mem::replace(&mut self.current_order, state.order),
+            written: std::mem::replace(&mut self.current_written, state.written),
         };
         self.history.push(previous);
         self.redo.clear();
@@ -1282,6 +1785,29 @@ impl Line {
 }
 
 impl Sidecar {
+    /// Whether nothing changed since this copy's last revision: its
+    /// content is as it was when it was last read or saved here. What
+    /// [`join`] asks of both copies. The content is held to what this
+    /// build made of it then, not to the hash in the file, which another
+    /// build may have made of another form of it. True with no revision,
+    /// and for a copy read in a release build, which keeps nothing to
+    /// hold it to.
+    pub fn at_its_revision(&self) -> bool {
+        match &self.as_revised {
+            None => true,
+            Some(key) => self.clone().content_key().as_ref() == Some(key),
+        }
+    }
+
+    /// The content as the last revision's hash takes it, against that
+    /// revision's previous: none with no revision.
+    pub(crate) fn content_key(&mut self) -> Option<String> {
+        let n = self.revisions.len();
+        n.checked_sub(1)?;
+        let previous = n.checked_sub(2).map(|i| self.revisions[i].hash.clone());
+        Some(revision_hash(previous.as_deref(), self))
+    }
+
     /// Make this save's revision: hash the file as it is about to be
     /// written against the last revision, keep the last
     /// [`REVISIONS`], and stamp every field of the meta and the turn
@@ -1294,6 +1820,7 @@ impl Sidecar {
         let after = self.facts();
         self.meta_at.stamp(&before, &after, stamp.at, &hash);
         self.baseline = Some(after);
+        self.as_revised = Some(hash.clone());
         self.revisions.push(Revision {
             hash,
             at: stamp.at,
@@ -1353,6 +1880,11 @@ mod simulation {
         /// Versions made, renamed, edited, swapped and deleted among
         /// the moves.
         versions: bool,
+        /// Each join made again on both copies as a build before
+        /// version 10 would have written them ([`as_nine`]): by the
+        /// parents their read gives them, the same join as by content
+        /// (§724), and each copy one with its twin written at 10.
+        nine: bool,
     }
 
     fn exposed(stops: f32) -> Edit {
@@ -1361,7 +1893,8 @@ mod simulation {
         e
     }
 
-    /// What a save does to the struct, without the file.
+    /// What a save does to the struct, without the file. The file it
+    /// would write reads back as the same bytes (§724's sparse form).
     fn commit(s: &mut Sidecar, at: u64, host: &str) {
         s.saved = s.saved.saturating_add(1);
         s.fill_ids();
@@ -1369,10 +1902,138 @@ mod simulation {
             at,
             host: host.into(),
         });
+        let json = s.to_json();
+        let back = Sidecar::from_json(&json, &Edit::default()).unwrap();
+        assert_eq!(back.to_json(), json, "a save reads back as written");
+    }
+
+    /// The join of `a` and `b` read from files written sparse, and from
+    /// files written whole: one join.
+    fn check_files(seed: u64, a: &Sidecar, b: &Sidecar) {
+        let through = |s: &Sidecar, whole: bool| {
+            crate::sparse::WHOLE.set(whole);
+            let json = s.to_json();
+            crate::sparse::WHOLE.set(false);
+            Sidecar::from_json(&json, &Edit::default()).unwrap()
+        };
+        let sparse = join(&through(a, false), &through(b, false));
+        let whole = join(&through(a, true), &through(b, true));
+        assert_eq!(
+            as_written(&sparse),
+            as_written(&whole),
+            "seed {seed}: sparse or whole"
+        );
     }
 
     fn ids(s: &Sidecar) -> Vec<String> {
         state_ids(s)
+    }
+
+    /// `s` with every state as written in place of its shown copy.
+    fn as_written(s: &Sidecar) -> Sidecar {
+        let mut s = s.clone();
+        for line in s.lines_mut() {
+            *line = std::mem::take(line).into_written();
+        }
+        s
+    }
+
+    /// `s` as a build before version 10 would have written it, read
+    /// back: every state whole, at version 9 with no `placed_under` and
+    /// no parent, its id made again as such a build made ids (over the
+    /// whole edit at 9, [`filled_id`]'s form) from its parent's, and no
+    /// repair sources.
+    fn as_nine(s: &Sidecar) -> Sidecar {
+        let mut s = s.clone();
+        for line in s.lines_mut() {
+            let mut moved: HashMap<String, String> = HashMap::new();
+            let mut again = |id: &mut Option<String>,
+                             parent: &Option<String>,
+                             written: &Edit,
+                             label: Option<&str>| {
+                let Some(old) = id.clone() else {
+                    return;
+                };
+                let p = parent.as_ref().map_or(ZERO_ID.to_string(), |p| {
+                    moved.get(p).cloned().unwrap_or(p.clone())
+                });
+                let new = whole_id(&p, &as_before_placed(written), label);
+                moved.insert(old, new.clone());
+                *id = Some(new);
+            };
+            for h in &mut line.history {
+                let written = h.written().into_owned();
+                again(&mut h.id, &h.parent, &written, h.label.as_deref());
+            }
+            if line.recorded {
+                let written = line.current_written().into_owned();
+                let parent = line.current_parent.clone();
+                let label = line.current_label.clone();
+                again(&mut line.current_id, &parent, &written, label.as_deref());
+            }
+        }
+        let s = &s;
+        crate::sparse::WHOLE.set(true);
+        use serde_json::Value;
+        fn state(v: &mut Value) {
+            if let Some(o) = v.as_object_mut() {
+                o.insert("version".into(), 9.into());
+                o.remove("placed_under");
+                o.remove("parent");
+            }
+        }
+        fn line(o: &mut serde_json::Map<String, Value>) {
+            o.remove("parent");
+            o.remove("sources");
+            if let Some(c) = o.get_mut("current") {
+                state(c);
+            }
+            if let Some(Value::Array(h)) = o.get_mut("history") {
+                h.iter_mut().for_each(state);
+            }
+            if let Some(Value::Array(snapshots)) = o.get_mut("snapshots") {
+                for s in snapshots {
+                    if let Some(e) = s.get_mut("edit") {
+                        state(e);
+                    }
+                }
+            }
+        }
+        let mut v = serde_json::to_value(s).unwrap();
+        crate::sparse::WHOLE.set(false);
+        let o = v.as_object_mut().unwrap();
+        line(o);
+        if let Some(Value::Array(versions)) = o.get_mut("versions") {
+            for version in versions {
+                if let Some(Value::Object(l)) = version.get_mut("line") {
+                    line(l);
+                }
+            }
+        }
+        Sidecar::from_value(v, &Edit::default()).unwrap()
+    }
+
+    /// The join of `a` and `b` as version 9 files, by the parents their
+    /// read wrote and by content as before §724: one join. And each
+    /// read written at 10 and read back is its twin: the same states,
+    /// ids and parents, one with it in a join.
+    fn check_nine(seed: u64, a: &Sidecar, b: &Sidecar) {
+        let (a9, b9) = (as_nine(a), as_nine(b));
+        let by = |content: bool| {
+            BY_CONTENT.set(content);
+            let j = join(&a9, &b9);
+            BY_CONTENT.set(false);
+            as_written(&j)
+        };
+        assert_eq!(by(true), by(false), "seed {seed}: by parent and by content");
+        for nine in [&a9, &b9] {
+            let ten = Sidecar::from_json(&nine.to_json(), &Edit::default()).unwrap();
+            assert_eq!(as_written(&ten), as_written(nine), "seed {seed}: the twin");
+            for (x, y) in [(nine, &ten), (&ten, nine)] {
+                let j = join(x, y);
+                assert_eq!(ids(&j), ids(&ten), "seed {seed}: twins joined");
+            }
+        }
     }
 
     /// Every export record with the id of the state it is on.
@@ -1422,15 +2083,29 @@ mod simulation {
         for v in a.versions.iter().chain(&b.versions) {
             let on_newer = newer.version(&v.id).is_some();
             let Some(joined) = j.version(&v.id) else {
+                // Its line held elsewhere in the join (the other copy
+                // swapped it in and deleted this version) is no loss
+                // (§724): the entry goes, the line stays.
+                let line_id = if v.line.line_id.is_empty() {
+                    v.id.as_str()
+                } else {
+                    v.line.line_id.as_str()
+                };
+                let held = j.lines().any(|l| l.line_id == line_id);
                 assert!(
-                    seen && !on_newer,
+                    (seen && !on_newer) || held,
                     "{why}: version {} ({}) lost from the join",
                     v.id,
                     v.name
                 );
                 continue;
             };
-            let line = &joined.line;
+            // The line of its id, wherever the join put it: a swap on
+            // one copy changes which line a version holds (§724).
+            let line = j
+                .lines()
+                .find(|l| !v.line.line_id.is_empty() && l.line_id == v.line.line_id)
+                .unwrap_or(&joined.line);
             let kept: Vec<&Edit> = line
                 .history
                 .iter()
@@ -1460,14 +2135,79 @@ mod simulation {
                 );
             }
         }
-        // Nothing comes from nowhere, and the list is in the order made.
-        for v in &j.versions {
+        // No tombstone for what the join holds (§724).
+        for id in j.removed.keys() {
             assert!(
-                a.version(&v.id).is_some() || b.version(&v.id).is_some(),
+                j.version(id).is_none(),
+                "{why}: version {id} held and tombstoned"
+            );
+        }
+        for l in j.lines() {
+            for s in &l.snapshots {
+                assert!(
+                    !l.snapshots_removed.contains_key(&s.id),
+                    "{why}: snapshot {} held and tombstoned",
+                    s.name
+                );
+            }
+        }
+        // Each original, by its id, wherever the join put it (§724).
+        for top in [&a.line, &b.line] {
+            if top.line_id.is_empty() {
+                continue;
+            }
+            let Some(line) = j.lines().find(|l| l.line_id == top.line_id) else {
+                panic!("{why}: the line {} lost", top.line_id);
+            };
+            let kept: Vec<&Edit> = line
+                .history
+                .iter()
+                .map(|h| &h.edit)
+                .chain([&line.current])
+                .collect();
+            let gone = top
+                .history
+                .iter()
+                .map(|h| &h.edit)
+                .chain([&top.current])
+                .filter(|e| !kept.contains(e))
+                .count();
+            assert!(
+                gone == 0 || line.history.len() == HISTORY,
+                "{why}: the line {} lost {gone} states below the cap",
+                top.line_id
+            );
+        }
+        // Nothing comes from nowhere, and the list is in the order made: a
+        // version is one of either input's, or a line of either input
+        // the join kept as a version of its own (§724).
+        let filled = |s: &Sidecar| {
+            let mut s = s.clone();
+            s.fill_line_ids();
+            s
+        };
+        let (fa, fb) = (filled(a), filled(b));
+        for v in &j.versions {
+            let a_line = |s: &Sidecar| {
+                !v.line.line_id.is_empty() && s.lines().any(|l| l.line_id == v.line.line_id)
+            };
+            assert!(
+                a.version(&v.id).is_some()
+                    || b.version(&v.id).is_some()
+                    || a_line(&fa)
+                    || a_line(&fb),
                 "{why}: version {} from nowhere",
                 v.name
             );
         }
+        // No line held twice (§724).
+        let ids: Vec<&str> = j
+            .lines()
+            .map(|l| l.line_id.as_str())
+            .filter(|i| !i.is_empty())
+            .collect();
+        let unique: HashSet<&str> = ids.iter().copied().collect();
+        assert_eq!(unique.len(), ids.len(), "{why}: a line held twice");
         assert!(
             j.versions
                 .windows(2)
@@ -1507,7 +2247,9 @@ mod simulation {
                 label: a.current_label.clone(),
                 exports: Vec::new(),
                 id: a.current_id.clone(),
+                parent: a.current_parent.clone(),
                 order: a.current_order,
+                written: a.current_written.clone(),
             }))
             .collect();
         let mut shared = HashSet::new();
@@ -1519,9 +2261,8 @@ mod simulation {
             shared.insert(id.clone());
             let mut j = i;
             while j > 1 {
-                let child = &a_states[j];
-                let expect = state_id(&ai[j - 1], &child.edit, child.label.as_deref());
-                if child.id.as_deref() != Some(expect.as_str()) {
+                // Made from the state before it, as its parent says.
+                if a_states[j].parent.as_deref() != Some(ai[j - 1].as_str()) {
                     break;
                 }
                 j -= 1;
@@ -1552,180 +2293,42 @@ mod simulation {
             .count()
     }
 
-    /// What must hold of a join of `a` and `b` that came out as `j`.
-    fn check_join(seed: u64, a: &Sidecar, b: &Sidecar, j: &Sidecar) {
-        let why = format!("seed {seed}");
-        // (c) The same from either side: `j` is `join(a, b)`.
-        assert_eq!(*j, join(b, a), "{why}: order");
-        check_versions(&why, a, b, j);
-        let version_ids = |s: &Sidecar| s.versions.iter().map(|v| v.id.clone()).collect::<Vec<_>>();
-        // (d) Joined again with either input, once saved, the same,
-        // through the lineage: the input's latest revision is in the
-        // join's.
-        let mut saved = j.clone();
-        commit(&mut saved, 1 << 40, "check");
-        for input in [a, b] {
-            // An input with no revisions (a copy an older build saved
-            // last) has no lineage to be known by, so only the union
-            // rules below apply to it.
-            if input.revisions.is_empty() {
-                continue;
-            }
-            let again = join(&saved, input);
-            assert_eq!(
-                summary(&again),
-                summary(&saved),
-                "{why}: rejoin with input {:?}",
-                summary(input)
-            );
-            assert_eq!(
-                version_ids(&again),
-                version_ids(&saved),
-                "{why}: rejoin versions"
-            );
-            // The states, with their ids; the records as a set, since
-            // a record on a re-chained double may sit on its own entry
-            // in the join and on the entry that stays in the rejoin.
-            let brief = |h: &Step| {
-                (
-                    h.edit.light.exposure,
-                    h.label.clone(),
-                    h.id.as_deref().map(|id| id[..8].to_string()),
-                )
-            };
-            let differ: Vec<String> = again
-                .history
-                .iter()
-                .zip(saved.history.iter())
-                .enumerate()
-                .filter(|(_, (x, y))| brief(x) != brief(y))
-                .map(|(i, (x, y))| format!("{i}: {:?} vs {:?}", brief(x), brief(y)))
-                .collect();
-            assert!(differ.is_empty(), "{why}: rejoin differs at {differ:#?}");
-            // The set of files: a record handed to a twin may stand on
-            // more entries after a join than before, which is not a
-            // record more or less.
-            let files = |s: &Sidecar| {
-                records(s)
-                    .into_iter()
-                    .map(|(f, _)| f)
-                    .collect::<std::collections::BTreeSet<String>>()
-            };
-            let where_ = |s: &Sidecar| {
-                s.history
-                    .iter()
-                    .flat_map(|h| {
-                        h.exports.iter().map(move |e| {
-                            (
-                                e.file.clone(),
-                                h.edit.light.exposure,
-                                h.label.clone(),
-                                h.id.as_deref().map(|i| i[..8].to_string()),
-                            )
-                        })
-                    })
-                    .collect::<Vec<_>>()
-            };
-            assert_eq!(
-                files(&again),
-                files(&saved),
-                "{why}: rejoin records; again {:?}; saved {:?}; input records {:?}; input {:?}",
-                where_(&again),
-                where_(&saved),
-                where_(input),
-                summary(input)
-            );
-            // And through the union rules, with the lineage stripped
-            // from the input: not the same again, since a joined
-            // history's order cannot always confirm what was dropped
-            // on purpose (which is what the lineage is for), but the
-            // same from either side, nothing of the join gone by
-            // content below the cap, and every record and snapshot
-            // kept.
-            let mut bare = input.clone();
-            bare.revisions.clear();
-            bare.absorbed.clear();
-            let union = join(&saved, &bare);
-            assert_eq!(union, join(&bare, &saved), "{why}: union rejoin order");
-            for v in &saved.versions {
-                assert!(
-                    union.version(&v.id).is_some(),
-                    "{why}: union rejoin lost version {}",
-                    v.name
-                );
-            }
-            let kept = edits(&union);
-            let gone: Vec<f32> = edits(&saved)
-                .into_iter()
-                .filter(|e| !kept.contains(e))
-                .map(|e| e.light.exposure)
-                .collect();
-            assert!(
-                gone.is_empty() || union.history.len() == HISTORY,
-                "{why}: union rejoin lost {gone:?} below the cap"
-            );
-            let files: Vec<String> = records(&union).into_iter().map(|(f, _)| f).collect();
-            for (edit, exports) in saved
-                .history
-                .iter()
-                .map(|h| (&h.edit, &h.exports))
-                .chain(std::iter::once((&saved.current, &saved.current_exports)))
-            {
-                for e in exports {
-                    assert!(
-                        files.contains(&e.file) || !kept.contains(&edit),
-                        "{why}: union rejoin lost record {}",
-                        e.file
-                    );
-                }
-            }
-            for s in &saved.snapshots {
-                assert!(
-                    union.snapshots.iter().any(|n| n.edit == s.edit),
-                    "{why}: union rejoin lost snapshot {}",
-                    s.name
-                );
+    /// `a`, `b` and `j` once for each line id all three hold, each with
+    /// that line as its original (§724); the three as they are when
+    /// their originals have no id.
+    fn by_line(a: &Sidecar, b: &Sidecar, j: &Sidecar) -> Vec<(Sidecar, Sidecar, Sidecar)> {
+        let filled = |s: &Sidecar| {
+            let mut s = s.clone();
+            s.fill_line_ids();
+            s
+        };
+        let (a, b, j) = (filled(a), filled(b), filled(j));
+        let with = |s: &Sidecar, id: &str| {
+            let line = s.lines().find(|l| l.line_id == id)?.clone();
+            let mut s = s.clone();
+            s.line = line;
+            Some(s)
+        };
+        let mut out = Vec::new();
+        for id in a
+            .lines()
+            .map(|l| l.line_id.clone())
+            .filter(|i| !i.is_empty())
+        {
+            if let (Some(x), Some(y), Some(z)) = (with(&a, &id), with(&b, &id), with(&j, &id)) {
+                out.push((x, y, z));
             }
         }
+        if a.line.line_id.is_empty() || b.line.line_id.is_empty() {
+            out.push((a.clone(), b.clone(), j.clone()));
+        }
+        out
+    }
+
+    /// The checks that read the original's line alone: (a) the records
+    /// and (b) what a branch may lose.
+    fn check_original(why: &str, a: &Sidecar, b: &Sidecar, j: &Sidecar) {
         let jedits = edits(j);
-        // Snapshots: every one of either input, by name and by edit.
-        for s in a.snapshots.iter().chain(b.snapshots.iter()) {
-            assert!(
-                j.snapshots.iter().any(|n| n.name == s.name),
-                "{why}: snapshot {} lost by name",
-                s.name
-            );
-            assert!(
-                j.snapshots.iter().any(|n| n.edit == s.edit),
-                "{why}: snapshot {} lost by edit",
-                s.name
-            );
-        }
-        // The meta is one input's or the other's, field by field.
-        assert!(
-            [a.meta.rating, b.meta.rating].contains(&j.meta.rating),
-            "{why}: rating from nowhere"
-        );
-        assert!(
-            [a.turn, b.turn].contains(&j.turn),
-            "{why}: turn from nowhere"
-        );
-        // Independent of any rule about ids: an edit of either input is
-        // gone from the join by content only when the join is at the
-        // cap.
-        let gone: Vec<f32> = edits(a)
-            .into_iter()
-            .chain(edits(b))
-            .filter(|e| !jedits.contains(e))
-            .map(|e| e.light.exposure)
-            .collect();
-        if !gone.is_empty() {
-            assert_eq!(
-                j.history.len(),
-                HISTORY,
-                "{why}: edits {gone:?} gone from the join below the cap"
-            );
-        }
         // (a) A record is kept while any entry with its edit stands.
         let jfiles: Vec<String> = records(j).into_iter().map(|(f, _)| f).collect();
         for s in [a, b] {
@@ -1916,6 +2519,201 @@ mod simulation {
         }
     }
 
+    /// What must hold of a join of `a` and `b` that came out as `j`.
+    fn check_join(seed: u64, a: &Sidecar, b: &Sidecar, j: &Sidecar) {
+        // Every state as written, which is what a join goes by (§724)
+        // and so what these checks compare: two copies may show one
+        // state under two turns, and one edit placed under two turns is
+        // two states.
+        let (a, b, j) = (&as_written(a), &as_written(b), &as_written(j));
+        let join = |x: &Sidecar, y: &Sidecar| as_written(&join(x, y));
+        let why = format!("seed {seed}");
+        // (c) The same from either side: `j` is `join(a, b)`.
+        assert_eq!(*j, join(b, a), "{why}: order");
+        check_versions(&why, a, b, j);
+        let version_ids = |s: &Sidecar| s.versions.iter().map(|v| v.id.clone()).collect::<Vec<_>>();
+        // (d) Joined again with either input, once saved, the same,
+        // through the lineage: the input's latest revision is in the
+        // join's.
+        let mut saved = j.clone();
+        commit(&mut saved, 1 << 40, "check");
+        // A save acts on the lines, which shows them first: back to the
+        // states as written.
+        let saved = as_written(&saved);
+        for input in [a, b] {
+            // An input with no revisions (a copy an older build saved
+            // last) has no lineage to be known by, so only the union
+            // rules below apply to it.
+            if input.revisions.is_empty() {
+                continue;
+            }
+            let again = join(&saved, input);
+            assert_eq!(
+                summary(&again),
+                summary(&saved),
+                "{why}: rejoin with input {:?}",
+                summary(input)
+            );
+            assert_eq!(
+                version_ids(&again),
+                version_ids(&saved),
+                "{why}: rejoin versions"
+            );
+            // The states, with their ids; the records as a set, since
+            // a record on a re-chained double may sit on its own entry
+            // in the join and on the entry that stays in the rejoin.
+            let brief = |h: &Step| {
+                (
+                    h.edit.light.exposure,
+                    h.label.clone(),
+                    h.id.as_deref().map(|id| id[..8].to_string()),
+                )
+            };
+            let differ: Vec<String> = again
+                .history
+                .iter()
+                .zip(saved.history.iter())
+                .enumerate()
+                .filter(|(_, (x, y))| brief(x) != brief(y))
+                .map(|(i, (x, y))| format!("{i}: {:?} vs {:?}", brief(x), brief(y)))
+                .collect();
+            assert!(differ.is_empty(), "{why}: rejoin differs at {differ:#?}");
+            // The set of files: a record handed to a twin may stand on
+            // more entries after a join than before, which is not a
+            // record more or less.
+            let files = |s: &Sidecar| {
+                records(s)
+                    .into_iter()
+                    .map(|(f, _)| f)
+                    .collect::<std::collections::BTreeSet<String>>()
+            };
+            let where_ = |s: &Sidecar| {
+                s.history
+                    .iter()
+                    .flat_map(|h| {
+                        h.exports.iter().map(move |e| {
+                            (
+                                e.file.clone(),
+                                h.edit.light.exposure,
+                                h.label.clone(),
+                                h.id.as_deref().map(|i| i[..8].to_string()),
+                            )
+                        })
+                    })
+                    .collect::<Vec<_>>()
+            };
+            assert_eq!(
+                files(&again),
+                files(&saved),
+                "{why}: rejoin records; again {:?}; saved {:?}; input records {:?}; input {:?}",
+                where_(&again),
+                where_(&saved),
+                where_(input),
+                summary(input)
+            );
+            // And through the union rules, with the lineage stripped
+            // from the input: not the same again, since a joined
+            // history's order cannot always confirm what was dropped
+            // on purpose (which is what the lineage is for), but the
+            // same from either side, nothing of the join gone by
+            // content below the cap, and every record and snapshot
+            // kept.
+            let mut bare = input.clone();
+            bare.revisions.clear();
+            bare.absorbed.clear();
+            let union = join(&saved, &bare);
+            assert_eq!(union, join(&bare, &saved), "{why}: union rejoin order");
+            for v in &saved.versions {
+                assert!(
+                    union.version(&v.id).is_some(),
+                    "{why}: union rejoin lost version {}",
+                    v.name
+                );
+            }
+            let kept = edits(&union);
+            let gone: Vec<f32> = edits(&saved)
+                .into_iter()
+                .filter(|e| !kept.contains(e))
+                .map(|e| e.light.exposure)
+                .collect();
+            assert!(
+                gone.is_empty() || union.history.len() == HISTORY,
+                "{why}: union rejoin lost {gone:?} below the cap"
+            );
+            let files: Vec<String> = records(&union).into_iter().map(|(f, _)| f).collect();
+            for (edit, exports) in saved
+                .history
+                .iter()
+                .map(|h| (&h.edit, &h.exports))
+                .chain(std::iter::once((&saved.current, &saved.current_exports)))
+            {
+                for e in exports {
+                    assert!(
+                        files.contains(&e.file) || !kept.contains(&edit),
+                        "{why}: union rejoin lost record {}",
+                        e.file
+                    );
+                }
+            }
+            for s in &saved.snapshots {
+                assert!(
+                    union.snapshots.iter().any(|n| n.edit == s.edit),
+                    "{why}: union rejoin lost snapshot {}",
+                    s.name
+                );
+            }
+        }
+        // Every line's, for what a join may lose: a swap on one copy
+        // makes the original's edits a version's in the join (§724).
+        let every_jedit = all_edits(j);
+        // Snapshots: every one of either input, by name and by edit, on
+        // the line it went with, which a swap on one copy may have made
+        // a version's (§724).
+        let jsnaps: Vec<&Snapshot> = j.lines().flat_map(|l| &l.snapshots).collect();
+        for s in a.snapshots.iter().chain(b.snapshots.iter()) {
+            assert!(
+                jsnaps.iter().any(|n| n.name == s.name),
+                "{why}: snapshot {} lost by name",
+                s.name
+            );
+            assert!(
+                jsnaps.iter().any(|n| n.edit == s.edit),
+                "{why}: snapshot {} lost by edit",
+                s.name
+            );
+        }
+        // The meta is one input's or the other's, field by field.
+        assert!(
+            [a.meta.rating, b.meta.rating].contains(&j.meta.rating),
+            "{why}: rating from nowhere"
+        );
+        assert!(
+            [a.turn, b.turn].contains(&j.turn),
+            "{why}: turn from nowhere"
+        );
+        // Independent of any rule about ids: an edit of either input is
+        // gone from the join by content only when the join is at the
+        // cap.
+        let gone: Vec<f32> = edits(a)
+            .into_iter()
+            .chain(edits(b))
+            .filter(|e| !every_jedit.contains(e))
+            .map(|e| e.light.exposure)
+            .collect();
+        if !gone.is_empty() {
+            assert!(
+                any_capped(j),
+                "{why}: edits {gone:?} gone from the join below the cap"
+            );
+        }
+        // (a) and (b) read one line: each line of `a`, `b` and the join
+        // by its id, as though it were the original (§724), so a swap on
+        // either copy hides none.
+        for (x, y, z) in by_line(a, b, j) {
+            check_original(&why, &x, &y, &z);
+        }
+    }
+
     /// An older build loading a copy and saving it: ids, revisions,
     /// field times and the absorbed list gone, `records` states
     /// recorded with no ids and that build's cap, a rating changed
@@ -1938,15 +2736,18 @@ mod simulation {
         for h in o.get_mut("history").unwrap().as_array_mut().unwrap() {
             h.as_object_mut().unwrap().remove("id");
         }
-        let mut old: Sidecar = serde_json::from_value(v).unwrap();
+        let mut old: Sidecar = crate::sidecar::plain_value(v).unwrap();
         for _ in 0..records {
             let e = exposed(rng.below(10_000) as f32 / 100.0 + 200.0);
+            let shown_for = old.current_written.shown_for();
             let previous = Step {
                 edit: std::mem::replace(&mut old.current, e),
                 label: old.current_label.take(),
                 exports: std::mem::take(&mut old.current_exports),
                 id: None,
+                parent: None,
                 order: Order::BEFORE,
+                written: std::mem::replace(&mut old.current_written, Written::at(shown_for)),
             };
             old.history.push(previous);
             if old.history.len() > HISTORY {
@@ -2015,13 +2816,13 @@ mod simulation {
                 );
             }
             (5, Some(id)) => {
-                let line = s.line_mut(Some(&id)).unwrap();
+                let mut line = s.line_mut(Some(&id)).unwrap();
                 if line.history.len() > 1 && line.undo() {
                     undone.push(line.redo.last().unwrap().edit.clone());
                 }
             }
             (6, Some(id)) => {
-                let line = s.line_mut(Some(&id)).unwrap();
+                let mut line = s.line_mut(Some(&id)).unwrap();
                 let current = line.current.clone();
                 line.record_export(
                     &current,
@@ -2046,6 +2847,11 @@ mod simulation {
         }
     }
 
+    thread_local! {
+        /// The run's [`Mode::nine`], for [`sync`].
+        static NINE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    }
+
     /// One run: `places` machines and an archive, `rounds` of random
     /// work, each round each machine doing a few things and then
     /// syncing with the archive as part 2 will: a copy that is behind
@@ -2054,6 +2860,7 @@ mod simulation {
     /// and, where the cap was never reached, every edit the archive
     /// ever held is still in it unless it was undone.
     fn simulate(seed: u64, mode: Mode) {
+        NINE.set(mode.nine);
         let mut rng = Rng(seed ^ if mode.old_builds { 0xA5A5_5A5A } else { 0 });
         let places = 3 + rng.below(3) as usize;
         let rounds = 6 + rng.below(3) as usize;
@@ -2235,6 +3042,10 @@ mod simulation {
             Compared::Behind(Side::Local) => *local = archive.clone(),
             Compared::Behind(Side::Other) => *archive = local.clone(),
             Compared::SameEdit | Compared::Diverged => {
+                if NINE.get() {
+                    check_nine(seed, local, archive);
+                    check_files(seed, local, archive);
+                }
                 let mut j = join(local, archive);
                 check_join(seed, local, archive, &j);
                 commit(&mut j, t, host);
@@ -2305,13 +3116,68 @@ mod simulation {
                     heavy: seed % 2 == 0,
                     old_builds: true,
                     skew: true,
+                    nine: false,
+                },
+            );
+        }
+    }
+
+    /// Two states of one edit the newer copy capped away, each before
+    /// a different state both copies hold, an edit the newer copy no
+    /// longer holds (two copies of a version 9 frame turned apart reach
+    /// it: the same states, placed under two turns; seed 6041 found
+    /// it). One comes back, not both.
+    #[test]
+    fn a_state_capped_away_twice_comes_back_once() {
+        let mut older = Sidecar::default();
+        for stops in [1.0, 2.0, 3.0, 2.0, 4.0] {
+            older.record(exposed(stops));
+        }
+        commit(&mut older, 1, "a");
+        // The newer copy's cap took both states of 2 stops, from the
+        // middle of the run; it has gone on since.
+        let mut newer = older.clone();
+        newer.line.history.retain(|s| s.edit.light.exposure != 2.0);
+        newer.record(exposed(5.0));
+        commit(&mut newer, 3, "b");
+        // And the older copy saved again since the newer one read it.
+        older.meta.rating = 2;
+        commit(&mut older, 2, "a");
+        for (x, y) in [(&older, &newer), (&newer, &older)] {
+            let joined = join(x, y);
+            let twos = joined
+                .history
+                .iter()
+                .filter(|s| s.edit.light.exposure == 2.0)
+                .count();
+            assert_eq!(twos, 1, "one comes back");
+            assert_eq!(joined.current.light.exposure, 5.0);
+        }
+    }
+
+    /// Every join of copies a build before version 10 wrote decides by
+    /// the parents their read wrote as it did by content (§724): rule
+    /// (ii)'s capped chains and the branches a join carried over, under
+    /// the cap, with older builds and versions among them. And a copy
+    /// read at 9 and its twin written at 10 are one.
+    #[test]
+    fn version_nine_copies_join_by_parent_as_by_content() {
+        for seed in 5_000..5_008 {
+            simulate(
+                seed,
+                Mode {
+                    versions: seed % 2 == 1,
+                    heavy: seed % 4 < 2,
+                    old_builds: seed % 3 == 0,
+                    skew: true,
+                    nine: true,
                 },
             );
         }
     }
 
     /// `SIM_SEEDS=from..to` runs more by hand, `SIM_MODE` naming any of
-    /// `heavy`, `old`, `skew` and `versions`; with no mode, light and
+    /// `heavy`, `old`, `skew`, `versions` and `nine`; with no mode, light and
     /// heavy alternate by seed.
     #[test]
     #[ignore]
@@ -2321,7 +3187,54 @@ mod simulation {
         };
         let (from, to) = range.split_once("..").expect("from..to");
         let named = std::env::var("SIM_MODE").unwrap_or_default();
-        for seed in from.parse::<u64>().unwrap()..to.parse::<u64>().unwrap() {
+        let seeds = from.parse::<u64>().unwrap()..to.parse::<u64>().unwrap();
+        // `every`, or `every:from..to` of the 32 by number: each mode,
+        // four at a time, every failure said with its mode and seed.
+        if let Some(which) = named.strip_prefix("every") {
+            let (lo, hi) = which
+                .strip_prefix(':')
+                .and_then(|r| r.split_once(".."))
+                .map_or((0, 32), |(a, b)| (a.parse().unwrap(), b.parse().unwrap()));
+            let modes: Vec<Mode> = (lo..hi)
+                .map(|m| Mode {
+                    heavy: m & 1 != 0,
+                    old_builds: m & 2 != 0,
+                    skew: m & 4 != 0,
+                    versions: m & 8 != 0,
+                    nine: m & 16 != 0,
+                })
+                .collect();
+            let failed = std::sync::Mutex::new(Vec::new());
+            std::thread::scope(|scope| {
+                for chunk in modes.chunks(modes.len().div_ceil(4).max(1)) {
+                    let (failed, seeds) = (&failed, seeds.clone());
+                    scope.spawn(move || {
+                        for mode in chunk {
+                            for seed in seeds.clone() {
+                                let run = std::panic::catch_unwind(|| simulate(seed, *mode));
+                                if let Err(e) = run {
+                                    let said = e
+                                        .downcast_ref::<String>()
+                                        .cloned()
+                                        .or_else(|| e.downcast_ref::<&str>().map(|s| s.to_string()))
+                                        .unwrap_or_default();
+                                    let line = said.lines().next().unwrap_or("").to_string();
+                                    failed
+                                        .lock()
+                                        .unwrap()
+                                        .push(format!("{mode:?} {seed}: {line}"));
+                                    break;
+                                }
+                            }
+                        }
+                    });
+                }
+            });
+            let failed = failed.into_inner().unwrap();
+            assert!(failed.is_empty(), "{}", failed.join("\n"));
+            return;
+        }
+        for seed in seeds {
             let mode = if named.is_empty() {
                 Mode {
                     heavy: seed % 2 == 1,
@@ -2333,6 +3246,7 @@ mod simulation {
                     old_builds: named.contains("old"),
                     skew: named.contains("skew"),
                     versions: named.contains("versions"),
+                    nine: named.contains("nine"),
                 }
             };
             simulate(seed, mode);
@@ -2409,8 +3323,8 @@ mod tests {
         s.record(exposed(1.0));
         save(&mut s, &local, 100, "desk");
         std::fs::copy(Sidecar::path_for(&local), Sidecar::path_for(&archive)).unwrap();
-        let a = Sidecar::read(&Sidecar::path_for(&local)).unwrap();
-        let b = Sidecar::read(&Sidecar::path_for(&archive)).unwrap();
+        let a = Sidecar::read_as_file(&Sidecar::path_for(&local)).unwrap();
+        let b = Sidecar::read_as_file(&Sidecar::path_for(&archive)).unwrap();
         (a, b, local, archive)
     }
 
@@ -2426,7 +3340,7 @@ mod tests {
         assert_eq!(before.len(), 3);
         assert_eq!(before.iter().collect::<HashSet<_>>().len(), 3);
         save(&mut s, &raw, 10, "desk");
-        let back = Sidecar::load(&raw).unwrap().unwrap();
+        let back = Sidecar::load_as_file(&raw).unwrap().unwrap();
         assert_eq!(ids(&back), before);
         assert_eq!(back, s);
         // Where they sit in the file: `id` beside each state's fields.
@@ -2481,7 +3395,7 @@ mod tests {
             r#"{{"current":{{"version":4,"display_curve":"norm"}},"id":"{stored}",
                 "history":[{{"version":4,"id":"{parent}"}}]}}"#
         );
-        let mut s: Sidecar = serde_json::from_str(&json).unwrap();
+        let mut s: Sidecar = crate::sidecar::plain(&json).unwrap();
         assert!(!s.fill_ids());
         assert_eq!(s.current_id.as_deref(), Some(stored.as_str()));
         assert_eq!(s.history[0].id.as_deref(), Some(parent.as_str()));
@@ -2510,13 +3424,13 @@ mod tests {
         tree.as_object_mut().unwrap().remove("revisions");
         std::fs::write(Sidecar::path_for(&raw), tree.to_string()).unwrap();
 
-        let mut old = Sidecar::load(&raw).unwrap().unwrap();
+        let mut old = Sidecar::load_as_file(&raw).unwrap().unwrap();
         assert!(old.history.iter().all(|h| h.id.is_some()));
         assert_eq!(ids(&old), ids(&now));
         assert!(old.revisions.is_empty());
         // Kept: a save writes them, and the next read computes none.
         save(&mut old, &raw, 5, "desk");
-        let mut again = Sidecar::load(&raw).unwrap().unwrap();
+        let mut again = Sidecar::load_as_file(&raw).unwrap().unwrap();
         assert_eq!(ids(&again), ids(&now));
         assert!(!again.fill_ids());
         greycard_core::testing::remove_dir_retry(&dir);
@@ -2524,7 +3438,7 @@ mod tests {
 
     #[test]
     fn an_older_format_sidecar_loads_and_a_bad_new_field_costs_only_itself() {
-        let old: Sidecar = serde_json::from_str(
+        let old: Sidecar = crate::sidecar::plain(
             r#"{"current":{"version":4,"light":{"exposure":1.0}},"meta":{"rating":3},
                 "saved":2,"history":[{"version":4}],"snapshots":[]}"#,
         )
@@ -2537,7 +3451,7 @@ mod tests {
         // The new fields read loosely: a wrong id, a revision list
         // that is not a list, a line that is not a revision, a time
         // that is not a number.
-        let odd: Sidecar = serde_json::from_str(
+        let odd: Sidecar = crate::sidecar::plain(
             r#"{"current":{"version":4},"id":5,"revisions":"soon",
                 "meta_at":{"rating":"x","flag":7},
                 "history":[{"version":4,"id":[1]}]}"#,
@@ -2548,7 +3462,7 @@ mod tests {
         assert!(odd.revisions.is_empty());
         assert_eq!(odd.meta_at.rating.at, 0);
         assert_eq!(odd.meta_at.flag.at, 7);
-        let lines: Sidecar = serde_json::from_str(
+        let lines: Sidecar = crate::sidecar::plain(
             r#"{"current":{"version":4},
                 "revisions":[7,"zz 12","abc 12 desk","0123 soon","4567 13 two words"]}"#,
         )
@@ -2627,7 +3541,7 @@ mod tests {
         let hashes: HashSet<&str> = s.revisions.iter().map(|r| r.hash.as_str()).collect();
         assert_eq!(hashes.len(), 3);
         // The file reads back with them, as lines.
-        let mut back = Sidecar::load(&raw).unwrap().unwrap();
+        let mut back = Sidecar::load_as_file(&raw).unwrap().unwrap();
         assert_eq!(back.revisions, s.revisions);
         let json = std::fs::read_to_string(Sidecar::path_for(&raw)).unwrap();
         assert!(
@@ -2656,7 +3570,7 @@ mod tests {
         save(&mut s, &raw, 100, "desk");
         assert_eq!((s.meta_at.rating.at, s.meta_at.keywords.at), (100, 100));
         assert_eq!(s.meta_at.flag.at, 0, "never set, never stamped");
-        let mut back = Sidecar::load(&raw).unwrap().unwrap();
+        let mut back = Sidecar::load_as_file(&raw).unwrap().unwrap();
         back.meta.flag = Flag::Pick;
         back.meta.add_keyword("rocks");
         save(&mut back, &raw, 200, "desk");
@@ -2664,7 +3578,7 @@ mod tests {
         assert_eq!(back.meta_at.flag.at, 200);
         assert_eq!(back.meta_at.keywords.at, 200, "the keywords are one field");
         // Cleared is a change too.
-        let mut back = Sidecar::load(&raw).unwrap().unwrap();
+        let mut back = Sidecar::load_as_file(&raw).unwrap().unwrap();
         back.meta.rating = 0;
         save(&mut back, &raw, 300, "desk");
         assert_eq!(back.meta_at.rating.at, 300);
@@ -2783,8 +3697,8 @@ mod tests {
         // And the same file on both copies is the same.
         joined.write_to(&Sidecar::path_for(&archive)).unwrap();
         let (l, r) = (
-            Sidecar::read(&Sidecar::path_for(&local)).unwrap(),
-            Sidecar::read(&Sidecar::path_for(&archive)).unwrap(),
+            Sidecar::read_as_file(&Sidecar::path_for(&local)).unwrap(),
+            Sidecar::read_as_file(&Sidecar::path_for(&archive)).unwrap(),
         );
         assert_eq!(compare(&l, &r), Compared::Same);
         greycard_core::testing::remove_dir_retry(&dir);
@@ -2943,12 +3857,15 @@ mod tests {
         let (pa, pb) = (dir.join("a.gcd"), dir.join("b.gcd"));
         std::fs::write(&pa, strip(&a)).unwrap();
         std::fs::write(&pb, strip(&b)).unwrap();
-        let (ra, rb) = (Sidecar::read(&pa).unwrap(), Sidecar::read(&pb).unwrap());
+        let (ra, rb) = (
+            Sidecar::read_as_file(&pa).unwrap(),
+            Sidecar::read_as_file(&pb).unwrap(),
+        );
         assert!(ra.current_id.is_some() && rb.current_id.is_some());
         assert_eq!(compare(&ra, &rb), Compared::Behind(Side::Other));
         // And a sidecar not read from a file is compared the same
         // way, its ids computed for the comparison and not kept.
-        let plain: Sidecar = serde_json::from_str(&strip(&b)).unwrap();
+        let plain: Sidecar = crate::sidecar::plain(&strip(&b)).unwrap();
         assert!(plain.current_id.is_none());
         assert_eq!(compare(&plain, &ra), Compared::Behind(Side::Local));
         assert!(plain.current_id.is_none());
@@ -3037,7 +3954,7 @@ mod tests {
         old_build_rewrite(&archive, 300, |v| {
             v["meta"] = serde_json::json!({"rating": 2, "flag": "pick"});
         });
-        let b = Sidecar::read(&Sidecar::path_for(&archive)).unwrap();
+        let b = Sidecar::read_as_file(&Sidecar::path_for(&archive)).unwrap();
         assert_eq!(b.meta_at.rating.at, 300);
         assert_eq!(b.meta_at.flag.at, 300);
         assert!(b.meta_at.label.is_unset());
@@ -3050,7 +3967,7 @@ mod tests {
         // not move it.
         let mut b = b;
         save(&mut b, &archive, 900, "laptop");
-        let again = Sidecar::read(&Sidecar::path_for(&archive)).unwrap();
+        let again = Sidecar::read_as_file(&Sidecar::path_for(&archive)).unwrap();
         assert_eq!(again.meta_at.rating.at, 300);
         // And a copy from before, with an earlier file, loses.
         let (mut a, _, local, archive) = backed_up(&dir);
@@ -3059,7 +3976,7 @@ mod tests {
         old_build_rewrite(&archive, 150, |v| {
             v["meta"] = serde_json::json!({"rating": 2});
         });
-        let b = Sidecar::read(&Sidecar::path_for(&archive)).unwrap();
+        let b = Sidecar::read_as_file(&Sidecar::path_for(&archive)).unwrap();
         assert_eq!(join(&a, &b).meta.rating, 4);
         greycard_core::testing::remove_dir_retry(&dir);
     }
@@ -3184,7 +4101,7 @@ mod tests {
     }
 
     fn reread(raw: &Path) -> Sidecar {
-        Sidecar::read(&Sidecar::path_for(raw)).unwrap()
+        Sidecar::read_as_file(&Sidecar::path_for(raw)).unwrap()
     }
 
     /// A copy whose states all stand in the other's is still not
@@ -3350,6 +4267,41 @@ mod tests {
         a.turn = 3;
         save(&mut a, &archive, 400, "laptop");
         assert_eq!(join(&l, &a).turn, 3);
+        greycard_core::testing::remove_dir_retry(&dir);
+    }
+
+    /// A turn an XMP left owed (§724) goes with the XMP mark the join
+    /// keeps: the newer copy's when it has a mark, the older's when only
+    /// the older has one, never the newer's owed turn beside the older's
+    /// mark.
+    #[test]
+    fn an_owed_turn_joins_with_the_mark_it_came_with() {
+        let dir = scratch("owed");
+        let (mut l, mut a, local, archive) = backed_up(&dir);
+        let mark = crate::xmp::Adopted {
+            file: "IMG_0001.xmp".into(),
+            len: 1,
+            hash: "0".into(),
+        };
+        l.xmp = Some(mark.clone());
+        l.turn_owed = None;
+        save(&mut l, &local, 200, "desk");
+        // The newer copy's XMP gone, an owed turn left beside it.
+        a.xmp = None;
+        a.turn_owed = Some(1);
+        a.record(exposed(-1.0));
+        save(&mut a, &archive, 300, "laptop");
+        let (l, mut a) = (reread(&local), reread(&archive));
+        for joined in [join(&l, &a), join(&a, &l)] {
+            assert_eq!(joined.xmp.as_ref(), Some(&mark));
+            assert_eq!(joined.turn_owed, None, "the older mark's");
+        }
+        // The newer copy marked: its own.
+        a.xmp = Some(mark.clone());
+        a.turn_owed = Some(2);
+        save(&mut a, &archive, 400, "laptop");
+        let a = reread(&archive);
+        assert_eq!(join(&l, &a).turn_owed, Some(2));
         greycard_core::testing::remove_dir_retry(&dir);
     }
 
@@ -4450,7 +5402,7 @@ mod tests {
         s.record(named("Neon", 0.5));
         s.record(named("Neon", 1.0));
         save(&mut s, &raw, 100, "desk");
-        let plain = Sidecar::read(&Sidecar::path_for(&raw)).unwrap();
+        let plain = Sidecar::read_as_file(&Sidecar::path_for(&raw)).unwrap();
         let mut renamed = plain.clone();
         assert!(renamed.rename_look("Neon", "Glow"));
         save(&mut renamed, &raw, 200, "desk");
@@ -4523,7 +5475,7 @@ mod tests {
         s.record(named("Neon", 1.0));
         s.record(named("Mono", 2.0));
         save(&mut s, &raw, 100, "desk");
-        let plain = Sidecar::read(&Sidecar::path_for(&raw)).unwrap();
+        let plain = Sidecar::read_as_file(&Sidecar::path_for(&raw)).unwrap();
         let mut renamed = plain.clone();
         assert!(renamed.rename_look("Neon", "Glow"));
         save(&mut renamed, &raw, 200, "desk");
@@ -4571,8 +5523,8 @@ mod tests {
         a.line_mut(Some(&warm)).unwrap().record(exposed(1.5));
         save(&mut a, &local, 150, "desk");
         std::fs::copy(Sidecar::path_for(&local), Sidecar::path_for(&archive)).unwrap();
-        let a = Sidecar::read(&Sidecar::path_for(&local)).unwrap();
-        let b = Sidecar::read(&Sidecar::path_for(&archive)).unwrap();
+        let a = Sidecar::read_as_file(&Sidecar::path_for(&local)).unwrap();
+        let b = Sidecar::read_as_file(&Sidecar::path_for(&archive)).unwrap();
         assert_eq!(compare(&a, &b), Compared::Same);
         (a, b, local, archive, warm)
     }

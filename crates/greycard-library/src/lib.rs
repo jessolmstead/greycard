@@ -617,7 +617,7 @@ pub fn line_marks(
     raw: &Path,
     iso: Option<Option<u32>>,
 ) -> (bool, bool) {
-    let edited = !is_default_edit(&line.current, raw, iso) || !line.snapshots.is_empty();
+    let edited = !is_default_edit(line.current(), raw, iso) || !line.snapshots.is_empty();
     let exported = line.last_export.is_some()
         || !line.current_exports.is_empty()
         || line.history.iter().any(|s| !s.exports.is_empty());

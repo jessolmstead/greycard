@@ -296,7 +296,7 @@ mod tests {
         // What the frame on screen gets is what a target's sidecar
         // records, through the same bottom layer.
         let mut sidecars = vec![Sidecar::default()];
-        sidecars[0].current = onto.clone();
+        sidecars[0].record(onto.clone());
         let label = clip.label();
         let moved = greycard_edit::apply_preset_into(
             &mut sidecars,
@@ -306,8 +306,8 @@ mod tests {
             Some(&label),
         );
         assert_eq!(moved, vec![0]);
-        assert_eq!(sidecars[0].current, out);
-        assert_eq!(sidecars[0].current_label.as_deref(), Some(label.as_str()));
+        assert_eq!(*sidecars[0].current(), out);
+        assert_eq!(sidecars[0].current_label(), Some(label.as_str()));
         // A second paste of the same records nothing.
         assert!(
             greycard_edit::apply_preset_into(

@@ -1517,6 +1517,7 @@ fn index_paths(
                     p,
                     Some(placement),
                     greycard_edit_io::on_disk::Fresh::default(),
+                    greycard_edit_io::on_disk::frame_shape,
                 );
                 let sidecar = sidecar_of(p, true);
                 let summary = summary_of(sidecar.as_ref(), p);
@@ -2569,7 +2570,7 @@ fn line_edit(
 /// The sidecar's versions, loosely as the edit crate reads them: a
 /// `versions` that is not a list is none, and an entry with no id, or
 /// an id already read, is left out.
-fn parsed_versions(value: &serde_json::Value, sidecar: &Path) -> Vec<ParsedVersion> {
+fn parsed_versions(value: &serde_json::Value, sidecar: &Path, edits: bool) -> Vec<ParsedVersion> {
     let Some(items) = value.get("versions").and_then(|v| v.as_array()) else {
         return Vec::new();
     };
@@ -2586,7 +2587,11 @@ fn parsed_versions(value: &serde_json::Value, sidecar: &Path) -> Vec<ParsedVersi
             continue;
         }
         let line = item.get("line").unwrap_or(&serde_json::Value::Null);
-        let (current, unreadable) = line_edit(line, sidecar, &format!("version {id}'s edit"));
+        let (current, unreadable) = if edits {
+            line_edit(line, sidecar, &format!("version {id}'s edit"))
+        } else {
+            (has_edit(line), false)
+        };
         out.push(ParsedVersion {
             id: id.to_string(),
             name: item
@@ -2617,16 +2622,28 @@ fn parsed(json: Option<&[u8]>, sidecar: &Path) -> Parsed {
     let Some(json) = json else {
         return Parsed::default();
     };
-    let value: serde_json::Value = match serde_json::from_slice(json) {
-        Ok(v) => v,
+    match serde_json::from_slice(json) {
+        Ok(value) => parsed_value(&value, sidecar, true),
         Err(e) => {
             log::warn!("{}: {e}", sidecar.display());
-            return Parsed {
+            Parsed {
                 unreadable: true,
                 ..Parsed::default()
-            };
+            }
         }
-    };
+    }
+}
+
+/// A line's edit as [`parsed`] stands one in when the edits are left to
+/// the full read ([`summary_of`]): an empty one where the line has a
+/// `current`, for that read to fill in, and none where it has not.
+fn has_edit(line: &serde_json::Value) -> Option<greycard_edit::Edit> {
+    line.get("current").map(|_| greycard_edit::Edit::default())
+}
+
+/// [`parsed`] of the JSON `value`, each line's edit read with `edits`,
+/// and stood in for otherwise ([`has_edit`]).
+fn parsed_value(value: &serde_json::Value, sidecar: &Path, edits: bool) -> Parsed {
     let meta: Meta = value
         .get("meta")
         .cloned()
@@ -2646,7 +2663,11 @@ fn parsed(json: Option<&[u8]>, sidecar: &Path) -> Parsed {
             .and_then(|v| v.as_array())
             .map_or(0, Vec::len)
     };
-    let (current, unreadable) = line_edit(&value, sidecar, "the edit");
+    let (current, unreadable) = if edits {
+        line_edit(value, sidecar, "the edit")
+    } else {
+        (has_edit(value), false)
+    };
     Parsed {
         meta,
         turn: value
@@ -2657,9 +2678,9 @@ fn parsed(json: Option<&[u8]>, sidecar: &Path) -> Parsed {
         shared_mark,
         current,
         stepped: count("snapshots") > 0,
-        exported: records_export(&value),
+        exported: records_export(value),
         unreadable,
-        versions: parsed_versions(&value, sidecar),
+        versions: parsed_versions(value, sidecar, edits),
     }
 }
 
@@ -2702,19 +2723,66 @@ fn summary_of(now: Option<&SidecarNow>, raw: &Path) -> Summary {
         .clone()
         .or_else(|| now.xmp.clone())
         .unwrap_or_else(|| raw.to_path_buf());
-    let p = parsed(now.json.as_deref(), &said);
-    let default = if greycard_core::picture::is_picture_path(raw) {
-        greycard_edit::Edit::for_picture()
-    } else {
-        greycard_edit::Edit::default()
-    };
-    let mut sidecar = Sidecar {
-        line: greycard_edit::Line::of(p.current.clone().unwrap_or_else(|| default.clone())),
-        meta: p.meta,
-        turn: p.turn,
-        xmp: p.mark,
-        xmp_shared: p.shared_mark,
-        ..Sidecar::default()
+    // The edit as the editor reads it (§724): every state shown under
+    // the file's turn from the turn it was placed under, by the shape
+    // the file writes or the frame's own header, read unmapped and only
+    // for a state that waits on it. The JSON is parsed
+    // once: what the row counts is looked at in it, and the edit crate
+    // reads the same value. A file whose edit this build cannot read is
+    // read again loosely and summed up from its parts, the meta kept.
+    let full = now
+        .json
+        .as_deref()
+        .and_then(|j| serde_json::from_slice::<serde_json::Value>(j).ok())
+        .and_then(|value| {
+            let loose = parsed_value(&value, &said, false);
+            // A line nobody developed holds no state and writes none
+            // (§724): its edit is the frame's start, by what the file is,
+            // and the row says of it what it says of a frame with no
+            // sidecar. One a build before version 10 wrote untouched at
+            // that start holds none from here, its blend kept.
+            Some((
+                loose,
+                Sidecar::from_value(value, &Sidecar::start_of(raw)).ok()?,
+            ))
+        });
+    let (p, mut sidecar) = match full {
+        Some((mut p, mut read)) => {
+            read.settle_shape(|turn| {
+                disk_call();
+                greycard_edit_io::on_disk::frame_shape(raw, turn)
+            });
+            if p.current.is_some() {
+                p.current = Some(read.current().clone());
+            }
+            for v in &mut p.versions {
+                if v.current.is_some() {
+                    // A version the edit crate passed over has something
+                    // in it this build does not read.
+                    v.current = read.line(Some(&v.id)).map(|l| l.current().clone());
+                    v.unreadable |= v.current.is_none();
+                }
+            }
+            (p, read)
+        }
+        None => {
+            let p = parsed(now.json.as_deref(), &said);
+            let default = if greycard_core::picture::is_picture_path(raw) {
+                greycard_edit::Edit::for_picture()
+            } else {
+                greycard_edit::Edit::default()
+            };
+            let sidecar = Sidecar {
+                line: greycard_edit::Line::of(p.current.clone().unwrap_or(default), p.turn)
+                    .expect("a fresh edit waits on no shape"),
+                meta: p.meta.clone(),
+                turn: p.turn,
+                xmp: p.mark.clone(),
+                xmp_shared: p.shared_mark.clone(),
+                ..Sidecar::default()
+            };
+            (p, sidecar)
+        }
     };
     if now.xmp.is_some() || now.shared.is_some() {
         // The camera's tag is asked for only when the packet says
@@ -2725,24 +2793,35 @@ fn summary_of(now: Option<&SidecarNow>, raw: &Path) -> Summary {
             own: now.xmp.clone(),
             shared: now.shared.clone(),
         };
-        greycard_edit_io::xmp::adopt_beside(&found, &mut sidecar, || {
-            disk_call();
-            greycard_core::decode::orientation_path(raw)
-                .inspect_err(|e| log::warn!("{}: orientation: {e}", raw.display()))
-                .ok()
-        });
+        greycard_edit_io::xmp::adopt_beside(
+            &found,
+            &mut sidecar,
+            || {
+                disk_call();
+                greycard_core::decode::orientation_path(raw)
+                    .inspect_err(|e| log::warn!("{}: orientation: {e}", raw.display()))
+                    .ok()
+            },
+            |turn| {
+                disk_call();
+                greycard_edit_io::on_disk::frame_shape(raw, turn)
+            },
+        );
     }
     // The blend is judged at the write, where the row's ISO is.
-    let edited = p.stepped || p.unreadable || !crate::is_default_edit(&sidecar.current, raw, None);
+    let edited = p.stepped || p.unreadable || !crate::is_default_edit(sidecar.current(), raw, None);
     // The key is of any edit in the file, so a frame counted as edited
     // at the write (by its blend) has one too; a develop with no edit
     // to read gets the mark that says so.
     // Keyed with the headroom's version where the raw may decode with
     // one, and the linearization's where it may carry a table, as the
-    // engine keys what it keeps (`decode_key`).
-    let develop_key = if p.current.is_some() {
+    // engine keys what it keeps (`decode_key`). A state whose masks wait
+    // on the frame's shape is no picture to key.
+    let develop_key = if p.current.is_some()
+        && let Some(current) = sidecar.ready()
+    {
         Some(greycard_edit::key::decode_key(
-            greycard_edit_io::key::develop_key(&sidecar.current, crate::lens_database().as_deref()),
+            greycard_edit_io::key::develop_key(current, crate::lens_database().as_deref()),
             raw,
         ))
     } else if edited {
@@ -2755,7 +2834,16 @@ fn summary_of(now: Option<&SidecarNow>, raw: &Path) -> Summary {
     let versions = p
         .versions
         .into_iter()
-        .map(|v| {
+        .map(|mut v| {
+            // Each version as the editor shows it, as version 0 is.
+            // One whose masks wait on the frame's shape is no picture to
+            // key, and something is in it.
+            if v.current.is_some()
+                && let Some(line) = sidecar.line(Some(&v.id))
+            {
+                v.current = line.ready().cloned();
+                v.unreadable |= v.current.is_none();
+            }
             let edited = v.stepped
                 || v.unreadable
                 || v.current
@@ -2789,9 +2877,9 @@ fn summary_of(now: Option<&SidecarNow>, raw: &Path) -> Summary {
         })
         .collect();
     // Said of an edit read; the mark of one unread takes no frame.
-    let uncropped = p.current.is_some() && sidecar.current.geometry.crop.is_none();
+    let uncropped = p.current.is_some() && sidecar.current().geometry.crop.is_none();
     let by_ratio = matches!(
-        sidecar.current.geometry.aspect,
+        sidecar.current().geometry.aspect,
         greycard_edit::geometry::Aspect::Ratio { .. }
     );
     Summary {
@@ -2799,7 +2887,7 @@ fn summary_of(now: Option<&SidecarNow>, raw: &Path) -> Summary {
         edited,
         exported: p.exported,
         blend: p.current.as_ref().map(|c| c.noise.learned_strength),
-        turns: crate::pack_turns(sidecar.line.current.geometry.shown_turns(sidecar.turn)),
+        turns: crate::pack_turns(sidecar.line.current().geometry.shown_turns(sidecar.turn)),
         develop_key,
         uncropped,
         by_ratio,
@@ -4160,6 +4248,19 @@ pub(crate) mod tests {
              xmlns:tiff=\"http://ns.adobe.com/tiff/1.0/\" tiff:Orientation=\"6\"",
         );
         std::fs::write(greycard_edit_io::xmp::short_path(&turned), xmp).unwrap();
+        // A sidecar whose mask waits on the frame's shape (§724): the
+        // summary asks the frame's header for it, unmapped too.
+        let mut waiting = Sidecar::default();
+        let mut placed = greycard_edit::Edit::default();
+        placed
+            .retouch
+            .patches
+            .push(greycard_edit::retouch::Patch::default());
+        waiting.record(placed);
+        assert!(waiting.turn_by(1, Some(1.5)).is_some());
+        let mut file: serde_json::Value = serde_json::from_str(&waiting.to_json()).unwrap();
+        file.as_object_mut().unwrap().remove("shape");
+        std::fs::write(Sidecar::path_for(&plain), file.to_string()).unwrap();
         greycard_core::decode::watch_maps_under(&dir);
         let mut lib = Library::open_in_memory().unwrap();
         let report = lib.index_folder(&dir, &mut quiet()).unwrap();
@@ -4581,7 +4682,7 @@ pub(crate) mod tests {
         let mut brightened = Edit::default();
         brightened.light.exposure = 0.7;
         Sidecar {
-            line: greycard_edit::Line::of(brightened.clone()),
+            line: greycard_edit::Line::of(brightened.clone(), 0).unwrap(),
             ..Sidecar::default()
         }
         .save(&framed)
@@ -5031,7 +5132,7 @@ pub(crate) mod tests {
         let before = lib.by_path(&r5).unwrap().unwrap();
 
         // The R5 loses a star; the A7 gains a sidecar.
-        let mut s = Sidecar::load(&r5).unwrap().unwrap();
+        let mut s = Sidecar::load_as_file(&r5).unwrap().unwrap();
         s.meta.rating = 3;
         s.save(&r5).unwrap();
         let mut s = Sidecar::default();
@@ -5063,7 +5164,7 @@ pub(crate) mod tests {
         assert_eq!(lib.by_path(&a7).unwrap().unwrap().sidecar, None);
 
         // One file on its own, after a save: the same rules.
-        let mut s = Sidecar::load(&r5).unwrap().unwrap();
+        let mut s = Sidecar::load_as_file(&r5).unwrap().unwrap();
         s.meta.rating = 5;
         s.save(&r5).unwrap();
         let report = lib.index_file(&r5).unwrap();
@@ -5832,7 +5933,7 @@ pub(crate) mod tests {
         assert_eq!(locked, 0, "nothing asked of the disk under the lock");
         // A sidecar changed, an XMP beside another, a file new and a
         // file renamed.
-        let mut s = Sidecar::load(&r5).unwrap().unwrap();
+        let mut s = Sidecar::load_as_file(&r5).unwrap().unwrap();
         s.meta.rating = 1;
         s.save(&r5).unwrap();
         let three = Meta {
@@ -5873,7 +5974,7 @@ pub(crate) mod tests {
         let report = lib
             .index_folder(&dir, &mut |p| {
                 if p.path == last {
-                    let mut s = Sidecar::load(&r5).unwrap().unwrap();
+                    let mut s = Sidecar::load_as_file(&r5).unwrap().unwrap();
                     s.meta.rating = 5;
                     s.save(&r5).unwrap();
                     let r = other.index_file(&r5).unwrap();
@@ -5886,7 +5987,7 @@ pub(crate) mod tests {
         assert!(report.errors.is_empty(), "{:?}", report.errors);
         // The five stands, in the index and on disk.
         assert_eq!(lib.by_path(&r5).unwrap().unwrap().meta.rating, 5);
-        assert_eq!(Sidecar::load(&r5).unwrap().unwrap().meta.rating, 5);
+        assert_eq!(Sidecar::load_as_file(&r5).unwrap().unwrap().meta.rating, 5);
         assert_eq!(lib.by_path(&a7).unwrap().unwrap().meta.rating, 0);
         // The same with the file itself changed on disk between the
         // passes' snapshots, which takes the other write path.
@@ -5900,7 +6001,7 @@ pub(crate) mod tests {
         let report = lib
             .index_folder(&dir, &mut |p| {
                 if p.path == last {
-                    let mut s = Sidecar::load(&r5).unwrap().unwrap();
+                    let mut s = Sidecar::load_as_file(&r5).unwrap().unwrap();
                     s.meta.rating = 1;
                     s.save(&r5).unwrap();
                     other.index_file(&r5).unwrap();
@@ -5916,13 +6017,13 @@ pub(crate) mod tests {
         // snapshot's again, and the pass must still not write the
         // change it would have read before the lock. The index says
         // what the disk says.
-        let mut s = Sidecar::load(&r5).unwrap().unwrap();
+        let mut s = Sidecar::load_as_file(&r5).unwrap().unwrap();
         s.meta.rating = 2;
         s.save(&r5).unwrap();
         let report = lib
             .index_folder(&dir, &mut |p| {
                 if p.path == last {
-                    let mut s = Sidecar::load(&r5).unwrap().unwrap();
+                    let mut s = Sidecar::load_as_file(&r5).unwrap().unwrap();
                     s.meta.rating = 1;
                     s.save(&r5).unwrap();
                     other.index_file(&r5).unwrap();
@@ -5931,7 +6032,7 @@ pub(crate) mod tests {
             .unwrap();
         assert!(report.errors.is_empty(), "{:?}", report.errors);
         assert_eq!(lib.by_path(&r5).unwrap().unwrap().meta.rating, 1);
-        assert_eq!(Sidecar::load(&r5).unwrap().unwrap().meta.rating, 1);
+        assert_eq!(Sidecar::load_as_file(&r5).unwrap().unwrap().meta.rating, 1);
         drop(other);
         drop(lib);
         greycard_core::testing::remove_dir_retry(&dir);
@@ -7269,6 +7370,34 @@ pub(crate) mod tests {
         greycard_core::testing::remove_dir_retry(&dir);
     }
 
+    /// A row sums up a turned frame's edit as the editor reads it (§724):
+    /// a state placed under the turn before is shown under the file's, by
+    /// the shape the file writes, so the develop key is the one the
+    /// editor's read makes and not that of the state as placed.
+    #[test]
+    fn a_row_sums_up_a_turned_frame_as_the_editor_reads_it() {
+        use greycard_edit::Edit;
+        let mut s = Sidecar::default();
+        let mut e = Edit::default();
+        e.geometry.crop = Some(greycard_edit::geometry::Crop::of([0.1, 0.2, 0.3, 0.4]));
+        s.record(e);
+        assert!(s.turn_by(1, Some(1.5)).is_some());
+        let json = s.to_json();
+        let raw = Path::new("frame.cr3");
+        let summary = summary_from_json(json.as_bytes(), Path::new("frame.cr3.gcd"), Some(raw));
+        let key = |e: &Edit| {
+            greycard_edit::key::decode_key(
+                greycard_edit_io::key::develop_key(e, crate::lens_database().as_deref()),
+                raw,
+            )
+        };
+        let editor = Sidecar::from_json(&json, &greycard_edit::Edit::default()).unwrap();
+        assert_eq!(summary.develop_key, Some(key(editor.current())));
+        let mut placed = editor.current_written().into_owned();
+        placed.placed_under = 0;
+        assert_ne!(summary.develop_key, Some(key(&placed)));
+    }
+
     /// A row says whether its sidecar holds a develop, and which way
     /// up the picture is shown, beside the meta: what a browser needs
     /// to list a frame, badge it and turn its thumbnail without
@@ -7286,7 +7415,7 @@ pub(crate) mod tests {
             write_frame(p, &R5, i as u16 + 1);
         }
         let fresh = || Sidecar {
-            line: greycard_edit::Line::of(Edit::for_picture()),
+            line: greycard_edit::Line::of(Edit::for_picture(), 0).unwrap(),
             ..Sidecar::default()
         };
         // Rated only: the picture's own default edit, three stars.
@@ -7306,8 +7435,8 @@ pub(crate) mod tests {
         e.geometry.turns = 1;
         e.geometry.flip = true;
         let shown = e.geometry.shown_turns(1);
-        s.record(e);
         s.turn = 1;
+        s.record(e);
         s.save(&turned).unwrap();
 
         let mut lib = Library::open_in_memory().unwrap();
@@ -7352,8 +7481,8 @@ pub(crate) mod tests {
 
         // The rated frame gets a develop: the next pass reads its
         // sidecar again and the row says so.
-        let mut s = Sidecar::load(&rated).unwrap().unwrap();
-        let mut e = s.current.clone();
+        let mut s = Sidecar::load_as_file(&rated).unwrap().unwrap();
+        let mut e = s.current().clone();
         e.light.exposure = -0.3;
         s.record(e);
         s.save(&rated).unwrap();
@@ -7384,7 +7513,7 @@ pub(crate) mod tests {
         let old = Edit::picture_defaults()[1].clone();
         assert!(old.lens.distortion && old.lens.vignetting && old.lens.chromatic_aberration);
         let mut s = Sidecar {
-            line: greycard_edit::Line::of(old.clone()),
+            line: greycard_edit::Line::of(old.clone(), 0).unwrap(),
             ..Sidecar::default()
         };
         s.meta.rating = 2;
@@ -7392,7 +7521,7 @@ pub(crate) mod tests {
         let mut moved = old.clone();
         moved.light.exposure = 0.4;
         let mut s = Sidecar {
-            line: greycard_edit::Line::of(moved),
+            line: greycard_edit::Line::of(moved, 0).unwrap(),
             ..Sidecar::default()
         };
         s.save(&edited).unwrap();
@@ -7403,9 +7532,9 @@ pub(crate) mod tests {
         assert_eq!((r.meta.rating, r.edited), (2, false));
         assert!(lib.by_path(&edited).unwrap().unwrap().edited);
         // The rule in memory, which the strip's mark follows.
-        let back = Sidecar::load(&rated).unwrap().unwrap();
+        let back = Sidecar::load_as_file(&rated).unwrap().unwrap();
         assert_eq!(crate::develop_marks(&back, &rated, None), (false, false));
-        let back = Sidecar::load(&edited).unwrap().unwrap();
+        let back = Sidecar::load_as_file(&edited).unwrap().unwrap();
         assert_eq!(crate::develop_marks(&back, &edited, None), (true, false));
         // A raw holding a picture's old default is edited: the rule is
         // a picture's.
@@ -7431,7 +7560,7 @@ pub(crate) mod tests {
             write_frame(&path(n), &R5, i as u16 + 1);
         }
         let fresh = || Sidecar {
-            line: greycard_edit::Line::of(Edit::for_picture()),
+            line: greycard_edit::Line::of(Edit::for_picture(), 0).unwrap(),
             ..Sidecar::default()
         };
         let moved = |x: f32| {
@@ -7481,10 +7610,20 @@ pub(crate) mod tests {
         // The blend the ISO seeds, as an open or an export leaves it,
         // and the same frame with the blend moved.
         let mut s = fresh();
-        s.current.noise.learned_strength = greycard_edit::Noise::blend_for_iso(Some(R5.iso.into()));
+        {
+            let mut e = s.current().clone();
+            {
+                e.noise.learned_strength = greycard_edit::Noise::blend_for_iso(Some(R5.iso.into()))
+            }
+            s.record(e);
+        }
         s.save(&path("seeded")).unwrap();
         let mut s = fresh();
-        s.current.noise.learned_strength = 0.8;
+        {
+            let mut e = s.current().clone();
+            e.noise.learned_strength = 0.8;
+            s.record(e);
+        }
         s.save(&path("blended")).unwrap();
         // A sidecar from before `last_export`: its history says.
         let mut s = fresh();
@@ -7521,7 +7660,7 @@ pub(crate) mod tests {
         // The same rule on the sidecar in memory.
         let iso = Some(Some(u32::from(R5.iso)));
         for n in names {
-            let s = Sidecar::load(&path(n)).unwrap().unwrap();
+            let s = Sidecar::load_as_file(&path(n)).unwrap().unwrap();
             assert_eq!(crate::develop_marks(&s, &path(n), iso), said(n), "{n}");
         }
         greycard_core::testing::remove_dir_retry(&dir);
@@ -7536,14 +7675,14 @@ pub(crate) mod tests {
         use greycard_edit::Edit;
         let held = lens_name_held();
         let dir = scratch("schema8");
-        // The frames are pictures: the second's sidecar carries a raw's
-        // default edit, which on a picture is an edit, so two rows are
-        // edited and the third, with no sidecar, is not.
+        // The frames are pictures: the first is edited; the second's
+        // sidecar holds a rating and no state (§724), so it is no more
+        // edited than the third, with no sidecar.
         let (edited, _rated, plain) = shoot(&dir);
         let mut brightened = Edit::for_picture();
         brightened.light.exposure = 0.7;
         let mut s = Sidecar {
-            line: greycard_edit::Line::of(brightened.clone()),
+            line: greycard_edit::Line::of(brightened.clone(), 0).unwrap(),
             ..Sidecar::default()
         };
         s.save(&edited).unwrap();
@@ -7578,11 +7717,10 @@ pub(crate) mod tests {
             None,
             "the column comes back empty"
         );
+        // Both sidecars are read again with the schema's step; the
+        // edited row alone gets a key.
         let report = lib.index_folder(&dir, &mut quiet()).unwrap();
-        assert_eq!(
-            report.meta_refreshed, 2,
-            "the edited rows alone: {report:?}"
-        );
+        assert_eq!(report.meta_refreshed, 2, "{report:?}");
         assert_eq!(
             key_of(&mut lib, &edited),
             Some(greycard_edit_io::key::develop_key(&brightened, None) as i64)
@@ -7594,9 +7732,9 @@ pub(crate) mod tests {
         // after fills them under its name.
         drop(held);
         let named = LensNamed::new("elsewhere 2026");
-        assert_eq!(lib.clear_develop_keys().unwrap(), 2);
+        assert_eq!(lib.clear_develop_keys().unwrap(), 1);
         let report = lib.index_folder(&dir, &mut quiet()).unwrap();
-        assert_eq!(report.meta_refreshed, 2, "{report:?}");
+        assert_eq!(report.meta_refreshed, 1, "{report:?}");
         assert_eq!(
             key_of(&mut lib, &edited),
             Some(greycard_edit_io::key::develop_key(&brightened, Some("elsewhere 2026")) as i64)
@@ -7629,12 +7767,14 @@ pub(crate) mod tests {
         let mut brightened = greycard_edit::Edit::for_picture();
         brightened.light.exposure = 0.7;
         let mut s = Sidecar {
-            line: greycard_edit::Line::of(brightened.clone()),
+            line: greycard_edit::Line::of(brightened.clone(), 0).unwrap(),
             ..Sidecar::default()
         };
         s.meta.rating = 3;
         let warm = s.new_version(None, Some("Warm")).unwrap();
-        let fresh = s.new_version_from_original(greycard_edit::Edit::for_picture(), None);
+        let fresh = s
+            .new_version_from_original(greycard_edit::Edit::for_picture(), None)
+            .unwrap();
         s.save(path).unwrap();
         (s, warm, fresh, brightened)
     }
@@ -7668,7 +7808,10 @@ pub(crate) mod tests {
             rows[0].develop_key,
             Some(greycard_edit_io::key::develop_key(&brightened, None))
         );
-        assert!(rows[1].develop_key.is_some(), "an edit to key");
+        assert_eq!(
+            rows[1].develop_key, None,
+            "nobody developed it: no state to key (§724)"
+        );
         assert!(rows[0].made > 0);
         let entry = lib.by_path(&r5).unwrap().unwrap();
         assert!(
@@ -7769,7 +7912,7 @@ pub(crate) mod tests {
         let mut brightened = Edit::for_picture();
         brightened.light.exposure = 0.7;
         Sidecar {
-            line: greycard_edit::Line::of(brightened),
+            line: greycard_edit::Line::of(brightened, 0).unwrap(),
             ..Sidecar::default()
         }
         .save(&edited)
@@ -7812,12 +7955,12 @@ pub(crate) mod tests {
         ] {
             assert_eq!(
                 lib.settle_develop_keys_under(under).unwrap(),
-                Some(2),
-                "{why}: both edited rows' keys go"
+                Some(1),
+                "{why}: the edited row's key goes"
             );
             assert_eq!(key_of(&mut lib), None, "{why}");
             let report = lib.index_folder(&dir, &mut quiet()).unwrap();
-            assert_eq!(report.meta_refreshed, 2, "{why}: {report:?}");
+            assert_eq!(report.meta_refreshed, 1, "{why}: {report:?}");
             assert!(key_of(&mut lib).is_some(), "{why}: made anew");
         }
         drop(lib);
@@ -7841,14 +7984,14 @@ pub(crate) mod tests {
         let mut moved = base(&exported);
         moved.light.exposure = 0.5;
         let mut s = Sidecar {
-            line: greycard_edit::Line::of(base(&exported)),
+            line: greycard_edit::Line::of(base(&exported), 0).unwrap(),
             ..Sidecar::default()
         };
         s.record(moved.clone());
         assert!(s.record_export(&moved, Exported::default()));
         s.save(&exported).unwrap();
         let mut s = Sidecar {
-            line: greycard_edit::Line::of(base(&reset)),
+            line: greycard_edit::Line::of(base(&reset), 0).unwrap(),
             ..Sidecar::default()
         };
         s.record(moved);
@@ -7886,10 +8029,14 @@ pub(crate) mod tests {
     #[test]
     fn a_cr3_rows_key_takes_the_headroom_in() {
         let mut sidecar = greycard_edit::Sidecar::default();
-        sidecar.line.current.light.exposure = 0.5;
+        {
+            let mut e = sidecar.current().clone();
+            e.light.exposure = 0.5;
+            sidecar.record(e);
+        }
         let json = serde_json::to_vec(&sidecar).unwrap();
         let own = greycard_edit_io::key::develop_key(
-            &sidecar.line.current,
+            sidecar.line.current(),
             crate::lens_database().as_deref(),
         );
         let nef = summary_from_json(&json, Path::new("x.gcd"), Some(Path::new("x.nef")));
@@ -7907,10 +8054,14 @@ pub(crate) mod tests {
     #[test]
     fn a_dng_rows_key_takes_the_linearization_in() {
         let mut sidecar = greycard_edit::Sidecar::default();
-        sidecar.line.current.light.exposure = 0.5;
+        {
+            let mut e = sidecar.current().clone();
+            e.light.exposure = 0.5;
+            sidecar.record(e);
+        }
         let json = serde_json::to_vec(&sidecar).unwrap();
         let own = greycard_edit_io::key::develop_key(
-            &sidecar.line.current,
+            sidecar.line.current(),
             crate::lens_database().as_deref(),
         );
         let row = |raw: &str| summary_from_json(&json, Path::new("x.gcd"), Some(Path::new(raw)));
@@ -8016,9 +8167,9 @@ pub(crate) mod tests {
         );
         assert_eq!(report.added + report.changed, 0);
         let e = lib.by_path(&r5).unwrap().unwrap();
-        // The shoot's sidecars carry a raw's default edit on a picture,
-        // which is a develop of a picture.
-        assert_eq!((e.meta.rating, e.edited), (4, true));
+        // The shoot's sidecars hold a rating and no state (§724): no
+        // develop.
+        assert_eq!((e.meta.rating, e.edited), (4, false));
         let report = lib.index_folder(&shoot_dir, &mut quiet()).unwrap();
         assert_eq!(report.meta_refreshed, 0, "{report:?}");
         drop(lib);
@@ -8068,7 +8219,11 @@ pub(crate) mod tests {
         assert!(s.record(edit));
         s.save(&ours).unwrap();
 
-        let steps = |p: &Path| Sidecar::load(p).unwrap().map(|s| s.line.history.len());
+        let steps = |p: &Path| {
+            Sidecar::load_as_file(p)
+                .unwrap()
+                .map(|s| s.line.history.len())
+        };
         // A library not told where sidecars go takes nothing, and does
         // not count the XMPs looked at: told, its next pass takes.
         let mut lib = Library::open_in_memory().unwrap();
@@ -8093,15 +8248,12 @@ pub(crate) mod tests {
             assert_eq!(e.meta.keywords, ["Places/Skye"]);
             assert!(e.sidecar.is_some(), "the .gcd the pass wrote");
             assert_eq!(steps(&taken), Some(1));
-            let s = Sidecar::load(&taken).unwrap().unwrap();
+            let s = Sidecar::load_as_file(&taken).unwrap().unwrap();
+            assert_eq!(s.line.current_label(), Some("Imported from Lightroom"));
+            assert!((s.line.current().light.exposure - 1.0).abs() < 1e-6);
+            let s = Sidecar::load_as_file(&ours).unwrap().unwrap();
             assert_eq!(
-                s.line.current_label.as_deref(),
-                Some("Imported from Lightroom")
-            );
-            assert!((s.line.current.light.exposure - 1.0).abs() < 1e-6);
-            let s = Sidecar::load(&ours).unwrap().unwrap();
-            assert_eq!(
-                (s.line.history.len(), s.line.current.light.exposure),
+                (s.line.history.len(), s.line.current().light.exposure),
                 (1, -0.5)
             );
             assert_eq!(steps(&bare), None, "nothing beside it, nothing written");

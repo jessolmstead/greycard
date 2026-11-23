@@ -107,6 +107,10 @@ struct Merge {
     /// Each frame's edit as the window holds it, where the window has
     /// read its sidecar; none for one read from disk on the thread.
     edits: Vec<Option<Edit>>,
+    /// Each frame the window holds whose masks wait on a shape nothing
+    /// can measure (§724): its edit goes into no new file, so a merge
+    /// whose file would start from it is refused.
+    waiting: Vec<bool>,
     /// The sources as a stack keeps them, when they are of one folder.
     stack: Option<Vec<Reference>>,
     placement: Placement,
@@ -132,18 +136,38 @@ struct Remerge {
 
 /// The edit of a frame the window has not read, from its sidecar on
 /// disk, or, with sidecars off or none there, the new edit the
-/// window's setting starts it at.
-fn edit_on_disk(path: &Path, write_sidecars: bool, fresh: Fresh) -> Edit {
-    if write_sidecars {
-        greycard_edit_io::on_disk::read_sidecar_fresh(path, fresh)
-            .0
-            .line
-            .current
+/// window's setting starts it at. On the merge's thread, so what waits
+/// on the frame's shape asks its header (§724); an error for one whose
+/// masks wait still: a merge would write them into the new file's edit
+/// unturned.
+fn edit_on_disk(path: &Path, write_sidecars: bool, fresh: Fresh) -> anyhow::Result<Edit> {
+    let sidecar = if write_sidecars {
+        greycard_edit_io::on_disk::read_sidecar_fresh(
+            path,
+            fresh,
+            greycard_edit_io::on_disk::frame_shape,
+        )
+        .0
     } else {
         greycard_edit_io::on_disk::fresh_sidecar(path, fresh)
-            .line
-            .current
+    };
+    match sidecar.ready() {
+        Some(edit) => Ok(edit.clone()),
+        None => Err(waits_on_shape(path)),
     }
+}
+
+/// Why a merge whose file would start from the frame at `path` was
+/// refused: its masks wait on a shape nothing can measure (§724).
+fn waits_on_shape(path: &Path) -> anyhow::Error {
+    tracing::warn!(
+        "{}: nothing can measure the frame, so it was not merged",
+        path.display()
+    );
+    anyhow::anyhow!(
+        "{}: its masks cannot be placed until its raw is reachable",
+        path.display()
+    )
 }
 
 /// What a merge made.
@@ -197,14 +221,29 @@ pub(crate) fn ask(st: &mut State, app: &App, worker: &Worker, kind: Kind) {
     // A frame whose sidecar the window has read is taken as the window
     // holds it (the one open, and every edit of a session that writes
     // no sidecars); the rest are read from disk on the merge's thread.
+    // Each is measured first, as a turn does, so what waited on its
+    // shape is shown by it (§724); one that still waits gives no edit,
+    // and the merge refuses it only if its edit is the one the new file
+    // starts from, which the thread finds.
+    for &c in &cells {
+        if crate::rows::file_is_loaded(st, st.file_of(c)) {
+            crate::panel::browser::migrate_frame(st, c);
+        }
+    }
+    crate::panel::browser::panel_settled(st, app);
+    fn held(st: &State, c: usize) -> Option<&greycard_edit::Sidecar> {
+        let f = st.file_of(c);
+        crate::rows::file_is_loaded(st, f)
+            .then(|| st.sidecars.get(f))
+            .flatten()
+    }
     let edits: Vec<Option<Edit>> = cells
         .iter()
-        .map(|&c| {
-            let f = st.file_of(c);
-            crate::rows::file_is_loaded(st, f)
-                .then(|| st.sidecars.get(f).map(|s| s.current.clone()))
-                .flatten()
-        })
+        .map(|&c| held(st, c).and_then(|s| s.ready().cloned()))
+        .collect();
+    let waiting: Vec<bool> = cells
+        .iter()
+        .map(|&c| held(st, c).is_some_and(|s| s.current_waits()))
         .collect();
     // A stack is one folder's, and a collection's list makes none.
     let folders: std::collections::HashSet<Option<PathBuf>> = cells
@@ -233,6 +272,7 @@ pub(crate) fn ask(st: &mut State, app: &App, worker: &Worker, kind: Kind) {
         kind,
         files,
         edits,
+        waiting,
         stack,
         placement: st.window.placement,
         write_sidecars: st.window.write_sidecars,
@@ -270,7 +310,10 @@ pub(crate) fn ask_again(st: &mut State, app: &App, worker: &Worker) {
         .file_by_path(&reference)
         .filter(|&f| crate::rows::file_is_loaded(st, f))
         .and_then(|f| st.sidecars.get(f))
-        .map(|s| Box::new(s.current.clone()));
+        // One whose masks wait on its shape (§724) is read on the
+        // thread, which refuses it.
+        .and_then(|s| s.ready().cloned())
+        .map(Box::new);
     let tier = Learned::from_name(&app.get_merge_again_tier())
         .and_then(Learned::tier)
         .map(str::to_string);
@@ -356,10 +399,10 @@ impl Merge {
     fn run(self, said: &dyn Fn(String)) -> Done {
         let frames = self.files.len();
         let made = (|| -> anyhow::Result<Made> {
-            let edit_of = |k: usize| {
-                self.edits[k].clone().unwrap_or_else(|| {
-                    edit_on_disk(&self.files[k], self.write_sidecars, self.fresh)
-                })
+            let edit_of = |k: usize| match self.edits[k].clone() {
+                Some(edit) => Ok(edit),
+                None if self.waiting[k] => Err(waits_on_shape(&self.files[k])),
+                None => edit_on_disk(&self.files[k], self.write_sidecars, self.fresh),
             };
             let progress = |step: Step| said(step_line(step));
             let (out, headroom_stops, seconds, warnings, merged_edit, learned_skipped) =
@@ -385,13 +428,13 @@ impl Merge {
                             0.0,
                             r.seconds,
                             left_out,
-                            focus::edit_for_stack(&edit_of(r.stack.reference)),
+                            focus::edit_for_stack(&edit_of(r.stack.reference)?),
                             // A stack asks for no learned tier.
                             None,
                         )
                     }
                     Kind::Hdr => {
-                        let edit = &edit_of(merge::reference_of(&self.files, None)?);
+                        let edit = &edit_of(merge::reference_of(&self.files, None)?)?;
                         let r = merge::hdr(
                             &self.files,
                             edit,
@@ -410,7 +453,7 @@ impl Merge {
                     }
                     Kind::Pano => {
                         let reference = pano::reference_of(self.files.len(), None)?;
-                        let edit = &edit_of(reference);
+                        let edit = &edit_of(reference)?;
                         // Each run is written under the name held and the
                         // one kept renamed onto it, so a second run that
                         // fails leaves the first to keep.
@@ -460,7 +503,7 @@ impl Merge {
                         let (r, look) = if first.reference == reference {
                             (first, edit.clone())
                         } else {
-                            let other = edit_of(first.reference);
+                            let other = edit_of(first.reference)?;
                             if pano::walks_alike(edit, &other) {
                                 (first, other)
                             } else {
@@ -505,7 +548,8 @@ impl Merge {
             );
             let kept = if self.write_sidecars {
                 let mut sidecar = Sidecar {
-                    line: Line::of(merged_edit),
+                    line: Line::of(merged_edit, 0)
+                        .expect("a merge's edit is made, never a waiting copy"),
                     ..Sidecar::default()
                 };
                 match sidecar.save_in(&out, self.placement) {
@@ -516,7 +560,7 @@ impl Merge {
                     // window's to say.
                     Err(e) => {
                         tracing::warn!("merge: {}: the edit not written: {e}", out.display());
-                        Some(sidecar.line.current.clone())
+                        Some(sidecar.line.current().clone())
                     }
                 }
             } else {
@@ -548,7 +592,7 @@ impl Remerge {
         let made = (|| -> anyhow::Result<Made> {
             let edit = match &self.edit {
                 Some(edit) => (**edit).clone(),
-                None => edit_on_disk(&self.reference, true, self.fresh),
+                None => edit_on_disk(&self.reference, true, self.fresh)?,
             };
             let overrides = merge::Overrides {
                 denoise: Some(self.tier.clone()),
@@ -850,10 +894,16 @@ pub(crate) fn held(st: &mut State) {
         .keys()
         .filter_map(|p| Some((p.clone(), st.file_by_path(p)?)))
         .filter(|(_, f)| st.from_row.get(*f).is_none_or(|r| r.read))
+        // One a newer build has written since is read-only (§724).
+        .filter(|(_, f)| !st.sidecars[*f].read_only())
         .collect();
     for (path, f) in listed {
         if let Some(edit) = st.work.merge_edits.remove(&path) {
-            st.sidecars[f].line = Line::of(edit);
+            // The merge's edit as the frame stands, as the line it
+            // replaces was.
+            let turn = st.sidecars[f].turn;
+            st.sidecars[f].line =
+                Line::of(edit, turn).expect("a merge's edit is made, never a waiting copy");
             // Held because the merge's own save failed: saved again
             // here, and said if it fails again. In a session that
             // writes no sidecars this writes nothing.

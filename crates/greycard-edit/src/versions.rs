@@ -14,7 +14,7 @@ use std::hash::{BuildHasher, Hasher};
 
 use serde::{Deserialize, Serialize};
 
-use crate::{Edit, Line, Sidecar, history, meta};
+use crate::{Edit, Line, Sidecar, Written, history, meta, sync};
 
 /// A version of the frame beside the file's own: a line of development
 /// under a name.
@@ -24,7 +24,9 @@ use crate::{Edit, Line, Sidecar, history, meta};
 /// `exported`, `last_export`, `id`, `history`, `snapshots`), nested
 /// under `line` because its `id` is the current state's and the
 /// version's own id is the version's.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+// Read only as a sidecar's ([`VersionIn`]): no `Deserialize`, as a line
+// has none (§724).
+#[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct Version {
     /// Sixteen hex digits, random, made when the version is: not the
     /// hash of anything, since a name changes, the edit changes, and
@@ -39,8 +41,32 @@ pub struct Version {
     /// list is kept in after a join.
     #[serde(default, deserialize_with = "meta::loose")]
     pub made: u64,
+    /// When it was last renamed, seconds since the Unix epoch, none (0)
+    /// while it has the name it was made with: of two copies' names, a
+    /// join keeps the later (§724).
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub named: u64,
     /// Its line: the edit, the history, the snapshots, the exports.
     pub line: Line,
+}
+
+fn is_zero(n: &u64) -> bool {
+    *n == 0
+}
+
+/// A version as [`loose`] reads it: [`Version`], its line read as a
+/// sidecar's ([`crate::line::read_line`]).
+#[derive(Deserialize)]
+struct VersionIn {
+    id: String,
+    #[serde(default, deserialize_with = "meta::loose")]
+    name: String,
+    #[serde(default, deserialize_with = "meta::loose")]
+    made: u64,
+    #[serde(default, deserialize_with = "meta::loose")]
+    named: u64,
+    #[serde(deserialize_with = "crate::line::read_line")]
+    line: Line,
 }
 
 /// The versions under a key. A key that is not a list reads as none,
@@ -74,16 +100,33 @@ pub(crate) fn loose<'de, D: serde::Deserializer<'de>>(
             log::warn!("sidecar: a second version with the id {id} is left out");
             continue;
         }
-        let version = serde_json::from_value::<Version>(item)
+        let VersionIn {
+            id: read,
+            name,
+            made,
+            named,
+            line,
+        } = VersionIn::deserialize(item)
             .map_err(|e| serde::de::Error::custom(format!("version {id}: {e}")))?;
-        versions.push(version);
+        versions.push(Version {
+            id: read,
+            name,
+            made,
+            named,
+            line,
+        });
     }
     Ok(versions)
 }
 /// Sixteen hex digits at random: a hash keyed by the standard
 /// library's per-process random keys, over a count and the clock, so
 /// two made in one process, or on two machines in one second, differ.
-fn random_id() -> String {
+pub(crate) fn random_id() -> String {
+    #[cfg(test)]
+    if let Some(n) = crate::testing::IDS.get() {
+        crate::testing::IDS.set(Some(n + 1));
+        return format!("{:016x}", n.wrapping_mul(0x9e37_79b9_7f4a_7c15));
+    }
     static MADE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
     let mut hasher = std::collections::hash_map::RandomState::new().build_hasher();
     hasher.write_u64(MADE.fetch_add(1, std::sync::atomic::Ordering::Relaxed));
@@ -98,11 +141,56 @@ fn random_id() -> String {
 }
 
 /// Now, seconds since the Unix epoch.
-fn now() -> u64 {
+pub(crate) fn now() -> u64 {
+    #[cfg(test)]
+    if let Some(at) = crate::testing::CLOCK.get() {
+        return at;
+    }
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs())
         .unwrap_or(0)
+}
+
+/// A line of a sidecar, to change ([`Sidecar::line_mut`]): what it records
+/// is placed under the sidecar's turn as it stands at the call, never a
+/// turn the line kept from before it was put on the sidecar (§724).
+pub struct LineMut<'a> {
+    line: &'a mut Line,
+    turn: u8,
+}
+
+impl<'a> LineMut<'a> {
+    /// [`Line::record`] under the sidecar's turn.
+    pub fn record(&mut self, edit: Edit) -> bool {
+        self.line.record(edit, self.turn)
+    }
+
+    /// [`Line::record_as`] under the sidecar's turn.
+    pub fn record_as(&mut self, edit: Edit, label: Option<String>) -> bool {
+        self.line.record_as(edit, label, self.turn)
+    }
+
+    /// The line, for as long as the sidecar is borrowed: for a change to
+    /// something of it that is no state (a snapshot's name). What it
+    /// records takes the turn by hand ([`Line::record`]).
+    pub fn into_line(self) -> &'a mut Line {
+        self.line
+    }
+}
+
+impl std::ops::Deref for LineMut<'_> {
+    type Target = Line;
+
+    fn deref(&self) -> &Line {
+        self.line
+    }
+}
+
+impl std::ops::DerefMut for LineMut<'_> {
+    fn deref_mut(&mut self) -> &mut Line {
+        self.line
+    }
 }
 
 impl Sidecar {
@@ -126,12 +214,17 @@ impl Sidecar {
         }
     }
 
-    /// [`fn@Self::line`], to change.
-    pub fn line_mut(&mut self, v: Option<&str>) -> Option<&mut Line> {
-        match v {
-            None => Some(&mut self.line),
-            Some(id) => self.version_mut(id).map(|v| &mut v.line),
-        }
+    /// [`fn@Self::line`], to change: shown under the sidecar's turn
+    /// first ([`Self::show_if_stale`]), and recording under it
+    /// ([`LineMut::record`]).
+    pub fn line_mut(&mut self, v: Option<&str>) -> Option<LineMut<'_>> {
+        self.show_if_stale();
+        let turn = self.turn;
+        let line = match v {
+            None => &mut self.line,
+            Some(id) => &mut self.version_mut(id)?.line,
+        };
+        Some(LineMut { line, turn })
     }
 
     /// A new version copying the current edit of version `from` (`None`
@@ -142,27 +235,72 @@ impl Sidecar {
     /// "Version N" when that is blank or none ([`Self::next_version_name`]).
     /// Its id, or none when `from` names a version the sidecar does
     /// not have.
+    ///
+    /// The state is copied as the file holds it, placed under the turn
+    /// it was placed under (§724), with its shown copy: a copy places
+    /// nothing again, so one that waits on the frame's shape waits in
+    /// the new version too, and shows right once the shape is known.
     pub fn new_version(&mut self, from: Option<&str>, name: Option<&str>) -> Option<String> {
-        let (edit, source) = match from {
-            None => (self.line.current.clone(), None),
+        self.show_if_stale();
+        let (line, source) = match from {
+            None => (&self.line, None),
             Some(id) => {
                 let v = self.version(id)?;
-                (v.line.current.clone(), Some(v.name.clone()))
+                (&v.line, Some(v.name.clone()))
             }
         };
+        let (edit, written) = (line.current.clone(), line.current_written.clone());
         let label = history::version_from_label(source.as_deref());
-        Some(self.push_version(edit, label, name))
+        // Made from a line nobody developed: one too (§724), its start
+        // with the seed it took, if it took one. The sources chosen for
+        // its patches go with it, so it shows them once read again.
+        let (recorded, seeded) = (line.recorded, line.seeded);
+        let sources = line.sources.clone();
+        Some(self.push_version(edit, written, label, name, (recorded, seeded), sources))
     }
 
     /// A new version starting from `default_edit`, the edit a frame
     /// nobody has touched gets ([`Edit::for_picture`] for a picture
     /// file, the default with the raw's blend otherwise), labeled "From
     /// the defaults". Named as [`Self::new_version`] names; its id.
-    pub fn new_version_from_original(&mut self, default_edit: Edit, name: Option<&str>) -> String {
-        self.push_version(default_edit, history::version_from_defaults_label(), name)
+    /// `default_edit` is as shown under the sidecar's turn, and placed
+    /// under it. None for a copy marked as waiting on the frame's shape
+    /// ([`Edit::unturned`]): it would place its masks a quarter turn off
+    /// (§724).
+    pub fn new_version_from_original(
+        &mut self,
+        default_edit: Edit,
+        name: Option<&str>,
+    ) -> Option<String> {
+        if default_edit.unturned {
+            log::warn!("a version is not made from a state whose masks wait on the frame's shape");
+            return None;
+        }
+        self.show_if_stale();
+        let mut edit = default_edit;
+        edit.placed_under = 0;
+        let written = Written::at(self.turn % 4);
+        // Nobody developed it (§724): no state until something needs
+        // one, the start seeded on its own as the original's is.
+        Some(self.push_version(
+            edit,
+            written,
+            history::version_from_defaults_label(),
+            name,
+            (false, false),
+            Default::default(),
+        ))
     }
 
-    fn push_version(&mut self, edit: Edit, label: String, name: Option<&str>) -> String {
+    fn push_version(
+        &mut self,
+        mut edit: Edit,
+        written: Written,
+        label: String,
+        name: Option<&str>,
+        (recorded, seeded): (bool, bool),
+        sources: crate::line::Sources,
+    ) -> String {
         let id = loop {
             let id = random_id();
             if self.version(&id).is_none() {
@@ -173,16 +311,38 @@ impl Sidecar {
             Some(name) => name.to_string(),
             None => self.next_version_name(),
         };
-        let mut line = Line {
-            current: edit,
-            current_label: Some(label),
-            ..Line::default()
+        // A new version's first state is one the user makes: this
+        // build's process, whatever the state it copies was made under.
+        edit.process = crate::process_now();
+        // A new state: its id made from it as written, as a recorded
+        // state's is. A line nobody developed has none, and no label.
+        let line = if recorded {
+            let made = sync::state_id(sync::ZERO_ID, &written.edit(&edit), Some(&label));
+            Line {
+                current: edit,
+                current_written: written,
+                current_label: Some(label),
+                current_id: Some(made),
+                line_id: id.clone(),
+                head_at: Some(crate::line::HeadAt::now()),
+                recorded: true,
+                sources,
+                ..Line::default()
+            }
+        } else {
+            Line {
+                current: edit,
+                current_written: written,
+                seeded,
+                sources,
+                ..Line::default()
+            }
         };
-        line.fill_ids();
         self.versions.push(Version {
             id: id.clone(),
             name,
             made: now(),
+            named: 0,
             line,
         });
         id
@@ -210,6 +370,7 @@ impl Sidecar {
         match self.version_mut(id) {
             Some(v) if !name.is_empty() && v.name != name => {
                 v.name = name.to_string();
+                v.named = now().max(v.made).max(v.named + 1);
                 true
             }
             _ => false,
@@ -221,10 +382,16 @@ impl Sidecar {
     /// export and what was undone. The version keeps its id and its
     /// name, and nothing else in the file moves. False when there is
     /// no such version.
+    ///
+    /// Each line keeps its id ([`Line::line_id`]), so the swap moves no
+    /// line's identity: it changes which line is the original, at a
+    /// time ([`Self::original_at`]) a join compares (§724).
     pub fn swap_with_original(&mut self, id: &str) -> bool {
+        self.fill_line_ids();
         match self.versions.iter_mut().find(|v| v.id == id) {
             Some(v) => {
                 std::mem::swap(&mut self.line, &mut v.line);
+                self.original_at = now().max(self.original_at + 1);
                 true
             }
             None => false,
@@ -234,11 +401,21 @@ impl Sidecar {
     /// Take version `id` out of the list; the version taken, or none
     /// when there is no such version. Not a state to undo: the editor
     /// asks first and saves.
+    ///
+    /// The delete leaves a tombstone ([`Sidecar::removed`]), carried
+    /// through a join; one that keeps the version, because the other
+    /// copy edited it (§243), drops it.
     pub fn delete_version(&mut self, id: &str) -> Option<Version> {
         let at = self.versions.iter().position(|v| v.id == id)?;
-        Some(self.versions.remove(at))
+        let gone = self.versions.remove(at);
+        self.removed.insert(gone.id.clone(), now());
+        crate::line::cap_tombstones(&mut self.removed);
+        Some(gone)
     }
 }
+
+#[cfg(test)]
+mod join_matrix_tests;
 
 #[cfg(test)]
 mod tests {
@@ -254,6 +431,58 @@ mod tests {
 
     fn is_id(id: &str) -> bool {
         id.len() == 16 && id.chars().all(|c| c.is_ascii_hexdigit())
+    }
+
+    /// A delete leaves a tombstone, and a rename its time (§724): both
+    /// written and read back, and a join carries every tombstone of
+    /// either copy, at the later time.
+    #[test]
+    fn a_delete_s_tombstone_and_a_rename_s_time_are_written_and_joined() {
+        let mut a = developed();
+        let id = a.new_version(None, Some("Warm")).unwrap();
+        let kept = a.new_version(None, Some("Kept")).unwrap();
+        let b = a.clone();
+        assert!(a.rename_version(&kept, "Cool"));
+        let named = a.version(&kept).unwrap().named;
+        assert!(named > 0);
+        assert!(a.delete_version(&id).is_some());
+        let at = a.removed[&id];
+        let a = Sidecar::from_json(&a.to_json(), &Edit::default()).unwrap();
+        assert_eq!(a.removed.get(&id), Some(&at), "written and read back");
+        assert_eq!(a.version(&kept).unwrap().named, named);
+        for joined in [sync::join(&a, &b), sync::join(&b, &a)] {
+            // Kept by the join (§243), its tombstone dropped; or gone,
+            // and its tombstone kept: never both.
+            assert_ne!(
+                joined.version(&id).is_some(),
+                joined.removed.get(&id) == Some(&at)
+            );
+        }
+        // Edited on the other copy: kept, and no tombstone for it.
+        let mut b = b;
+        b.line_mut(Some(&id)).unwrap().record(exposed(9.0));
+        for joined in [sync::join(&a, &b), sync::join(&b, &a)] {
+            assert!(joined.version(&id).is_some());
+            assert!(!joined.removed.contains_key(&id));
+        }
+        // A snapshot removed here and kept there: kept, no tombstone.
+        let mut here = developed();
+        let there = here.clone();
+        let gone = here.remove_snapshot(0).unwrap();
+        assert!(here.snapshots_removed.contains_key(&gone.id));
+        for joined in [sync::join(&here, &there), sync::join(&there, &here)] {
+            assert!(joined.snapshots.iter().any(|s| s.id == gone.id));
+            assert!(!joined.snapshots_removed.contains_key(&gone.id));
+        }
+        // The maps are capped, the oldest going first.
+        let mut s = developed();
+        for n in 0..(crate::line::TOMBSTONES as u64 + 10) {
+            s.removed.insert(format!("{n:016x}"), n);
+        }
+        let id = s.new_version(None, None).unwrap();
+        s.delete_version(&id);
+        assert_eq!(s.removed.len(), crate::line::TOMBSTONES);
+        assert!(s.removed.contains_key(&id) && !s.removed.contains_key(&format!("{:016x}", 0)));
     }
 
     /// A frame with a history, a snapshot and an export on its own line.
@@ -274,8 +503,12 @@ mod tests {
     }
 
     /// Written and read back as the editor reads it, short of the file.
+    /// `s` through its file, a picture's: a line nobody developed has
+    /// a picture's start.
     fn reread(s: &Sidecar) -> Sidecar {
-        Sidecar::from_json(&s.to_json()).unwrap()
+        let mut back = Sidecar::from_json(&s.to_json(), &crate::Edit::default()).unwrap();
+        back.set_start(&Edit::for_picture());
+        back
     }
 
     /// The highlight fill rides with the whole edit wherever one is
@@ -347,13 +580,16 @@ mod tests {
     #[test]
     fn a_new_version_from_the_original_starts_from_the_edit_it_is_given() {
         let mut s = developed();
-        let id = s.new_version_from_original(Edit::for_picture(), Some("Fresh"));
+        let id = s
+            .new_version_from_original(Edit::for_picture(), Some("Fresh"))
+            .unwrap();
         let v = s.version(&id).unwrap();
         assert_eq!(v.name, "Fresh");
         assert_eq!(v.line.current, Edit::for_picture());
-        assert_eq!(v.line.current_label.as_deref(), Some("From the defaults"));
+        // Nobody developed it (§724): no state, no id, until a step.
+        assert!(!v.line.recorded());
         assert!(v.line.history.is_empty() && v.line.snapshots.is_empty());
-        assert!(v.line.current_id.is_some());
+        assert!(v.line.current_id.is_none());
     }
 
     #[test]
@@ -379,6 +615,89 @@ mod tests {
         assert!(!s.rename_version(&id, "   "));
         assert!(!s.rename_version("ffffffffffffffff", "Cool"));
         assert_eq!(s.version(&id).unwrap().name, "Warm");
+    }
+
+    /// `json` as a build at schema 9 wrote it: no floors, no line ids,
+    /// no swap time, every state at 9.
+    fn at_nine(json: &str) -> String {
+        fn walk(v: &mut serde_json::Value) {
+            match v {
+                serde_json::Value::Object(o) => {
+                    for k in [
+                        "floors",
+                        "line_id",
+                        "original_at",
+                        "placed_under",
+                        "process",
+                    ] {
+                        o.remove(k);
+                    }
+                    if o.get("version") == Some(&serde_json::json!(VERSION)) {
+                        o.insert("version".into(), serde_json::json!(9));
+                    }
+                    o.values_mut().for_each(walk);
+                }
+                serde_json::Value::Array(a) => a.iter_mut().for_each(walk),
+                _ => {}
+            }
+        }
+        let mut v: serde_json::Value = serde_json::from_str(json).unwrap();
+        walk(&mut v);
+        v.to_string()
+    }
+
+    /// A swap on one copy (§724): the join's original is the one the
+    /// copy that swapped later names, and each line is joined with the
+    /// line of its id on the other copy, whichever way round the join
+    /// goes. So too for a schema 9 file two copies migrated apart, one
+    /// of them swapping: both derive each line's id alike (the
+    /// original's from its root state, a version's from its id).
+    #[test]
+    fn a_swap_on_one_copy_joins_each_line_with_its_own() {
+        for nine in [false, true] {
+            let mut base = developed();
+            let id = base.new_version(None, Some("Warm")).unwrap();
+            base.line_mut(Some(&id)).unwrap().record(exposed(3.0));
+            base.fill_ids();
+            let text = if nine {
+                at_nine(&base.to_json())
+            } else {
+                base.to_json()
+            };
+            let read = || Sidecar::from_json(&text, &Edit::default()).unwrap();
+            let (mut here, mut there) = (read(), read());
+            assert!(here.swap_with_original(&id));
+            assert!(here.original_at > 0);
+            // Here: Warm is the original, the old original a version.
+            here.record(exposed(5.0));
+            here.line_mut(Some(&id)).unwrap().record(exposed(6.0));
+            // There, unswapped.
+            there.record(exposed(7.0));
+            there.line_mut(Some(&id)).unwrap().record(exposed(8.0));
+            let has = |l: &Line, x: f32| {
+                l.history
+                    .iter()
+                    .map(|h| &h.edit)
+                    .chain([&l.current])
+                    .any(|e| e.light.exposure == x)
+            };
+            for j in [sync::join(&here, &there), sync::join(&there, &here)] {
+                let v = &j.version(&id).unwrap().line;
+                // Warm's line, made from the original at 1.0: 3, 5 and 8.
+                for x in [3.0, 5.0, 8.0] {
+                    assert!(has(&j.line, x), "nine {nine}: the original lost {x}");
+                    assert!(!has(v, x), "nine {nine}: {x} in the version");
+                }
+                for x in [0.5, 1.0, 6.0, 7.0] {
+                    assert!(has(v, x), "nine {nine}: the version lost {x}");
+                }
+                for x in [0.5, 6.0, 7.0] {
+                    assert!(!has(&j.line, x), "nine {nine}: {x} in the original");
+                }
+                assert_eq!(j.original_at, here.original_at);
+                assert_ne!(j.line.line_id, v.line_id);
+            }
+        }
     }
 
     #[test]
@@ -427,7 +746,7 @@ mod tests {
         assert_eq!(s.line(None).unwrap().current, exposed(1.0));
         assert!(s.line(Some("ffffffffffffffff")).is_none());
         assert!(s.line_mut(Some("ffffffffffffffff")).is_none());
-        let line = s.line_mut(Some(&id)).unwrap();
+        let mut line = s.line_mut(Some(&id)).unwrap();
         assert!(line.record(exposed(2.0)));
         assert!(line.record_as(exposed(2.5), Some("Preset: Night".into())));
         line.take_snapshot("Night", 1_700_000_200);
@@ -452,7 +771,7 @@ mod tests {
         // Version 0 saw none of it.
         assert_eq!(s.line, developed().line);
         // Each line's history has its own cap.
-        let line = s.line_mut(Some(&id)).unwrap();
+        let mut line = s.line_mut(Some(&id)).unwrap();
         for i in 0..HISTORY + 10 {
             line.record(exposed(10.0 + i as f32));
         }
@@ -476,7 +795,7 @@ mod tests {
         let back = reread(&s);
         assert_eq!(back, s);
         // Read by serde alone too, not through the migration.
-        let plain: Sidecar = serde_json::from_str(&json).unwrap();
+        let plain: Sidecar = crate::sidecar::plain(&json).unwrap();
         assert_eq!(plain, s);
         assert_eq!(plain.to_json(), json);
         // The version's line keeps its keys, nested under `line`.
@@ -488,9 +807,13 @@ mod tests {
             assert!(v["line"].get(key).is_some(), "{key}");
         }
         assert_eq!(v["line"]["history"][0]["step"], "From the original");
-        // With the last version deleted it writes what it wrote before.
+        // With the last version deleted it writes what it wrote before,
+        // and the delete's tombstone (§724).
         s.delete_version(&id).unwrap();
-        assert_eq!(s.to_json(), developed().to_json());
+        let mut before = developed();
+        before.removed = s.removed.clone();
+        assert!(before.removed.contains_key(&id));
+        assert_eq!(s.to_json(), before.to_json());
     }
 
     #[test]
@@ -522,7 +845,7 @@ mod tests {
         };
         waiting.geometry.aspect = crate::geometry::Aspect::Original;
         let mut s = Sidecar {
-            line: Line::of(waiting),
+            line: Line::of(waiting, 0).unwrap(),
             ..Sidecar::default()
         };
         s.record(exposed(1.0));
@@ -552,7 +875,7 @@ mod tests {
         s.new_version(None, Some("Warm")).unwrap();
         let mut future: serde_json::Value = serde_json::from_str(&s.to_json()).unwrap();
         future["versions"][0]["line"]["current"]["version"] = (VERSION + 1).into();
-        let err = Sidecar::from_json(&future.to_string()).unwrap_err();
+        let err = Sidecar::from_json(&future.to_string(), &crate::Edit::default()).unwrap_err();
         assert!(matches!(err, Error::Newer(v) if v == VERSION + 1));
         assert_eq!(
             err.to_string(),
@@ -572,15 +895,15 @@ mod tests {
         s.new_version(None, None).unwrap();
         s.save(&raw).unwrap();
         let path = Sidecar::path_for(&raw);
-        let back = Sidecar::read(&path).unwrap();
+        let back = Sidecar::read_as_file(&path).unwrap();
         assert_eq!(back.versions, s.versions);
         let mut value: serde_json::Value =
             serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
         value["versions"][0]["line"]["history"] = serde_json::json!([{ "version": VERSION + 1 }]);
         std::fs::write(&path, value.to_string()).unwrap();
         let newer = |r: crate::Result<_>| matches!(r, Err(Error::Newer(v)) if v == VERSION + 1);
-        assert!(newer(Sidecar::read(&path).map(|_| ())));
-        assert!(newer(Sidecar::load(&raw).map(|_| ())));
+        assert!(newer(Sidecar::read_as_file(&path).map(|_| ())));
+        assert!(newer(Sidecar::load_as_file(&raw).map(|_| ())));
         greycard_core::testing::remove_dir_retry(&dir);
     }
 
@@ -602,7 +925,7 @@ mod tests {
         odd["name"] = 7.into();
         odd["made"] = "yesterday".into();
         list.push(odd);
-        let back = Sidecar::from_json(&value.to_string()).unwrap();
+        let back = Sidecar::from_json(&value.to_string(), &crate::Edit::default()).unwrap();
         let ids: Vec<&str> = back.versions.iter().map(|v| v.id.as_str()).collect();
         assert_eq!(ids, [good.as_str(), "3333333333333333"]);
         assert_eq!(back.versions[1].name, "");
@@ -614,7 +937,7 @@ mod tests {
         let refused = |broken: serde_json::Value| {
             let mut v = value.clone();
             v["versions"].as_array_mut().unwrap().push(broken);
-            Sidecar::from_json(&v.to_string()).unwrap_err()
+            Sidecar::from_json(&v.to_string(), &crate::Edit::default()).unwrap_err()
         };
         let mut bad_step = copy.clone();
         bad_step["id"] = "1111111111111111".into();
@@ -626,21 +949,21 @@ mod tests {
         // As in version 0.
         let mut zero = value.clone();
         zero["history"][0]["light"] = serde_json::json!({ "exposure": "x" });
-        assert!(Sidecar::from_json(&zero.to_string()).is_err());
+        assert!(Sidecar::from_json(&zero.to_string(), &crate::Edit::default()).is_err());
 
         // A list that is not a list is none, and the rest reads.
         value["versions"] = serde_json::json!({ "id": good });
-        let back = Sidecar::from_json(&value.to_string()).unwrap();
+        let back = Sidecar::from_json(&value.to_string(), &crate::Edit::default()).unwrap();
         assert!(back.versions.is_empty());
         assert_eq!(back.line, s.line);
         // So is a null.
         value["versions"] = serde_json::Value::Null;
-        let back: Sidecar = serde_json::from_str(&value.to_string()).unwrap();
+        let back: Sidecar = crate::sidecar::plain(&value.to_string()).unwrap();
         assert!(back.versions.is_empty());
         // No versions and no line's keys at all: the defaults.
-        let empty: Sidecar = serde_json::from_str("{}").unwrap();
+        let empty: Sidecar = crate::sidecar::plain("{}").unwrap();
         assert_eq!(empty, Sidecar::default());
-        let bare: Sidecar = serde_json::from_str(r#"{"meta": {"rating": 2}}"#).unwrap();
+        let bare: Sidecar = crate::sidecar::plain(r#"{"meta": {"rating": 2}}"#).unwrap();
         assert_eq!(bare.line, Line::default());
         assert_eq!(bare.meta.rating, 2);
     }
@@ -674,7 +997,7 @@ mod tests {
 
         let mut turned = s.version(&id).unwrap().line.current.clone();
         turned.turn(1, None);
-        s.turn_by(1, None);
+        s.turn_by(1, Some(1.5));
         assert_eq!(s.turn, 1);
         assert_eq!(s.version(&id).unwrap().line.current, turned);
         assert_eq!(s.current, turned);
@@ -686,7 +1009,7 @@ mod tests {
         waiting.geometry.aspect = crate::geometry::Aspect::Original;
         s.line_mut(Some(&id)).unwrap().record(waiting);
         assert!(s.needs_frame());
-        s.migrate_with_frame(false);
+        s.frame_known(1.5);
         assert!(!s.needs_frame());
     }
 
@@ -725,7 +1048,8 @@ mod tests {
                         assert_eq!(s.version(&id).unwrap().line.current, source.current);
                     }
                     1 => {
-                        s.new_version_from_original(Edit::for_picture(), Some("Fresh"));
+                        s.new_version_from_original(Edit::for_picture(), Some("Fresh"))
+                            .unwrap();
                     }
                     2 => {
                         if let Some(id) = pick(&mut rng) {
@@ -763,13 +1087,9 @@ mod tests {
                         .iter()
                         .all(|v| is_id(&v.id) && seen.insert(&v.id))
                 );
-                // The redo stack is not written; take it off to compare.
-                let mut written = s.clone();
-                for line in written.lines_mut() {
-                    line.redo.clear();
-                }
+                // The redo stack is written as undone (§724).
                 let back = reread(&s);
-                assert_eq!(back, written, "seed {seed} step {step}");
+                assert_eq!(back, s, "seed {seed} step {step}");
             }
         }
     }

@@ -203,7 +203,7 @@ fn a_number_typed_into_a_slider_sets_it_as_a_drag_would() {
     settle();
     assert_eq!(states(), before + 1, "one history step");
     assert_eq!(
-        state.borrow().sidecars[0].current.look().light.exposure,
+        state.borrow().sidecars[0].current().look().light.exposure,
         0.5
     );
     // The window's keys work again: Tab puts the panels away and
@@ -621,7 +621,7 @@ fn midtones_sits_between_highlights_and_shadows_and_is_one_step() {
     assert_eq!(mid.1, high.1, "read as its neighbor is at zero");
 
     let states = || state.borrow().sidecars[0].states();
-    let current = || state.borrow().sidecars[0].current.clone();
+    let current = || state.borrow().sidecars[0].current().clone();
     let before = states();
     let was = current();
     focus_slider(&app, MIDTONES);
@@ -1002,7 +1002,7 @@ fn a_nudge_is_one_history_step() {
     settle();
     assert_eq!(states(), before + 1, "one step");
     assert!(near(
-        state.borrow().sidecars[0].current.look().light.exposure,
+        state.borrow().sidecars[0].current().look().light.exposure,
         0.1
     ));
     testing::press(&app, Key::UpArrow);
@@ -1011,7 +1011,7 @@ fn a_nudge_is_one_history_step() {
     settle();
     assert_eq!(states(), before + 2, "three in a run, one step");
     assert!(near(
-        state.borrow().sidecars[0].current.look().light.exposure,
+        state.borrow().sidecars[0].current().look().light.exposure,
         0.4
     ));
 }

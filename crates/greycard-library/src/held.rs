@@ -6,7 +6,7 @@
 use std::path::Path;
 
 use greycard_edit::Sidecar;
-use greycard_edit_io::on_disk::{Fresh, Trouble, load_sidecar_said};
+use greycard_edit_io::on_disk::{FrameShape, Fresh, Trouble, load_sidecar_said};
 
 use crate::RowMeta;
 
@@ -116,6 +116,7 @@ pub fn versions_of_row(
             id: v.id.clone(),
             name: v.name.clone(),
             made: v.made.max(0) as u64,
+            named: 0,
             line: default(),
         })
         .collect()
@@ -179,8 +180,15 @@ pub fn from_row(path: &Path, row: &RowMeta, write_sidecars: bool, fresh: Fresh) 
 /// with `sidecars` where the editor's setting puts a sidecar (none with
 /// sidecars off, when nothing is read): a Lightroom develop beside a
 /// raw with no edit of ours is taken and written there. `fresh` is
-/// what a raw with no sidecar starts with.
-pub fn from_disk(path: &Path, sidecars: Option<greycard_edit::Placement>, fresh: Fresh) -> Held {
+/// what a raw with no sidecar starts with; `shape` says the frame's
+/// shape where a state waits on it (`on_disk::frame_shape` off the
+/// window's thread).
+pub fn from_disk(
+    path: &Path,
+    sidecars: Option<greycard_edit::Placement>,
+    fresh: Fresh,
+    shape: FrameShape,
+) -> Held {
     let Some(placement) = sidecars else {
         return from_nothing(path, fresh);
     };
@@ -189,7 +197,7 @@ pub fn from_disk(path: &Path, sidecars: Option<greycard_edit::Placement>, fresh:
         .lock()
         .unwrap_or_else(|e| e.into_inner())
         .push(path.to_path_buf());
-    let (sidecar, trouble) = load_sidecar_said(path, Some(placement), fresh);
+    let (sidecar, trouble) = load_sidecar_said(path, Some(placement), fresh, shape);
     Held {
         sidecar,
         from_row: FromRow::read(),

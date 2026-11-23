@@ -51,6 +51,7 @@ mod loader;
 mod migration;
 mod sections;
 mod sidecar;
+mod sparse;
 #[cfg(test)]
 mod testing;
 
@@ -70,7 +71,7 @@ pub use mixer::Mixer;
 pub use output_sharpen::OutputSharpen;
 pub use preset::{Preset, Section};
 pub use tint::Tint;
-pub use versions::Version;
+pub use versions::{LineMut, Version};
 pub use vignette::Vignette;
 pub use white::{LocalWhite, WhiteShift};
 
@@ -78,7 +79,9 @@ pub use edit::{Adjustment, DetailWants, Edit, Look, MAX_MASKS, overlay_changes};
 pub use frames::{
     apply_preset_into, apply_preset_to_line, meta_into, sync_into, sync_learned, turn_into,
 };
-pub use line::{Exported, HISTORY, Line, Order, Row, Snapshot, Step};
+pub use line::{
+    Exported, HISTORY, HeadAt, Line, Measured, Order, Row, Snapshot, Step, TOMBSTONES, Written,
+};
 pub use loader::{Loader, NoStores};
 pub use migration::migrate;
 pub use sections::{
@@ -86,15 +89,36 @@ pub use sections::{
     Tone, WhiteBalance,
 };
 pub use sidecar::{
-    Asides, Bytes, Checked, FileStat, NotSaved, OnDisk, Placement, SIDECAR_FOLDER, Saved, Settled,
-    Sidecar, Staged, aside_at, asides_among, asides_of, replace_synced, sync_is_unsupported,
-    write_synced,
+    Asides, Bytes, Checked, CopyIs, FileStat, Floors, NotSaved, OnDisk, Placement, SIDECAR_FOLDER,
+    Saved, Settled, Sidecar, Staged, aside_at, asides_among, asides_of, replace_synced,
+    sync_is_unsupported, write_synced,
 };
 #[cfg(feature = "testing")]
 pub use sidecar::{changed_reads, synced_writes};
 
 /// The schema version this build writes.
-pub const VERSION: u32 = 9;
+pub const VERSION: u32 = 10;
+
+/// The rendering this build makes of a state: what a state the user
+/// makes is stamped with ([`Edit::process`]). Before 1.0 it only
+/// records; nothing renders by it, and no old rendering is kept. A
+/// state read keeps its own, a later build's too, and renders as this
+/// build renders.
+///
+/// Not in the pictures' key while one process exists: raising it must
+/// re-key them (`key::DEVELOP_RECIPE`, and `key::PROCESS_KEYED` with
+/// it, which a test holds to this).
+pub const PROCESS: u32 = 1;
+
+/// The process a state the user makes now takes: [`PROCESS`], or in a
+/// test the one it sets for its thread.
+pub(crate) fn process_now() -> u32 {
+    #[cfg(test)]
+    if let Some(p) = testing::PROCESS.get() {
+        return p;
+    }
+    PROCESS
+}
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
@@ -110,6 +134,16 @@ pub enum Error {
     Xmp(String),
     #[error("pp3: {0}")]
     Pp3(String),
+    /// A sidecar with states it could not read is never written: the
+    /// write would hide their loss (§724).
+    #[error("sidecar: {0} of its states could not be read, so it is not written")]
+    Unread(usize),
+    /// A sidecar a newer build made, whose write floor is past this
+    /// build's schema, is read and never written (§724). The plain line
+    /// a command says for a frame it holds: "read-only: made with a
+    /// newer greycard", the window's words lower-cased.
+    #[error("read-only: made with a newer greycard (it asks for schema {0} to write it)")]
+    ReadOnly(u32),
 }
 
 pub type Result<T> = std::result::Result<T, Error>;

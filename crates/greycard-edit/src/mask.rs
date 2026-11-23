@@ -57,6 +57,17 @@ impl Turned {
         self.quarters == 0
     }
 
+    /// The turn that takes this one back, on the picture it leaves: a
+    /// quarter turn leaves the height as the width.
+    pub fn back(self) -> Self {
+        let aspect = if self.quarters % 2 == 1 {
+            1.0 / self.aspect
+        } else {
+            self.aspect
+        };
+        Self::new(-i32::from(self.quarters), aspect)
+    }
+
     /// What a length in these units is multiplied by: the old
     /// picture's width over the new one's.
     pub fn scale(self) -> f32 {
@@ -698,6 +709,7 @@ impl Mode {
 #[serde(default)]
 pub struct Component {
     pub shape: Shape,
+    #[serde(deserialize_with = "crate::meta::newer_loose")]
     pub mode: Mode,
     pub invert: bool,
     /// Off, the shape is not there at all: not "subtract nothing"

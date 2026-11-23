@@ -31,6 +31,37 @@ fn turn_words(quarters: i32) -> &'static str {
     }
 }
 
+/// How a reader of a sidecar says its frame's shape when a state waits
+/// on it (§724): the frame's path and the frame's turn in, the developed
+/// picture's width over its height out, none when it cannot say now.
+/// The edit crate reads no file; the reader holding the frame does,
+/// with [`frame_shape`] off the window's thread, or the window's mapped
+/// header read, or says nothing (`|_, _| None`).
+pub type FrameShape = fn(&Path, u8) -> Option<f32>;
+
+/// The shape of the frame at `frame` under the frame's turn `turn`, as
+/// its file's header says it (no pixel decoded): width over height, the
+/// camera's tag and the turn applied. None when the file will not say.
+/// Never through a memory map: this is reached from a folder's open,
+/// the library's pass, the headless export, and the command line, over
+/// volumes that can go away under a mapping. A raw is read from its ends
+/// where its format allows and whole otherwise, so never on the
+/// window's thread.
+pub fn frame_shape(frame: &Path, turn: u8) -> Option<f32> {
+    #[cfg(test)]
+    HEADERS_READ.with(|n| n.set(n.get() + 1));
+    let (w, h) = greycard_core::decode::stance_path_unmapped(frame)
+        .ok()?
+        .shown_size(turn % 4)?;
+    (w > 0 && h > 0).then(|| w as f32 / h as f32)
+}
+
+#[cfg(test)]
+thread_local! {
+    /// How many times this thread asked a frame's header for its shape.
+    pub(crate) static HEADERS_READ: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
 /// What went wrong reading a sidecar from disk, the default edit
 /// standing in for it.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -55,14 +86,15 @@ pub enum Trouble {
 /// sidecar written there ([`crate::lightroom::beside`]).
 ///
 /// `fresh` is what a raw with no sidecar starts from, by the editor's
-/// settings.
+/// settings; `shape` says the frame's shape when a state waits on it.
 pub fn load_sidecar_said(
     f: &Path,
     sidecars: Option<Placement>,
     fresh: Fresh,
+    shape: FrameShape,
 ) -> (Sidecar, Option<Trouble>) {
     match sidecars {
-        Some(placement) => load(f, Some(placement), fresh, true),
+        Some(placement) => load(f, Some(placement), fresh, true, shape),
         None => (fresh_sidecar(f, fresh), None),
     }
 }
@@ -97,10 +129,7 @@ pub fn fresh_sidecar(f: &Path, fresh: Fresh) -> Sidecar {
     // and remembering one prints it.
     static STARTS: std::sync::OnceLock<[Sidecar; 3]> = std::sync::OnceLock::new();
     let starts = STARTS.get_or_init(|| {
-        let of = |edit| Sidecar {
-            line: Line::of(edit),
-            ..Sidecar::default()
-        };
+        let of = |edit: Edit| Sidecar::starting_at(&edit);
         [
             of(Edit::for_picture()),
             Sidecar::default(),
@@ -124,16 +153,19 @@ pub fn fresh_sidecar(f: &Path, fresh: Fresh) -> Sidecar {
 /// [`load_sidecar_said`] for a reader that does not know where
 /// sidecars go (the reduced develop, the masks): the sidecar as it is,
 /// nothing taken and nothing written, a raw with none at the default.
-/// Each of those readers gives up on a sidecar that is not there.
+/// Each of those readers gives up on a sidecar that is not there. Off
+/// the window's thread: what waits on the frame's shape asks the
+/// frame's header ([`frame_shape`]).
 pub fn read_sidecar_said(f: &Path) -> (Sidecar, Option<Trouble>) {
-    load(f, None, Fresh::default(), true)
+    load(f, None, Fresh::default(), true, frame_shape)
 }
 
 /// [`read_sidecar_said`] with a raw with no sidecar starting as
-/// `fresh` says: for a reader that holds the editor's settings (a
-/// merge's frame the window has not read).
-pub fn read_sidecar_fresh(f: &Path, fresh: Fresh) -> (Sidecar, Option<Trouble>) {
-    load(f, None, fresh, true)
+/// `fresh` says, and the frame's shape said by `shape`: for a reader
+/// that holds the editor's settings (a merge's frame the window has not
+/// read).
+pub fn read_sidecar_fresh(f: &Path, fresh: Fresh, shape: FrameShape) -> (Sidecar, Option<Trouble>) {
+    load(f, None, fresh, true, shape)
 }
 
 /// [`read_sidecar_said`] for a reader that only looks ahead (the
@@ -143,28 +175,42 @@ pub fn read_sidecar_fresh(f: &Path, fresh: Fresh) -> (Sidecar, Option<Trouble>) 
 /// the reader says none of what it says for an open. The window's own
 /// read says it when the frame is opened.
 pub fn peek_sidecar(f: &Path) -> (Sidecar, Option<Trouble>) {
-    load(f, None, Fresh::default(), false)
+    load(f, None, Fresh::default(), false, frame_shape)
 }
 
 /// The sidecar read, and with `takes` a Lightroom develop beside it
 /// taken and written there. `say` is whether what the read found (a
 /// sidecar that will not read, shapes this build does not know, a turn
 /// taken from an XMP, an orientation that could not be read) is said in
-/// the log ([`said`]).
-fn load(f: &Path, takes: Option<Placement>, fresh: Fresh, say: bool) -> (Sidecar, Option<Trouble>) {
+/// the log ([`said`]). `shape` says the frame's shape where a state, or a
+/// turn the XMP asks for, waits on it.
+fn load(
+    f: &Path,
+    takes: Option<Placement>,
+    fresh: Fresh,
+    say: bool,
+    shape: FrameShape,
+) -> (Sidecar, Option<Trouble>) {
     let mut trouble = None;
     // A picture that is not a raw starts from its own default.
     let fresh = || fresh_sidecar(f, fresh);
-    let mut sidecar = match Sidecar::load(f) {
+    // A line nobody developed holds no state (§724): its start is the
+    // frame's, by the settings.
+    let mut sidecar = match Sidecar::load(f, fresh().line.current()) {
         Ok(Some(s)) => {
             // A shape from a later build: loaded as nothing, the
             // rest of the edit kept. One of a kind this build has
             // not heard of is gone on the next save; a known kind
             // with a route or a group it has not (a Part, a
             // Landscape) is written back as it came.
-            let unknown: usize = s.current.adjustments.iter().map(|a| a.mask.unknown()).sum();
+            let unknown: usize = s
+                .current()
+                .adjustments
+                .iter()
+                .map(|a| a.mask.unknown())
+                .sum();
             let dropped: usize = s
-                .current
+                .current()
                 .adjustments
                 .iter()
                 .flat_map(|a| &a.mask.components)
@@ -204,6 +250,9 @@ fn load(f: &Path, takes: Option<Placement>, fresh: Fresh, say: bool) -> (Sidecar
             fresh()
         }
     };
+    // What waits on the frame's shape, shown by what the reader says
+    // of it (§724), before the XMP's turn is made over it.
+    sidecar.settle_shape(|turn| shape(f, turn));
     // What an XMP beside the frame has to say, when it has
     // changed since the sidecar last took its word. Reading
     // one is not behind the setting: writing an XMP is a
@@ -232,6 +281,7 @@ fn load(f: &Path, takes: Option<Placement>, fresh: Fresh, say: bool) -> (Sidecar
                 })
                 .ok()
         },
+        |turn| shape(f, turn),
         say,
     );
     // A turn taken from somebody else's file turns the
@@ -252,19 +302,23 @@ fn load(f: &Path, takes: Option<Placement>, fresh: Fresh, say: bool) -> (Sidecar
                 turn_words(i32::from(sidecar.turn))
             ),
         );
-        if took.left_placed {
-            said(
-                say,
-                module_path!(),
-                log::Level::Warn,
-                format!(
-                    "{}: its masks and repair patches stay where they are on the \
-                     screen, since nothing is decoded at a folder's opening to \
-                     measure the frame by",
-                    file_name(f)
-                ),
-            );
-        }
+    }
+    // A state placed under another turn than the file's, with
+    // something placed on the picture, is shown by the shape the file
+    // writes beside its turn, or failing that by what `shape` says
+    // (§724). One that still waits has a frame nothing here measured,
+    // and is read-only until something does.
+    if sidecar.current_waits() {
+        said(
+            say,
+            module_path!(),
+            log::Level::Warn,
+            format!(
+                "{}: nothing can measure the frame, so its masks and repair patches \
+                 wait where they were placed, and no step is recorded on it",
+                file_name(f)
+            ),
+        );
     }
     // A Lightroom develop in the XMP beside a raw with no edit of ours,
     // taken as a catalog's is and written, so every reader after this
@@ -331,31 +385,25 @@ pub fn never_developed(sidecar: &Sidecar) -> bool {
 /// lens section off is how a fresh edit starts with lens corrections
 /// off for new edits.
 pub fn line_never_developed(line: &Line) -> bool {
-    Edit::raw_defaults().contains(&line.current)
-        && line.history.is_empty()
-        && line.snapshots.is_empty()
+    // No state recorded (§724), and its start not seeded yet.
+    !line.recorded() && Edit::raw_defaults().contains(line.current())
 }
 
-/// A sidecar from an older build brought up to date from the shape of
-/// `frame` as its file says it stands, its turn applied: what the
-/// window does with the frame it opens (`panel::browser::migrate_frame`),
-/// for a sidecar read with no window holding the frame. Left as it is
-/// when the file will not say its shape.
-pub fn migrate_from_file(sidecar: &mut Sidecar, frame: &Path) {
-    if !sidecar.needs_frame() {
-        return;
-    }
-    let shape = greycard_core::decode::stance_path(frame)
-        .ok()
-        .and_then(|s| s.shown_size(sidecar.turn))
-        .filter(|&(w, h)| w > 0 && h > 0);
-    match shape {
-        Some((w, h)) => sidecar.migrate_with_frame(w < h),
-        None => log::warn!(
-            "{}: nothing can say which way up it is, so its Original crop \
-             waits before it is brought up to date",
+/// A sidecar read with no window holding the frame (`Sidecar::from_json`,
+/// a copy), told it is `frame`'s: what still waits on the frame's shape
+/// (a state placed under another turn the file has no shape for, or one
+/// from before version 4) shown by the shape `frame`'s header says
+/// ([`Sidecar::settle_shape`]), as the window does with the frame it
+/// opens (`panel::browser::migrate_frame`). Left as it is when the file
+/// will not say.
+pub fn migrate_from_file(sidecar: &mut Sidecar, frame: &Path, shape: FrameShape) {
+    sidecar.settle_shape(|turn| shape(frame, turn));
+    if sidecar.needs_frame() {
+        log::warn!(
+            "{}: nothing can say which way up it is, so what waits on its \
+             shape waits on",
             frame.display()
-        ),
+        );
     }
 }
 
@@ -368,12 +416,20 @@ mod tests {
     /// a raw from the raw's.
     #[test]
     fn with_sidecars_off_a_picture_starts_from_its_own_default() {
-        let (picture, _) =
-            load_sidecar_said(Path::new("/nowhere/IMG_0001.JPG"), None, Fresh::default());
-        assert_eq!(picture.line.current, Edit::for_picture());
-        assert!(!picture.line.current.lens.wants_profile());
-        let (raw, _) =
-            load_sidecar_said(Path::new("/nowhere/IMG_0001.CR3"), None, Fresh::default());
+        let (picture, _) = load_sidecar_said(
+            Path::new("/nowhere/IMG_0001.JPG"),
+            None,
+            Fresh::default(),
+            frame_shape,
+        );
+        assert_eq!(*picture.line.current(), Edit::for_picture());
+        assert!(!picture.line.current().lens.wants_profile());
+        let (raw, _) = load_sidecar_said(
+            Path::new("/nowhere/IMG_0001.CR3"),
+            None,
+            Fresh::default(),
+            frame_shape,
+        );
         assert_eq!(raw, Sidecar::default());
     }
 
@@ -387,12 +443,12 @@ mod tests {
         let off = Fresh { lens: false };
         assert_eq!(fresh_sidecar(raw, Fresh::default()), Sidecar::default());
         let without = fresh_sidecar(raw, off);
-        assert!(!without.line.current.lens.enabled);
-        let mut back = without.line.current.clone();
+        assert!(!without.line.current().lens.enabled);
+        let mut back = without.line.current().clone();
         back.lens.enabled = true;
         assert_eq!(back, Edit::default(), "only the switch moves");
         assert!(never_developed(&without));
-        let (read, _) = load_sidecar_said(raw, None, off);
+        let (read, _) = load_sidecar_said(raw, None, off, frame_shape);
         assert_eq!(read, without);
         let picture = Path::new("/nowhere/IMG_0001.JPG");
         assert_eq!(
@@ -401,26 +457,37 @@ mod tests {
         );
     }
 
-    /// A sidecar already written keeps its lens section whatever the
-    /// setting says, and one that is not there starts as it says.
+    /// A sidecar with an edit recorded keeps its lens section whatever
+    /// the setting says; one that is not there, or that holds a rating
+    /// and no state (§724), starts as it says.
     #[test]
     fn an_existing_sidecar_keeps_its_lens_section() {
         let dir = std::env::temp_dir().join(format!("greycard-fresh-lens-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let raw = dir.join("IMG_0002.CR3");
         let off = Fresh { lens: false };
-        let (missing, trouble) = load_sidecar_said(&raw, Some(Placement::Beside), off);
+        let (missing, trouble) = load_sidecar_said(&raw, Some(Placement::Beside), off, frame_shape);
         assert_eq!(trouble, Some(Trouble::Missing));
-        assert!(!missing.line.current.lens.enabled);
+        assert!(!missing.line.current().lens.enabled);
         let mut written = Sidecar::default();
         written.meta.rating = 3;
         written.save(&raw).unwrap();
-        let (read, trouble) = load_sidecar_said(&raw, Some(Placement::Beside), off);
+        let (read, trouble) = load_sidecar_said(&raw, Some(Placement::Beside), off, frame_shape);
         assert_eq!(trouble, None);
-        assert!(read.line.current.lens.enabled, "the file's own");
+        assert!(!read.line.recorded());
+        assert!(
+            !read.line.current().lens.enabled,
+            "no state: the setting's start"
+        );
         assert_eq!(read.meta.rating, 3);
-        let (read, _) = read_sidecar_fresh(&raw, off);
-        assert!(read.line.current.lens.enabled);
+        let mut brighter = Edit::default();
+        brighter.light.exposure = 0.5;
+        written.record(brighter);
+        written.save(&raw).unwrap();
+        let (read, _) = load_sidecar_said(&raw, Some(Placement::Beside), off, frame_shape);
+        assert!(read.line.current().lens.enabled, "the file's own");
+        let (read, _) = read_sidecar_fresh(&raw, off, frame_shape);
+        assert!(read.line.current().lens.enabled);
         greycard_core::testing::remove_dir_retry(&dir);
     }
 
@@ -499,6 +566,86 @@ mod tests {
                 && l.ends_with("; the sidecar's meta stands")),
             "{lines:?}"
         );
+        greycard_core::testing::remove_dir_retry(&dir);
+    }
+
+    /// An uncompressed grey TIFF `w` by `h`, its pixels black: a frame
+    /// whose header says its shape, made here rather than kept as a file.
+    fn tiny_tiff(w: u16, h: u16) -> Vec<u8> {
+        let entries: [(u16, u16, u32); 9] = [
+            (256, 3, u32::from(w)),
+            (257, 3, u32::from(h)),
+            (258, 3, 8),
+            (259, 3, 1),
+            (262, 3, 1),
+            (273, 4, 8 + 2 + 9 * 12 + 4),
+            (277, 3, 1),
+            (278, 3, u32::from(h)),
+            (279, 4, u32::from(w) * u32::from(h)),
+        ];
+        let mut out = b"II*\0".to_vec();
+        out.extend(8u32.to_le_bytes());
+        out.extend((entries.len() as u16).to_le_bytes());
+        for (tag, kind, value) in entries {
+            out.extend(tag.to_le_bytes());
+            out.extend(kind.to_le_bytes());
+            out.extend(1u32.to_le_bytes());
+            if kind == 3 {
+                out.extend((value as u16).to_le_bytes());
+                out.extend([0, 0]);
+            } else {
+                out.extend(value.to_le_bytes());
+            }
+        }
+        out.extend(0u32.to_le_bytes());
+        out.extend(std::iter::repeat_n(0u8, usize::from(w) * usize::from(h)));
+        out
+    }
+
+    /// A file whose turned states it has no shape for (a copy turned by
+    /// a build before version 10 joined with one placed under the old
+    /// turn here, or a file cut by hand): read by a reader off the
+    /// window's thread, the frame's own header says the shape, and every
+    /// state shows right. Read by one that measures later (the window),
+    /// nothing of the frame is read and the states wait. A turned file
+    /// with nothing waiting reads no header at all.
+    #[test]
+    fn a_state_waiting_on_the_shape_is_shown_by_its_frame_s_header() {
+        let dir = std::env::temp_dir().join(format!("greycard-header-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let raw = dir.join("IMG_0001.tif");
+        std::fs::write(&raw, tiny_tiff(6, 4)).unwrap();
+        let mut s = Sidecar::default();
+        let mut placed = Edit::default();
+        placed
+            .retouch
+            .patches
+            .push(greycard_edit::retouch::Patch::default());
+        s.record(placed);
+        assert!(s.turn_by(1, Some(1.5)).is_some());
+        let mut cut = s.clone();
+        cut.shape = None;
+        std::fs::write(Sidecar::path_for(&raw), cut.to_json()).unwrap();
+        let headers = || HEADERS_READ.with(std::cell::Cell::get);
+        let was = headers();
+        let (read, _) = read_sidecar_said(&raw);
+        assert!(!read.needs_frame());
+        assert_eq!(read.line.current(), s.line.current());
+        assert_eq!(headers(), was + 1);
+        let (later, _) =
+            load_sidecar_said(&raw, Some(Placement::Beside), Fresh::default(), |_, _| None);
+        assert!(later.current_waits(), "measured later, by its reader");
+        assert_eq!(headers(), was + 1, "no header read");
+        // Nothing waiting: nothing read.
+        let mut cropped = Sidecar::default();
+        let mut crop = Edit::default();
+        crop.geometry.crop = Some(greycard_edit::geometry::Crop::of([0.1, 0.2, 0.5, 0.6]));
+        cropped.record(crop);
+        assert!(cropped.turn_by(1, None).is_some());
+        cropped.save(&raw).unwrap();
+        let (read, _) = read_sidecar_said(&raw);
+        assert_eq!(read.turn, 1);
+        assert_eq!(headers(), was + 1, "no header read");
         greycard_core::testing::remove_dir_retry(&dir);
     }
 }

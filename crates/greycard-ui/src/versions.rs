@@ -246,8 +246,14 @@ impl State {
     /// In the export queue's view no line of the list is to be written
     /// (`queue_view::frozen`): none. An export's record is made on its
     /// sidecar's line directly, and is not asked.
-    pub(crate) fn line_mut(&mut self, c: usize) -> Option<&mut Line> {
+    ///
+    /// A file a newer build made is read-only (§724): none, and the
+    /// status line says so ([`crate::panel::browser::say_newer`]).
+    pub(crate) fn line_mut(&mut self, c: usize) -> Option<greycard_edit::LineMut<'_>> {
         if crate::panel::queue_view::refused(self, "a line of the edit") {
+            return None;
+        }
+        if crate::panel::browser::refused_read_only(self, c) {
             return None;
         }
         let cell = self.cells.get(c)?.clone();
@@ -705,8 +711,8 @@ mod tests {
         let mut e = Edit::default();
         e.light.exposure = 0.5;
         st.line_mut(2).unwrap().record(e);
-        assert_eq!(st.line(2).unwrap().current.light.exposure, 0.5);
-        assert_eq!(st.line(1).unwrap().current.light.exposure, 0.0);
+        assert_eq!(st.line(2).unwrap().current().light.exposure, 0.5);
+        assert_eq!(st.line(1).unwrap().current().light.exposure, 0.0);
     }
 
     /// A collection's cells are its frames in its order: a file's cells

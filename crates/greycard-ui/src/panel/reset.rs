@@ -52,7 +52,7 @@ pub(crate) fn original_of(st: &State, c: usize) -> Option<Edit> {
 /// true for a cell with no line, which has nothing to reset.
 pub(crate) fn at_original(st: &State, c: usize) -> bool {
     match (st.line(c), original_of(st, c)) {
-        (Some(line), Some(original)) => line.current == original,
+        (Some(line), Some(original)) => *line.current() == original,
         _ => true,
     }
 }
@@ -85,7 +85,7 @@ pub(crate) fn reset_line(st: &mut State, c: usize) -> bool {
         return false;
     };
     st.line_mut(c)
-        .is_some_and(|line| line.record_as(original, Some(LABEL.to_string())))
+        .is_some_and(|mut line| line.record_as(original, Some(LABEL.to_string())))
 }
 
 /// Reset every one of `chosen` to its Original: the frame on screen,
@@ -114,7 +114,7 @@ pub(crate) fn reset_onto(
         .copied()
         .filter(|&f| Some(f) != panel_frame)
         .collect();
-    let rest = crate::rows::load_frames(st, app, &rest);
+    let rest = crate::rows::writable_frames(st, app, &rest);
     for &f in &rest {
         migrate_frame(st, f);
     }
@@ -277,13 +277,13 @@ mod tests {
         assert_eq!(history_rows(&app), want);
         {
             let st = state.borrow();
-            assert_eq!(st.sidecars[0].current, Edit::default());
-            assert_eq!(st.sidecars[0].current_label.as_deref(), Some(LABEL));
+            assert_eq!(*st.sidecars[0].current(), Edit::default());
+            assert_eq!(st.sidecars[0].current_label(), Some(LABEL));
         }
 
         app.invoke_undo();
         assert_eq!(app.get_exposure(), 0.7);
-        assert_eq!(state.borrow().sidecars[0].current.light.exposure, 0.7);
+        assert_eq!(state.borrow().sidecars[0].current().light.exposure, 0.7);
         assert!(app.get_history_resettable());
         // The other frame was never touched.
         assert_eq!(state.borrow().sidecars[1], Sidecar::default());
@@ -307,7 +307,7 @@ mod tests {
         }
         app.set_exposure(0.2);
         save(&app, &state);
-        let now = state.borrow().sidecars[0].current.clone();
+        let now = state.borrow().sidecars[0].current().clone();
         assert_eq!(now.light.exposure, 0.2);
         assert_eq!(now.highlight_fill.as_deref(), Some("hl-1"));
         for name in crate::panel::section_reset::SECTIONS {
@@ -318,7 +318,7 @@ mod tests {
         }
 
         app.invoke_history_reset();
-        assert_eq!(state.borrow().sidecars[0].current, Edit::default());
+        assert_eq!(*state.borrow().sidecars[0].current(), Edit::default());
 
         let only = Edit {
             highlight_fill: Some("hl-1".into()),
@@ -363,10 +363,10 @@ mod tests {
             let st = state.borrow();
             for f in [1, 2] {
                 let s = &st.sidecars[f];
-                assert_eq!(s.current, Edit::default(), "{f}");
-                assert_eq!(s.current_label.as_deref(), Some(LABEL), "{f}");
-                let back = Sidecar::load(&files[f]).unwrap().expect("written");
-                assert_eq!(back.current, s.current, "{f}");
+                assert_eq!(*s.current(), Edit::default(), "{f}");
+                assert_eq!(s.current_label(), Some(LABEL), "{f}");
+                let back = Sidecar::load_as_file(&files[f]).unwrap().expect("written");
+                assert_eq!(back.current(), s.current(), "{f}");
             }
             // One step each, undoable.
             assert_eq!(st.sidecars[1].history.len(), 2);
@@ -374,7 +374,7 @@ mod tests {
             // The frame at Original: its history and its file alone.
             assert_eq!(st.sidecars[0], untouched);
             assert!(st.sidecars[0].history.is_empty());
-            assert!(Sidecar::load(&files[0]).unwrap().is_none());
+            assert!(Sidecar::load_as_file(&files[0]).unwrap().is_none());
         }
         // The open frame's panel and history follow.
         assert_eq!(app.get_exposure(), 0.0);

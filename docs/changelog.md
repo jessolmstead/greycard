@@ -79,6 +79,24 @@ design note behind it.
   and the sensor's clip, up to 0.17 stops more highlight
   ([§716](https://github.com/jessolmstead/greycard/blob/master/docs/notes/716-light-between-canons-white-and-its-clip.md)).
 
+### Sidecars
+
+- Sidecars are written smaller, leaving out every setting at its
+  default: about a quarter the size with a long history
+  ([§734](https://github.com/jessolmstead/greycard/blob/master/docs/notes/734-schema-10-as-built.md)).
+- A sidecar from a newer greycard opens read-only and says so; nothing
+  in this version writes over it
+  ([§734](https://github.com/jessolmstead/greycard/blob/master/docs/notes/734-schema-10-as-built.md)).
+- Sidecars are schema 10: 0.12 and older can't read one that 0.13 has
+  saved with an edit, and write nothing over it
+  ([§734](https://github.com/jessolmstead/greycard/blob/master/docs/notes/734-schema-10-as-built.md)).
+- A frame only rated, flagged, or turned no longer counts as edited,
+  and its sidecar holds no edit
+  ([§734](https://github.com/jessolmstead/greycard/blob/master/docs/notes/734-schema-10-as-built.md)).
+- A frame whose masks were placed under another turn opens read-only
+  while its raw can't be reached to measure it
+  ([§734](https://github.com/jessolmstead/greycard/blob/master/docs/notes/734-schema-10-as-built.md)).
+
 ### Install
 
 - The Windows executables and the installer are signed, with SignPath
@@ -87,6 +105,15 @@ design note behind it.
 
 ### Fixes
 
+- An archive join of a frame turned on one computer no longer lands
+  its crop and masks a quarter turn off
+  ([§734](https://github.com/jessolmstead/greycard/blob/master/docs/notes/734-schema-10-as-built.md)).
+- Swap with original on one computer no longer mixes up the two
+  copies' versions at the next archive join
+  ([§734](https://github.com/jessolmstead/greycard/blob/master/docs/notes/734-schema-10-as-built.md)).
+- An orientation taken from an XMP beside the raw turns the masks and
+  retouch with the crop, as soon as the frame can be measured
+  ([§734](https://github.com/jessolmstead/greycard/blob/master/docs/notes/734-schema-10-as-built.md)).
 - A frame with fills and an AI mask opens with the mask on its first
   picture, where it showed without it for a moment and then with.
 - The grid's filter bar shows its Kind, Style, Day, and Keyword chips

@@ -122,7 +122,7 @@ pub(crate) fn uses(st: &State, name: &str) -> Uses {
             .any(|(version, line)| {
                 let edit = match &open {
                     Some((f, v)) if *f == i && v.as_deref() == version => &st.develop.edit,
-                    _ => &line.current,
+                    _ => line.current(),
                 };
                 edit.look_lut.lut.name() == name
             });
@@ -140,8 +140,8 @@ pub(crate) fn named_on_disk(paths: &[PathBuf], name: &str) -> usize {
         .iter()
         .filter(|p| {
             matches!(
-                greycard_edit::Sidecar::load(p),
-                Ok(Some(s)) if s.current.look_lut.lut.name() == name
+                greycard_edit::Sidecar::load_as_file(p),
+                Ok(Some(s)) if s.current().look_lut.lut.name() == name
             )
         })
         .count()
@@ -735,9 +735,21 @@ mod tests {
             lut: greycard_edit::look::LutChoice::Named(n.into()),
             strength: 1.0,
         };
-        st.sidecars[1].current.look_lut = named("Neon");
-        st.sidecars[2].current.look_lut = named("Neon");
-        st.sidecars[3].current.look_lut = named("Mono");
+        {
+            let mut e = st.sidecars[1].current().clone();
+            e.look_lut = named("Neon");
+            st.sidecars[1].record(e);
+        }
+        {
+            let mut e = st.sidecars[2].current().clone();
+            e.look_lut = named("Neon");
+            st.sidecars[2].record(e);
+        }
+        {
+            let mut e = st.sidecars[3].current().clone();
+            e.look_lut = named("Mono");
+            st.sidecars[3].record(e);
+        }
         st.current = Some(0);
         st.develop.edit.look_lut = named("Neon");
         // Frame 4's edit stands in from its row.
@@ -758,12 +770,18 @@ mod tests {
         for (i, f) in frames.iter().enumerate() {
             std::fs::write(f, b"x").unwrap();
             let mut sidecar = greycard_edit::Sidecar::default();
-            sidecar.current.look_lut = greycard_edit::look::LookLut {
-                lut: greycard_edit::look::LutChoice::Named(
-                    if i == 1 { "Mono" } else { "Neon" }.into(),
-                ),
-                strength: 1.0,
-            };
+            {
+                let mut e = sidecar.current().clone();
+                {
+                    e.look_lut = greycard_edit::look::LookLut {
+                        lut: greycard_edit::look::LutChoice::Named(
+                            if i == 1 { "Mono" } else { "Neon" }.into(),
+                        ),
+                        strength: 1.0,
+                    }
+                }
+                sidecar.record(e);
+            }
             sidecar.save(f).unwrap();
         }
         assert_eq!(named_on_disk(&frames, "Neon"), 2);
@@ -870,7 +888,12 @@ mod tests {
                 lut: greycard_edit::look::LutChoice::Named("Neon".into()),
                 strength: 1.0,
             };
-            st.sidecars[1].current.look_lut = st.develop.edit.look_lut.clone();
+            let look = st.develop.edit.look_lut.clone();
+            {
+                let mut e = st.sidecars[1].current().clone();
+                e.look_lut = look;
+                st.sidecars[1].record(e);
+            }
             show_looks(&st, &st.develop.edit.look_lut, &app);
         }
         assert!(app.get_look_removable());

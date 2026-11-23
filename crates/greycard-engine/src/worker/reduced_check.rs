@@ -493,7 +493,7 @@ fn write_edited_folder() {
         let mut edit = Edit::default();
         edit.light.exposure = 1.5;
         let mut sidecar = greycard_edit::Sidecar {
-            line: greycard_edit::Line::of(edit),
+            line: greycard_edit::Line::of(edit, 0).expect("a fresh edit waits on no shape"),
             ..greycard_edit::Sidecar::default()
         };
         sidecar.save(&path).unwrap();

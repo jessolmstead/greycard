@@ -691,14 +691,15 @@ pub fn import_each(
 /// The sidecar of `file` as an import starts from: the one it has, or a
 /// new one at the edit the editor would open the frame at.
 fn sidecar_for(file: &Path) -> Result<Sidecar, String> {
-    let mut sidecar = match Sidecar::load(file) {
+    // The edit alone: the body is the Lightroom mapper's business, and a
+    // RawTherapee import takes no offset for it.
+    let start = crate::lightroom_catalog::starting_edit(file).0;
+    let mut sidecar = match Sidecar::load(file, &start) {
         Ok(Some(s)) => s,
-        Ok(None) => Sidecar {
-            // The edit alone: the body is the Lightroom mapper's business,
-            // and a RawTherapee import takes no offset for it.
-            line: greycard_edit::Line::of(crate::lightroom_catalog::starting_edit(file).0),
-            ..Sidecar::default()
-        },
+        // A line nobody developed holds no state (§724): an import of
+        // the meta alone records none, and one of a develop records the
+        // start as its root under the import's step.
+        Ok(None) => Sidecar::starting_at(&start),
         Err(e) => return Err(format!("reading the sidecar of {}: {e}", file.display())),
     };
     // A sidecar from before schema 4 does not know which way up an
@@ -709,7 +710,7 @@ fn sidecar_for(file: &Path) -> Result<Sidecar, String> {
             .ok()
             .and_then(|s| s.shown_size(sidecar.turn))
         {
-            Some((w, h)) => sidecar.migrate_with_frame(h > w),
+            Some((w, h)) => sidecar.frame_known(w as f32 / h as f32),
             None => log::warn!(
                 "{}: will not say which way up it is, so its Original crop is left for \
                  the editor to bring up to date",
@@ -922,9 +923,9 @@ Enabled=true
             "the meta and a state \"Imported from ART\"".to_string()
         )));
         assert_eq!(fate(&raw, write(true, false)), Some(Fate::Wrote));
-        let sidecar = Sidecar::load(&raw).unwrap().unwrap();
-        assert_eq!(sidecar.current_label.as_deref(), Some("Imported from ART"));
-        assert_eq!(sidecar.current.light.exposure, -0.7);
+        let sidecar = Sidecar::load_as_file(&raw).unwrap().unwrap();
+        assert_eq!(sidecar.current_label(), Some("Imported from ART"));
+        assert_eq!(sidecar.current().light.exposure, -0.7);
         // One that will not read is that frame's line.
         let other = dir.join("IMG_0002.CR3");
         std::fs::write(&other, b"").unwrap();
@@ -1082,8 +1083,8 @@ Enabled=true
         let forced = one(&raw, write(true, true)).unwrap();
         assert_eq!(forced.fate, Fate::Wrote);
         assert!(forced.edit && forced.forced);
-        let sidecar = Sidecar::load(&raw).unwrap().unwrap();
-        assert_eq!(sidecar.current.light.exposure, 0.0);
+        let sidecar = Sidecar::load_as_file(&raw).unwrap().unwrap();
+        assert_eq!(sidecar.current().light.exposure, 0.0);
         assert_eq!(sidecar.history.len(), 2);
         greycard_core::testing::remove_dir_retry(&dir);
     }
@@ -1098,11 +1099,11 @@ Enabled=true
         std::fs::write(dir.join("DSCF0001.DNG.pp3"), PROFILE).unwrap();
         assert!(greycard_edit_io::lightroom::body_offset(Some("Fujifilm GFX 100S II")) < -0.5);
         assert_eq!(fate(&raw, write(true, false)), Some(Fate::Wrote));
-        let sidecar = Sidecar::load(&raw).unwrap().unwrap();
+        let sidecar = Sidecar::load_as_file(&raw).unwrap().unwrap();
         assert!(
-            (sidecar.current.light.exposure + 0.7).abs() < 1e-6,
+            (sidecar.current().light.exposure + 0.7).abs() < 1e-6,
             "{}",
-            sidecar.current.light.exposure
+            sidecar.current().light.exposure
         );
         greycard_core::testing::remove_dir_retry(&dir);
     }
@@ -1123,7 +1124,9 @@ Enabled=true
         ));
         assert_eq!(report.profiled[1].fate, Fate::Wrote);
         assert_eq!(report.unreadable(), 1);
-        let next = Sidecar::load(&dir.join("IMG_0002.CR3")).unwrap().unwrap();
+        let next = Sidecar::load_as_file(&dir.join("IMG_0002.CR3"))
+            .unwrap()
+            .unwrap();
         assert_eq!(next.meta.rating, 4);
         assert_eq!(
             std::fs::read_to_string(dir.join("IMG_0001.CR3.gcd")).unwrap(),
@@ -1163,17 +1166,14 @@ Enabled=true
         let wrote = one(&raw, write(true, false)).unwrap();
         assert_eq!(wrote.fate, Fate::Wrote);
         assert_eq!((wrote.meta, wrote.edit), (dry.meta, dry.edit));
-        let sidecar = Sidecar::load(&raw).unwrap().expect("written");
+        let sidecar = Sidecar::load_as_file(&raw).unwrap().expect("written");
         assert_eq!(sidecar.meta.rating, 4);
         assert_eq!(sidecar.meta.label, Label::Green);
         assert_eq!(sidecar.meta.flag, Flag::Reject);
         assert_eq!(sidecar.history.len(), 1);
-        assert_eq!(
-            sidecar.current_label.as_deref(),
-            Some("Imported from RawTherapee")
-        );
-        assert_eq!(sidecar.current.light.exposure, -0.7);
-        assert_eq!(sidecar.history[0].edit.light.exposure, 0.0);
+        assert_eq!(sidecar.current_label(), Some("Imported from RawTherapee"));
+        assert_eq!(sidecar.current().light.exposure, -0.7);
+        assert_eq!(sidecar.history[0].edit().light.exposure, 0.0);
         assert_eq!(waiting_in(&dir), 0, "come in, so not offered again");
 
         // Now it has a history: held back, unless forced, and forced
@@ -1182,7 +1182,10 @@ Enabled=true
         let forced = one(&raw, write(true, true)).unwrap();
         assert_eq!(forced.fate, Fate::Unchanged);
         assert_eq!(forced.skipped, ["Local Contrast"]);
-        assert_eq!(Sidecar::load(&raw).unwrap().unwrap().history.len(), 1);
+        assert_eq!(
+            Sidecar::load_as_file(&raw).unwrap().unwrap().history.len(),
+            1
+        );
 
         // A profile that is not one is said, and passed over.
         std::fs::write(dir.join("IMG_0002.CR3.pp3"), "not a profile").unwrap();
@@ -1302,7 +1305,10 @@ Enabled=true
         culled.meta.set_rating(5);
         culled.meta.flag = Flag::Reject;
         culled.save(&raw).unwrap();
-        assert_eq!(Here::of(&Sidecar::load(&raw).unwrap().unwrap()), Here::Meta);
+        assert_eq!(
+            Here::of(&Sidecar::load_as_file(&raw).unwrap().unwrap()),
+            Here::Meta
+        );
         assert_eq!(waiting_in(&dir), 0, "not offered");
 
         // Unforced: held back, both kept, and said why.
@@ -1319,7 +1325,7 @@ Enabled=true
             "held back".into(),
             "1 with stars, a label or a flag set here already (--force to import over it)".into()
         )));
-        let kept = Sidecar::load(&raw).unwrap().unwrap();
+        let kept = Sidecar::load_as_file(&raw).unwrap().unwrap();
         assert_eq!((kept.meta.rating, kept.meta.flag), (5, Flag::Reject));
         assert!(kept.history.is_empty());
 
@@ -1341,9 +1347,9 @@ Enabled=true
         // sets, not its neutral too.
         assert!(!r.said.iter().any(|(k, _)| *k == "neutral"));
         import(std::slice::from_ref(&dir), &write(true, true)).unwrap();
-        let after = Sidecar::load(&raw).unwrap().unwrap();
+        let after = Sidecar::load_as_file(&raw).unwrap().unwrap();
         assert_eq!((after.meta.rating, after.meta.flag), (0, Flag::None));
-        assert_eq!(after.current.light.exposure, 0.5);
+        assert_eq!(after.current().light.exposure, 0.5);
         greycard_core::testing::remove_dir_retry(&dir);
     }
 
@@ -1357,9 +1363,14 @@ Enabled=true
         let meta_only = "[Version]\nVersion=351\n[General]\nRank=3\nColorLabel=1\nInTrash=false\n";
         std::fs::write(&profile, meta_only).unwrap();
         assert_eq!(fate(&raw, write(true, false)), Some(Fate::Wrote));
-        let first = Sidecar::load(&raw).unwrap().unwrap();
+        let first = Sidecar::load_as_file(&raw).unwrap().unwrap();
         assert!(first.history.is_empty());
         assert_eq!(Here::of(&first), Here::Meta);
+        // Nothing developed: no state recorded, so the frame still takes
+        // its ISO's seed when it opens (§724).
+        assert!(!first.line.recorded());
+        let written = std::fs::read_to_string(Sidecar::find(&raw).unwrap()).unwrap();
+        assert!(!written.contains("\"current\""), "{written}");
         // Run again unforced: nothing of its own would be replaced, so
         // nothing holds it; there is nothing new to write, and it is not
         // offered.
@@ -1380,8 +1391,8 @@ Enabled=true
         let r = one(&raw, write(true, false)).unwrap();
         assert_eq!(r.fate, Fate::Wrote);
         assert!(r.edit && !r.forced && r.replaced.is_empty());
-        let s = Sidecar::load(&raw).unwrap().unwrap();
-        assert_eq!(s.current.light.exposure, 0.4);
+        let s = Sidecar::load_as_file(&raw).unwrap().unwrap();
+        assert_eq!(s.current().light.exposure, 0.4);
         assert_eq!(s.meta.rating, 3);
         // A cull that differs, on a frame with no history yet, still
         // holds it.
@@ -1393,7 +1404,10 @@ Enabled=true
         culled.save(&other).unwrap();
         let r = one(&other, write(true, false)).unwrap();
         assert_eq!((r.fate, r.here), (Fate::Held, Here::Meta));
-        assert_eq!(Sidecar::load(&other).unwrap().unwrap().meta.rating, 1);
+        assert_eq!(
+            Sidecar::load_as_file(&other).unwrap().unwrap().meta.rating,
+            1
+        );
         greycard_core::testing::remove_dir_retry(&dir);
     }
 

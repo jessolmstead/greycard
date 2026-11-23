@@ -268,7 +268,7 @@ mod tests {
             scene.develop_key_with(&[], None)
         );
         let sidecar = format!(r#"{{"current": {edit}}}"#);
-        let s = crate::Sidecar::from_json(&sidecar).unwrap();
+        let s = crate::Sidecar::from_json(&sidecar, &crate::Edit::default()).unwrap();
         assert_eq!(s.current.vignette.place, Place::Unknown);
         assert_eq!(s.current.vignette.amount, -1.0);
     }

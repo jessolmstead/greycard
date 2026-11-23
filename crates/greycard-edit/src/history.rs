@@ -800,11 +800,7 @@ mod tests {
     use crate::retouch::{Method, Patch};
 
     fn snap(name: &str, edit: &Edit) -> Snapshot {
-        Snapshot {
-            name: name.into(),
-            taken: 0,
-            edit: edit.clone(),
-        }
+        Snapshot::new(name, 0, edit.clone())
     }
 
     /// The tone curve's switch is named on its own when the profile

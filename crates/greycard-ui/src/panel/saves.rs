@@ -308,7 +308,7 @@ fn xmp_ask(st: &State, file: usize) -> XmpAsk {
     let path = &st.files[file];
     XmpAsk {
         tag: st.develop.stances.get(path).map(|s| s.orientation),
-        quarters: st.sidecars[file].turn,
+        quarters: st.sidecars[file].xmp_turn(),
         meta: st.sidecars[file].meta.clone(),
         taken: crate::panel::time_shift::camera_time_kept(st, file),
     }
@@ -456,7 +456,7 @@ fn checked_commit(
             }
             if let Some(ask) = &mut item.xmp {
                 ask.meta = theirs.meta.clone();
-                ask.quarters = theirs.turn;
+                ask.quarters = theirs.xmp_turn();
             }
             done.started = Some(Box::new(std::mem::replace(&mut item.sidecar, theirs)));
             // The XMP's mark is the sidecar's own, set as it is staged.
@@ -663,6 +663,16 @@ fn land(st: &mut State, id: u64) {
             Outcome::TakenBack => taken += 1,
             Outcome::Failed(e, why) => {
                 failed += 1;
+                // A newer build's file refused it: the window's copy is
+                // read-only from now, as the file is, its edit kept
+                // beside the frame by the check (§724).
+                if why == Why::Newer
+                    && let Some(f) = st.file_by_path(&d.raw)
+                    && let Ok(Some(disk)) = greycard_edit::Sidecar::load_as_file(&d.raw)
+                    && disk.newer.is_some()
+                {
+                    st.sidecars[f].newer = disk.newer;
+                }
                 let name = crate::panel::browser::file_name(&d.raw);
                 tracing::warn!("{name}: sidecar not saved: {e}");
                 not_written.push(name);
@@ -832,10 +842,10 @@ pub(crate) mod tests {
     }
 
     fn on_disk(raw: &Path) -> f32 {
-        Sidecar::load(raw)
+        Sidecar::load_as_file(raw)
             .expect("it reads")
             .expect("it is there")
-            .current
+            .current()
             .light
             .exposure
     }
@@ -916,16 +926,53 @@ pub(crate) mod tests {
         assert!(!out(&st));
         for raw in &files {
             let f = st.file_by_path(raw).expect("in the list");
-            let back = Sidecar::load(raw).unwrap().unwrap();
-            assert_eq!(back.current.light.exposure, 0.5);
+            let back = Sidecar::load_as_file(raw).unwrap().unwrap();
+            assert_eq!(back.current().light.exposure, 0.5);
             assert_eq!(back.saved, st.sidecars[f].saved);
             let mark = st.sidecars[f].xmp.clone().expect("marked");
             assert_eq!(back.xmp, Some(mark.clone()));
             let xmp = std::fs::read(raw.with_extension("xmp")).expect("the XMP");
             assert_eq!(xmp::Adopted::of(&raw.with_extension("xmp"), &xmp), mark);
+            // The mark comes after the revision, and is not in it: the
+            // window's copy and the file are both as their revision left
+            // them, as a join with an archive's copy asks (§724).
+            assert!(st.sidecars[f].at_its_revision(), "the window's");
+            assert!(back.at_its_revision(), "the file's");
         }
         // Landed once: a second word of it does nothing.
         land(&mut st, 0);
+        drop(st);
+        crate::testing::remove_dir_retry(&dir);
+    }
+
+    /// A newer greycard saves a frame while a batch is out for it: the
+    /// batch writes nothing over it and removes no copy of it, the
+    /// window's edit is kept beside the frame, and the window's copy is
+    /// read-only from then (§724).
+    #[test]
+    fn a_batch_over_a_newer_build_s_save_writes_nothing_and_goes_read_only() {
+        let (_app, state, files, dir) = three("batch-newer", 0.0, 0.5);
+        let mut st = state.borrow_mut();
+        let newer = r#"{"floors": {"read": 10, "write": 11}, "current": {"version": 11, "light": {"exposure": -1.0}}, "saved": 50}"#;
+        let path = Sidecar::path_for(&files[0]);
+        std::fs::write(&path, newer).unwrap();
+        HOLD.set(true);
+        save(&mut st, &[0, 1, 2]);
+        HOLD.set(false);
+        assert!(finish(&mut st, None));
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), newer);
+        assert!(st.sidecars[0].read_only());
+        assert_eq!(on_disk(&files[1]), 0.5, "the others land");
+        let kept = path.with_extension("gcd.other");
+        assert_eq!(
+            Sidecar::read_as_file(&kept)
+                .unwrap()
+                .current()
+                .light
+                .exposure,
+            0.5,
+            "the window's edit, beside it"
+        );
         drop(st);
         crate::testing::remove_dir_retry(&dir);
     }
@@ -954,7 +1001,7 @@ pub(crate) mod tests {
         assert_eq!(on_disk(&files[0]), 0.8);
         assert_eq!(on_disk(&files[1]), 0.2);
         assert_eq!(on_disk(&files[2]), 0.8);
-        let back = Sidecar::load(&files[1]).unwrap().unwrap();
+        let back = Sidecar::load_as_file(&files[1]).unwrap().unwrap();
         assert_eq!(back.saved, st.sidecars[1].saved);
         assert!(temps(&dir).is_empty(), "{:?}", temps(&dir));
         drop(st);

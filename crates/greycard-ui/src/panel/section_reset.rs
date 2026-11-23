@@ -324,7 +324,7 @@ pub(crate) fn reset_on_screen(st: &mut State, app: &App, worker: &Worker, name: 
         st.develop.save_timer.stop();
         record_panel(st, app);
     }
-    let Some(edit) = st.line(c).map(|l| l.current.clone()) else {
+    let Some(edit) = st.line(c).map(|l| l.current().clone()) else {
         return;
     };
     let Some(original) = reset_base(st, c, &edit) else {
@@ -352,7 +352,7 @@ pub(crate) fn reset_on_screen(st: &mut State, app: &App, worker: &Worker, name: 
         );
         reset.geometry = crate::panel::crop::read_geometry(app);
     }
-    if !st.line_mut(c).is_some_and(|line| line.record(reset)) {
+    if !st.line_mut(c).is_some_and(|mut line| line.record(reset)) {
         return;
     }
     tracing::info!("section reset: {name}");

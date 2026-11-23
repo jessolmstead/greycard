@@ -2998,7 +2998,11 @@ fn auto_light_sets_the_sliders_in_one_step() {
     let line = |state: &Rc<Shared>| {
         let st = state.borrow();
         let l = &st.sidecars[0];
-        (l.history.len(), l.current.light, l.current_label.clone())
+        (
+            l.history.len(),
+            l.current().light,
+            l.current_label().map(String::from),
+        )
     };
     let (steps, light, _) = line(&state);
 
@@ -3063,7 +3067,7 @@ fn auto_light_is_a_button_under_the_light_sliders() {
         st.develop.shown_turn = Some((0, current_turn(&st)));
     }
     app.set_raw_input(true);
-    let light = state.borrow().sidecars[0].current.light;
+    let light = state.borrow().sidecars[0].current().light;
 
     // The white balance has an Auto of its own above: the Light
     // section's is under its last slider.
@@ -3079,7 +3083,7 @@ fn auto_light_is_a_button_under_the_light_sliders() {
     AUTO_WHITE_GRID.with(|g| *g.borrow_mut() = Some((grid, 40)));
     click(&app, at.x + size.width / 2.0, at.y + size.height / 2.0);
     wait();
-    let auto = state.borrow().sidecars[0].current.light;
+    let auto = state.borrow().sidecars[0].current().light;
     assert_ne!(auto, light, "the click moved the sliders");
     assert!((auto.exposure - 1.0).abs() < 0.05, "{auto:?}");
     assert_eq!(app.get_exposure(), auto.exposure);
@@ -3592,7 +3596,7 @@ fn a_masks_white_balance_keeps_its_light_while_switched_off() {
     };
     settle();
     let stored = || {
-        state.borrow().sidecars[0].current.adjustments[0]
+        state.borrow().sidecars[0].current().adjustments[0]
             .look
             .white_balance
     };
@@ -3642,17 +3646,17 @@ fn a_masks_white_balance_keeps_its_light_while_switched_off() {
     app.invoke_local_wb_toggled();
     settle();
     let json = state.borrow().sidecars[0].to_json();
-    let read: greycard_edit::Sidecar = serde_json::from_str(&json).unwrap();
+    let read = greycard_edit::Sidecar::from_json(&json, &greycard_edit::Edit::default()).unwrap();
     assert_eq!(
-        read.current.adjustments[0].look.white_balance,
+        read.current().adjustments[0].look.white_balance,
         LocalWhite::Kept { temperature, tint }
     );
     app.set_local_temperature(9000.0);
     app.set_local_wb_kept(false);
     {
         let mut st = state.borrow_mut();
-        st.develop.edit = read.current.clone();
-        crate::panel::edit::show_edit(&st, &read.current, &app, Some(0));
+        st.develop.edit = read.current().clone();
+        crate::panel::edit::show_edit(&st, read.current(), &app, Some(0));
     }
     assert!(!app.get_local_wb_on());
     assert!(app.get_local_wb_kept());

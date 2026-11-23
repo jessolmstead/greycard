@@ -117,7 +117,7 @@ fn new_version_makes_a_cell_selects_it_and_opens_its_name() {
         assert_eq!(st.current, Some(1), "the new cell is open");
         let id = st.version_of(1).expect("a version").to_string();
         let line = st.line(1).unwrap();
-        assert_eq!(line.current.light.exposure, 0.5, "the edit copied");
+        assert_eq!(line.current().light.exposure, 0.5, "the edit copied");
         assert_eq!(line.history.len(), 0, "and nothing else");
         assert_eq!(st.sidecars[0].versions.len(), 1);
         assert_eq!(st.sidecars[0].versions[0].id, id);
@@ -140,7 +140,7 @@ fn new_version_makes_a_cell_selects_it_and_opens_its_name() {
     let st = state.borrow();
     assert_eq!(st.cells.len(), 4);
     assert_eq!(st.current, Some(2), "after the file's other version");
-    assert_eq!(st.line(2).unwrap().current, Edit::default());
+    assert_eq!(*st.line(2).unwrap().current(), Edit::default());
     assert_eq!(app.get_collection_sheet_name(), "Version 3");
 }
 
@@ -193,10 +193,11 @@ fn a_swap_exchanges_the_lines_and_the_version_keeps_its_id() {
     app.invoke_version_swap_asked();
     let st = state.borrow();
     assert_eq!(
-        st.sidecars[0].current.light.exposure, 1.0,
+        st.sidecars[0].current().light.exposure,
+        1.0,
         "the file's own is the version's"
     );
-    assert_eq!(st.line(1).unwrap().current.light.exposure, 0.5);
+    assert_eq!(st.line(1).unwrap().current().light.exposure, 0.5);
     assert_eq!(st.version_of(1), Some(id.as_str()), "the id stays");
     assert_eq!(st.version_name(1).as_deref(), Some("Warm"));
     assert_eq!(
@@ -315,7 +316,7 @@ fn two_versions_deleted_at_once_both_go() {
         assert_eq!(st.sidecars[0].saved, saved + 1, "one write for the two");
         assert_eq!(st.current, Some(0));
     }
-    let disk = Sidecar::load(&files[0]).unwrap().unwrap();
+    let disk = Sidecar::load_as_file(&files[0]).unwrap().unwrap();
     assert!(disk.versions.is_empty());
     crate::testing::remove_scratch(state, &dir);
 }
@@ -365,9 +366,9 @@ fn the_panel_on_a_version_edits_that_line_alone() {
     {
         let st = state.borrow();
         let line = &st.sidecars[0].version(&id).unwrap().line;
-        assert_eq!(line.current.light.exposure, 1.5);
+        assert_eq!(line.current().light.exposure, 1.5);
         assert_eq!(
-            st.sidecars[0].current,
+            *st.sidecars[0].current(),
             Edit::default(),
             "the file's own untouched"
         );
@@ -375,13 +376,13 @@ fn the_panel_on_a_version_edits_that_line_alone() {
     }
     app.invoke_undo();
     assert_eq!(
-        state.borrow().line(1).unwrap().current.light.exposure,
+        state.borrow().line(1).unwrap().current().light.exposure,
         1.0,
         "the undo on the version's line"
     );
     app.invoke_select(0);
     assert_eq!(app.get_exposure(), 0.0, "the file's own panel");
-    assert_eq!(state.borrow().sidecars[0].current, Edit::default());
+    assert_eq!(*state.borrow().sidecars[0].current(), Edit::default());
     app.invoke_select(1);
     assert_eq!(app.get_exposure(), 1.0);
 }
@@ -437,7 +438,7 @@ fn shoot(dir: &Path) -> (PathBuf, PathBuf, String) {
     write_frame(&a, &R5, 1);
     write_frame(&b, &R6, 2);
     let mut s = Sidecar {
-        line: greycard_edit::Line::of(Edit::for_picture()),
+        line: greycard_edit::Line::of(Edit::for_picture(), 0).unwrap(),
         ..Sidecar::default()
     };
     s.meta.rating = 2;
@@ -471,12 +472,12 @@ fn a_folder_from_the_disk_lists_versions_and_a_save_keeps_them() {
     save(&app, &state);
     let saved = state.borrow().sidecars[0].saved;
     assert!(app.invoke_meta_key("4".into()));
-    let on_disk = Sidecar::load(&a).unwrap().unwrap();
+    let on_disk = Sidecar::load_as_file(&a).unwrap().unwrap();
     assert_eq!(
-        on_disk.version(&id).unwrap().line.current.light.exposure,
+        on_disk.version(&id).unwrap().line.current().light.exposure,
         0.8
     );
-    assert_eq!(on_disk.current.light.exposure, 0.0, "the file's own line");
+    assert_eq!(on_disk.current().light.exposure, 0.0, "the file's own line");
     assert!(on_disk.history.is_empty());
     assert_eq!(on_disk.meta.rating, 4);
     assert_eq!(on_disk.saved, saved + 1, "the key wrote the file once");
@@ -494,7 +495,7 @@ fn a_roots_view_lists_versions_from_the_index() {
     let root = dir.join("shoot");
     let (a, _b, id) = shoot(&root);
     // The version edited, so its row says so and the file's does not.
-    let mut s = Sidecar::load(&a).unwrap().unwrap();
+    let mut s = Sidecar::load_as_file(&a).unwrap().unwrap();
     s.line_mut(Some(&id)).unwrap().record({
         let mut e = Edit::for_picture();
         e.light.exposure = 0.6;
@@ -542,12 +543,12 @@ fn a_roots_view_lists_versions_from_the_index() {
     assert_eq!(app.get_exposure(), 0.6, "the version's edit on the panel");
     app.set_exposure(0.9);
     save(&app, &state);
-    let on_disk = Sidecar::load(&a).unwrap().unwrap();
+    let on_disk = Sidecar::load_as_file(&a).unwrap().unwrap();
     assert_eq!(
-        on_disk.version(&id).unwrap().line.current.light.exposure,
+        on_disk.version(&id).unwrap().line.current().light.exposure,
         0.9
     );
-    assert_eq!(on_disk.current.light.exposure, 0.0);
+    assert_eq!(on_disk.current().light.exposure, 0.0);
     crate::testing::remove_scratch(state, &dir);
 }
 
@@ -561,7 +562,7 @@ fn a_missing_sidecar_with_a_version_on_record_is_not_taken() {
     let dir = crate::testing::scratch_dir("versions-probe-missing");
     let root = dir.join("shoot");
     let (a, _b, id) = shoot(&root);
-    let mut s = Sidecar::load(&a).unwrap().unwrap();
+    let mut s = Sidecar::load_as_file(&a).unwrap().unwrap();
     s.meta.rating = 0;
     s.line_mut(Some(&id)).unwrap().record({
         let mut e = Edit::for_picture();
@@ -728,7 +729,7 @@ fn an_export_of_a_version_marks_its_cell_alone() {
     let id = version_of(&state, &app, &worker, 0, "Warm");
     let (source, edit) = {
         let st = state.borrow();
-        (st.files[0].clone(), st.line(1).unwrap().current.clone())
+        (st.files[0].clone(), st.line(1).unwrap().current().clone())
     };
     let set = std::sync::Arc::new(crate::queue::Set::new(
         1,
@@ -796,7 +797,7 @@ fn a_culling_key_on_a_version_marks_the_file_and_writes_it_once() {
     let st = state.borrow();
     assert_eq!(st.sidecars[0].meta.rating, 5);
     assert_eq!(st.sidecars[0].saved, saved + 1, "written once");
-    let disk = Sidecar::load(&files[0]).unwrap().unwrap();
+    let disk = Sidecar::load_as_file(&files[0]).unwrap().unwrap();
     assert_eq!(disk.meta.rating, 5);
     assert_eq!(disk.saved, saved + 1);
     drop(st);
@@ -827,17 +828,14 @@ fn a_paste_reaches_a_version_and_its_file_and_writes_once() {
     {
         let st = state.borrow();
         let line = &st.sidecars[0].version(&warm).unwrap().line;
-        assert_eq!(line.current.light.exposure, -0.6);
-        assert_eq!(
-            line.current_label.as_deref(),
-            Some("Paste from IMG_0000.CR3")
-        );
+        assert_eq!(line.current().light.exposure, -0.6);
+        assert_eq!(line.current_label(), Some("Paste from IMG_0000.CR3"));
         assert_eq!(
             st.sidecars[0]
                 .version(&cool)
                 .unwrap()
                 .line
-                .current
+                .current()
                 .light
                 .exposure,
             0.0,
@@ -858,18 +856,18 @@ fn a_paste_reaches_a_version_and_its_file_and_writes_once() {
     let st = state.borrow();
     let exposures: Vec<f32> = st.sidecars[0]
         .lines()
-        .map(|l| l.current.light.exposure)
+        .map(|l| l.current().light.exposure)
         .collect();
     assert_eq!(exposures, [0.4, 0.4, 0.4]);
     assert_eq!(
-        st.sidecars[0].current_label.as_deref(),
+        st.sidecars[0].current_label(),
         Some("Paste from IMG_0001.CR3")
     );
     assert_eq!(st.sidecars[0].saved, saved + 1, "one write for the three");
-    let disk = Sidecar::load(&files[0]).unwrap().unwrap();
+    let disk = Sidecar::load_as_file(&files[0]).unwrap().unwrap();
     assert_eq!(disk.saved, saved + 1);
     assert_eq!(
-        disk.version(&cool).unwrap().line.current.light.exposure,
+        disk.version(&cool).unwrap().line.current().light.exposure,
         0.4
     );
     drop(st);
@@ -892,7 +890,7 @@ fn a_read_without_the_version_takes_its_cell_and_writes_nothing() {
     app.invoke_select(1);
     // The other machine's copy, without Warm, landing as a read of
     // the file does.
-    let mut theirs = Sidecar::load(&files[0]).unwrap().unwrap();
+    let mut theirs = Sidecar::load_as_file(&files[0]).unwrap().unwrap();
     theirs.delete_version(&id).unwrap();
     theirs.meta.rating = 5;
     {
@@ -908,7 +906,7 @@ fn a_read_without_the_version_takes_its_cell_and_writes_nothing() {
         assert_eq!(st.sidecars[0].saved, saved, "nothing written");
     }
     assert_eq!(rows(&app).len(), 1);
-    let disk = Sidecar::load(&files[0]).unwrap().unwrap();
+    let disk = Sidecar::load_as_file(&files[0]).unwrap().unwrap();
     assert_eq!(disk.saved, saved);
     assert!(disk.version(&id).is_some(), "the disk as it was");
     crate::testing::remove_scratch(state, &dir);
@@ -1002,7 +1000,8 @@ fn a_paste_a_sync_and_a_preset_onto_a_vanished_version_say_so() {
     {
         let st = state.borrow();
         assert_eq!(
-            st.sidecars[0].current.light.exposure, -0.6,
+            st.sidecars[0].current().light.exposure,
+            -0.6,
             "the file's own took it"
         );
         assert!(st.sidecars[0].versions.is_empty());
@@ -1025,12 +1024,12 @@ fn a_paste_a_sync_and_a_preset_onto_a_vanished_version_say_so() {
     assert!(status.contains("moved or is gone"), "{status}");
     assert!(status.contains("preset was not applied"), "{status}");
     let st = state.borrow();
-    assert_eq!(st.sidecars[0].current.light.exposure, 1.5);
+    assert_eq!(st.sidecars[0].current().light.exposure, 1.5);
     // The paste and the preset wrote the file's own line (the sync had
     // nothing left to lay), and nothing was written for the version.
     assert_eq!(st.sidecars[0].saved, saved + 2);
     assert!(
-        Sidecar::load(&files[0])
+        Sidecar::load_as_file(&files[0])
             .unwrap()
             .unwrap()
             .versions
@@ -1052,7 +1051,7 @@ fn a_middle_click_on_a_version_syncs_it_onto_the_files_own() {
     app.invoke_select(0);
     {
         let mut st = state.borrow_mut();
-        let mut e = st.line(1).unwrap().current.clone();
+        let mut e = st.line(1).unwrap().current().clone();
         e.light.exposure = 1.2;
         assert!(st.line_mut(1).unwrap().record(e));
         st.views.picked = vec![0, 1];
@@ -1064,9 +1063,9 @@ fn a_middle_click_on_a_version_syncs_it_onto_the_files_own() {
     {
         let st = state.borrow();
         assert_eq!(st.current, Some(0));
-        assert_eq!(st.sidecars[0].current.light.exposure, 1.2);
+        assert_eq!(st.sidecars[0].current().light.exposure, 1.2);
         assert_eq!(
-            st.sidecars[0].current_label.as_deref(),
+            st.sidecars[0].current_label(),
             Some("Sync from IMG_0000 (Warm)")
         );
         let line = st.sidecars[0].line(Some(warm.as_str())).unwrap();
@@ -1074,7 +1073,7 @@ fn a_middle_click_on_a_version_syncs_it_onto_the_files_own() {
     }
     app.invoke_undo();
     assert_eq!(app.get_exposure(), 0.0);
-    assert_eq!(state.borrow().sidecars[0].current.light.exposure, 0.0);
+    assert_eq!(state.borrow().sidecars[0].current().light.exposure, 0.0);
 }
 
 /// The ISO's seed is a line's: a version with a strength of its own
@@ -1105,13 +1104,13 @@ fn the_seed_lands_on_the_open_line_alone() {
         // The seed lands with the file's own cell open.
         st.current = Some(0);
         assert!(crate::rows::seed_landed(&mut st, 0, 0.3));
-        assert_eq!(st.sidecars[0].current.noise.learned_strength, 0.3);
+        assert_eq!(st.sidecars[0].current().noise.learned_strength, 0.3);
         let strength = |st: &State, v: &str| {
             st.sidecars[0]
                 .version(v)
                 .unwrap()
                 .line
-                .current
+                .current()
                 .noise
                 .learned_strength
         };
@@ -1127,7 +1126,8 @@ fn the_seed_lands_on_the_open_line_alone() {
         assert!(crate::rows::seed_landed(&mut st, 2, 0.5));
         assert_eq!(strength(&st, &cool), 0.5);
         assert_eq!(
-            st.sidecars[0].current.noise.learned_strength, 0.3,
+            st.sidecars[0].current().noise.learned_strength,
+            0.3,
             "the file's own as it was"
         );
         // Warm, with a strength of its own, takes none.
@@ -1178,7 +1178,7 @@ fn a_culling_key_on_a_vanished_version_cell_rates_the_file() {
         assert_eq!(st.develop.edit, panel, "the panel's edit as it was");
         assert_eq!(st.develop.generation, generation, "no develop asked");
     }
-    let disk = Sidecar::load(&files[0]).unwrap().unwrap();
+    let disk = Sidecar::load_as_file(&files[0]).unwrap().unwrap();
     assert_eq!((disk.meta.rating, disk.turn), (4, 1));
     assert!(disk.versions.is_empty(), "nothing of the version written");
     crate::testing::remove_scratch(state, &dir);

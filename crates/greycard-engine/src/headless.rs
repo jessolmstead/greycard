@@ -118,6 +118,10 @@ pub struct Plan {
     /// in a test. It is opened only if it is there and at this
     /// build's schema; a run never makes, migrates or rebuilds it.
     pub index: Option<PathBuf>,
+    /// The frames left out before the run, each with why: what is
+    /// placed on it waits on a shape nothing can measure (§724). Each
+    /// is a frame that failed, as one that will not decode is.
+    pub waiting: Vec<(String, String)>,
 }
 
 /// What came of a run.
@@ -292,12 +296,14 @@ pub fn plan(
     rows.dedup();
 
     let mut frames = Vec::with_capacity(rows.len());
+    let mut waiting = Vec::new();
     for &i in &rows {
         let source = files[i].clone();
         let held = greycard_library::held::from_disk(
             &source,
             write_sidecars.then_some(placement),
             remembered.fresh(),
+            greycard_edit_io::on_disk::frame_shape,
         );
         let unreadable = matches!(
             held.trouble,
@@ -340,11 +346,31 @@ pub fn plan(
             let placement = (write_sidecars && !unreadable).then_some(placement);
             preset_at_start(&mut sidecar, version, &source, preset, placement);
         }
-        greycard_edit_io::on_disk::migrate_from_file(&mut sidecar, &source);
+        greycard_edit_io::on_disk::migrate_from_file(
+            &mut sidecar,
+            &source,
+            greycard_edit_io::on_disk::frame_shape,
+        );
         let line = sidecar
             .line(version)
             .expect("the version was found in this sidecar above");
-        let mut edit = line.current.clone();
+        // Its masks are where they were placed under another turn, and
+        // nothing can measure the frame to turn them (§724): not the
+        // picture, so not exported, and the run fails as it does for a
+        // frame that will not decode.
+        let Some(edit) = line.ready() else {
+            tracing::error!(
+                "{}: nothing can measure the frame, so it was not exported",
+                source.display()
+            );
+            let why = format!(
+                "{}: its masks cannot be placed until its raw is reachable",
+                greycard_edit_io::on_disk::file_name(&source)
+            );
+            waiting.push((source.display().to_string(), why));
+            continue;
+        };
+        let mut edit = edit.clone();
         // The line's own wait for its ISO.
         let raw = !greycard_core::picture::is_picture_path(&source);
         let seed = raw && greycard_edit_io::on_disk::line_never_developed(line);
@@ -401,7 +427,9 @@ pub fn plan(
         // names; a format the path changed is not the preset's file.
         let settings = batch_settings(target, sheet_settings.clone());
         let preset_name = preset_name.filter(|_| settings == sheet_settings);
-        frames[0].out = target.to_path_buf();
+        if let Some(frame) = frames.first_mut() {
+            frame.out = target.to_path_buf();
+        }
         (None, settings, preset_name)
     };
     Ok(Plan {
@@ -413,6 +441,7 @@ pub fn plan(
         placement: write_sidecars.then_some(placement),
         xmp: req.xmp_sidecars || remembered.xmp_sidecars,
         index,
+        waiting,
     })
 }
 
@@ -435,6 +464,22 @@ pub fn lent_line(lent: &Lent) -> String {
 /// window notes it. The worker's ops run on `lent` where it is a
 /// context.
 pub fn run(plan: Plan, lent: Lent) -> Finished {
+    if plan.frames.is_empty() {
+        // Every frame was left out before the run.
+        let line = match plan.waiting.first() {
+            Some((_, why)) if plan.folder.is_none() => format!("export failed: {why}"),
+            _ => format!("export: {} not exported", queue::frames(plan.waiting.len())),
+        };
+        tracing::info!("{line}");
+        return Finished {
+            tally: queue::Tally {
+                failed: plan.waiting,
+                ..Default::default()
+            },
+            left_out: 0,
+            line,
+        };
+    }
     if let Some(dir) = &plan.folder
         && let Err(e) = std::fs::create_dir_all(dir)
     {
@@ -463,6 +508,7 @@ fn run_on(plan: Plan, lent: Lent) -> Finished {
         placement,
         xmp,
         index,
+        waiting,
     } = plan;
     tracing::info!("{}", lent_line(&lent));
     let total = frames.len();
@@ -567,6 +613,7 @@ fn run_on(plan: Plan, lent: Lent) -> Finished {
                                 exported,
                                 placement,
                                 xmp,
+                                greycard_edit_io::on_disk::frame_shape,
                             ) && let Some((index, roots)) = archive_roots.as_ref()
                             {
                                 // The copy on the archive is not
@@ -603,12 +650,16 @@ fn run_on(plan: Plan, lent: Lent) -> Finished {
         return Finished {
             tally: queue::Tally {
                 canceled: total,
+                failed: waiting,
                 ..Default::default()
             },
             left_out,
             line,
         };
     };
+    // The frames left out before the run failed as much as any.
+    let mut tally = tally;
+    tally.failed.extend(waiting);
     let mut line = match (&single, written.as_slice()) {
         // One frame: the file it went to, as the window's status said.
         (Some(_), [path]) => format!("exported {} in {seconds:.2} s", path.display()),
@@ -1104,9 +1155,21 @@ mod tests {
         let source = scratch.0.join("frame.dng");
         dng(&source, 480, 320);
         let mut sidecar = Sidecar::default();
-        sidecar.current.light.exposure = 0.4;
-        sidecar.current.light.tone.contrast = 1.2;
-        sidecar.current.light.tone.highlights = -0.5;
+        {
+            let mut e = sidecar.current().clone();
+            e.light.exposure = 0.4;
+            sidecar.record(e);
+        }
+        {
+            let mut e = sidecar.current().clone();
+            e.light.tone.contrast = 1.2;
+            sidecar.record(e);
+        }
+        {
+            let mut e = sidecar.current().clone();
+            e.light.tone.highlights = -0.5;
+            sidecar.record(e);
+        }
         sidecar
             .save_in(&source, greycard_edit::Placement::Beside)
             .unwrap();
@@ -1126,7 +1189,12 @@ mod tests {
         // The window's edit: the sidecar's, the overrides over it; its
         // sheet: the remembered one with the flags over it, in the
         // path's format.
-        let mut edit = Sidecar::load(&source).unwrap().unwrap().line.current;
+        let mut edit = Sidecar::load_as_file(&source)
+            .unwrap()
+            .unwrap()
+            .line
+            .current()
+            .clone();
         req.overrides.apply(&mut edit);
         assert_eq!(plan.frames.len(), 1);
         assert_eq!(plan.frames[0].edit, edit);
@@ -1162,7 +1230,7 @@ mod tests {
         );
         // The overrides' edit is no state of the frame's history, so
         // the export is not noted in it, as the window did not note it.
-        let kept = Sidecar::load(&source).unwrap().unwrap();
+        let kept = Sidecar::load_as_file(&source).unwrap().unwrap();
         assert!(kept.current_exports.is_empty());
     }
 
@@ -1206,7 +1274,11 @@ mod tests {
         let source = scratch.0.join("frame.dng");
         dng(&source, 96, 64);
         let mut sidecar = Sidecar::default();
-        sidecar.current.light.exposure = -0.3;
+        {
+            let mut e = sidecar.current().clone();
+            e.light.exposure = -0.3;
+            sidecar.record(e);
+        }
         sidecar
             .save_in(&source, greycard_edit::Placement::Beside)
             .unwrap();
@@ -1216,7 +1288,7 @@ mod tests {
         assert_eq!(planned.settings.format, export::Format::Png);
         assert_eq!(planned.frames[0].edit.light.exposure, -0.3);
         assert!(run(planned, lent()).succeeded());
-        let kept = Sidecar::load(&source).unwrap().unwrap();
+        let kept = Sidecar::load_as_file(&source).unwrap().unwrap();
         assert_eq!(kept.current_exports.len(), 1);
         assert_eq!(
             kept.current_exports[0].file,
@@ -1235,7 +1307,7 @@ mod tests {
         assert!(run(planned, lent()).succeeded());
         assert!(off.is_file());
         assert_eq!(
-            Sidecar::load(&source)
+            Sidecar::load_as_file(&source)
                 .unwrap()
                 .unwrap()
                 .current_exports
@@ -1269,7 +1341,11 @@ mod tests {
         };
         let save = |source: &Path, exposure: f32| {
             let mut sidecar = Sidecar::default();
-            sidecar.current.light.exposure = exposure;
+            {
+                let mut e = sidecar.current().clone();
+                e.light.exposure = exposure;
+                sidecar.record(e);
+            }
             sidecar
                 .save_in(source, greycard_edit::Placement::Beside)
                 .unwrap();
@@ -1319,7 +1395,11 @@ mod tests {
         let source = scratch.0.join("frame.dng");
         dng(&source, 96, 64);
         let mut sidecar = Sidecar::default();
-        sidecar.current.light.exposure = -0.3;
+        {
+            let mut e = sidecar.current().clone();
+            e.light.exposure = -0.3;
+            sidecar.record(e);
+        }
         let id = sidecar.new_version(None, Some("Warm")).unwrap();
         sidecar.line_mut(Some(&id)).unwrap().record(Edit {
             light: greycard_edit::Light {
@@ -1347,7 +1427,7 @@ mod tests {
         assert_eq!(planned.frames[0].out, out.join("frame-Warm.jpg"));
         assert!(run(planned, lent()).succeeded());
         assert!(out.join("frame-Warm.jpg").is_file());
-        let kept = Sidecar::load(&source).unwrap().unwrap();
+        let kept = Sidecar::load_as_file(&source).unwrap().unwrap();
         assert_eq!(kept.current_exports.len(), 0, "not on the file's own line");
         let line = kept.line(Some(&id)).unwrap();
         assert_eq!(line.current_exports.len(), 1);
@@ -1797,7 +1877,8 @@ mod tests {
     /// is brought up to date from the file before the export, and the
     /// export is noted on the state it was made from: the record reads
     /// the sidecar again, and brings it up to date the same way before
-    /// it compares the two.
+    /// it compares the two. The states keep what they were written with
+    /// (§724), and the file the shape its frame's header said.
     #[test]
     fn an_older_build_s_original_crop_has_its_export_noted() {
         let scratch = Scratch::new("v3");
@@ -1806,16 +1887,189 @@ mod tests {
         let gcd = source.with_file_name("frame.dng.gcd");
         let v3 = r#"{"version":3,"light":{"exposure":0.25},"geometry":{"portrait":true,"aspect":{"kind":"original"}}}"#;
         std::fs::write(&gcd, format!(r#"{{"current":{v3},"history":[{v3}]}}"#)).unwrap();
-        assert!(Sidecar::load(&source).unwrap().unwrap().needs_frame());
+        // Read as a reader off the window's thread reads it, the frame's
+        // header says the shape.
+        let (beside, _) = greycard_edit_io::on_disk::read_sidecar_said(&source);
+        assert!(!beside.needs_frame());
+        let read = Sidecar::from_json(
+            &std::fs::read_to_string(&gcd).unwrap(),
+            &greycard_edit::Edit::default(),
+        )
+        .unwrap();
+        assert!(read.needs_frame(), "with no frame to say it, it waits");
         let out = scratch.0.join("out.png");
         let planned = plan(&to(&[&source], &out), &Shared::default(), None, None).unwrap();
         assert!(!planned.frames[0].edit.needs_frame());
+        let planned_edit = planned.frames[0].edit.clone();
         let finished = run(planned, lent());
         assert_eq!(finished.code(), WRITTEN, "{}", finished.line);
-        let kept = Sidecar::load(&source).unwrap().unwrap();
-        assert!(!kept.needs_frame(), "written back up to date");
-        assert_eq!(kept.current.light.exposure, 0.25);
+        let written: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&gcd).unwrap()).unwrap();
+        assert_eq!(written["current"]["version"], 10);
+        assert_eq!(
+            written["current"]["frame_pending"], true,
+            "the step is the shown copies'"
+        );
+        assert!(written.get("shape").is_some());
+        let kept =
+            Sidecar::from_json(&written.to_string(), &greycard_edit::Edit::default()).unwrap();
+        assert!(!kept.needs_frame(), "shown by the shape the file keeps");
+        assert_eq!(*kept.current(), planned_edit);
+        assert_eq!(kept.current().light.exposure, 0.25);
         assert_eq!(kept.current_exports.len(), 1, "the export is noted");
+    }
+
+    /// A frame turned with a crop and a mask on it exports the same
+    /// pixels from a sidecar a build before §724 wrote, every state
+    /// turned in place, as from the one this build writes, every state
+    /// as placed and the turn the file's alone.
+    #[test]
+    fn a_turned_frame_with_a_crop_and_a_mask_exports_alike_from_either_schema() {
+        use greycard_edit::mask::{Component, Mask, Shape, Turned};
+        let scratch = Scratch::new("turned");
+        let placed = {
+            let mut e = greycard_edit::Edit::default();
+            e.geometry.crop = Some(greycard_edit::geometry::Crop::of([0.1, 0.15, 0.6, 0.7]));
+            e.adjustments.push(greycard_edit::Adjustment {
+                id: 1,
+                mask: Mask {
+                    components: vec![Component {
+                        shape: Shape::Radial {
+                            center: [0.3, 0.25],
+                            radius: [0.2, 0.12],
+                            angle: 15.0,
+                            feather: 0.5,
+                        },
+                        ..Component::default()
+                    }],
+                    ..Mask::default()
+                },
+                look: greycard_edit::Look {
+                    light: greycard_edit::Light {
+                        exposure: 1.5,
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                },
+                ..Default::default()
+            });
+            e
+        };
+        let (w, h) = (96usize, 64usize);
+        let mut outs = Vec::new();
+        // 11 is 10 with the shape taken out of the file, as a copy turned
+        // by a build before version 10 and joined here leaves it: the
+        // frame's own header says it.
+        for schema in [9, 10, 11] {
+            let source = scratch.0.join(format!("frame{schema}.dng"));
+            dng(&source, w, h);
+            let json = if schema == 9 {
+                // Turned in place, a quarter at a time with the
+                // picture's aspect, as that build's turn did.
+                let mut e = placed.clone();
+                e.turn(1, Some(Turned::new(1, w as f32 / h as f32)));
+                let mut v = serde_json::to_value(&e).unwrap();
+                v["version"] = 9.into();
+                format!(r#"{{"current":{v},"turn":1}}"#)
+            } else {
+                // Placed under no turn, the turn the file's alone, made
+                // by the picture's shape, which the file keeps.
+                let mut s = Sidecar::default();
+                s.record(placed.clone());
+                assert!(s.turn_by(1, Some(w as f32 / h as f32)).is_some());
+                assert_eq!(*s.current_written(), placed);
+                let mut v: serde_json::Value = serde_json::from_str(&s.to_json()).unwrap();
+                assert!(v.get("shape").is_some());
+                if schema == 11 {
+                    v.as_object_mut().unwrap().remove("shape");
+                }
+                v.to_string()
+            };
+            std::fs::write(
+                source.with_file_name(format!("frame{schema}.dng.gcd")),
+                json,
+            )
+            .unwrap();
+            let out = scratch.0.join(format!("out{schema}.png"));
+            let planned = plan(&to(&[&source], &out), &Shared::default(), None, None).unwrap();
+            let finished = run(planned, lent());
+            assert_eq!(finished.code(), WRITTEN, "{}", finished.line);
+            outs.push(image::open(&out).unwrap().to_rgb8());
+        }
+        for (k, out) in outs.iter().enumerate().skip(1) {
+            assert_eq!(outs[0].dimensions(), out.dimensions());
+            let differing = outs[0]
+                .pixels()
+                .zip(out.pixels())
+                .filter(|(x, y)| x != y)
+                .count();
+            assert_eq!(differing, 0, "pixels differ, {k}");
+        }
+    }
+
+    /// A frame whose masks wait on a shape nothing can measure (§724) is
+    /// not exported: alone, the run fails and says why; in a set, the rest
+    /// go and the run fails for it, as for a frame that will not decode.
+    /// Its sidecar is left as it was.
+    #[test]
+    fn a_frame_whose_masks_wait_on_its_shape_is_not_exported_and_fails_the_run() {
+        use greycard_edit::mask::{Component, Mask, Shape};
+        let scratch = Scratch::new("waiting");
+        let waiting = scratch.0.join("frame0.CR3");
+        std::fs::write(&waiting, b"").unwrap();
+        let readable = scratch.0.join("frame1.dng");
+        dng(&readable, 96, 64);
+        let mut s = Sidecar::default();
+        let mut e = Edit::default();
+        e.adjustments.push(greycard_edit::Adjustment {
+            id: 1,
+            mask: Mask {
+                components: vec![Component {
+                    shape: Shape::Radial {
+                        center: [0.3, 0.25],
+                        radius: [0.2, 0.12],
+                        angle: 15.0,
+                        feather: 0.5,
+                    },
+                    ..Component::default()
+                }],
+                ..Mask::default()
+            },
+            ..Default::default()
+        });
+        s.record(e);
+        assert!(s.turn_by(1, Some(1.5)).is_some());
+        let mut v: serde_json::Value = serde_json::from_str(&s.to_json()).unwrap();
+        v.as_object_mut().unwrap().remove("shape");
+        let gcd = waiting.with_file_name("frame0.CR3.gcd");
+        std::fs::write(&gcd, v.to_string()).unwrap();
+        let before = std::fs::read(&gcd).unwrap();
+        // Alone.
+        let out = scratch.0.join("out.jpg");
+        let planned = plan(&to(&[&waiting], &out), &Shared::default(), None, None).unwrap();
+        assert!(planned.frames.is_empty());
+        let finished = run(planned, lent());
+        assert_eq!(finished.code(), FAILED, "{}", finished.line);
+        assert_eq!(
+            finished.line,
+            "export failed: frame0.CR3: its masks cannot be placed until its raw is reachable"
+        );
+        assert!(!out.exists());
+        // In a set: the rest go.
+        let into = scratch.folder("out");
+        let planned = plan(
+            &to(&[&waiting, &readable], &into),
+            &Shared::default(),
+            None,
+            None,
+        )
+        .unwrap();
+        assert_eq!(planned.frames.len(), 1);
+        let finished = run(planned, lent());
+        assert_eq!(finished.code(), FAILED, "{}", finished.line);
+        assert_eq!(finished.tally.exported, 1, "{}", finished.line);
+        assert_eq!(finished.tally.failed.len(), 1);
+        assert_eq!(std::fs::read(&gcd).unwrap(), before, "not written");
     }
 
     /// A frame whose sidecar carries a capture time shift exports with
@@ -1831,7 +2085,7 @@ mod tests {
         write_frame(&source, &R5, 1);
         let before = std::fs::read(&source).unwrap();
         let mut sidecar = Sidecar {
-            line: greycard_edit::Line::of(Edit::for_picture()),
+            line: greycard_edit::Line::of(Edit::for_picture(), 0).unwrap(),
             ..Sidecar::default()
         };
         sidecar.meta.set_time_shift(300);
@@ -1871,7 +2125,11 @@ mod tests {
         dng(&source, 96, 64);
         let mut sidecar = Sidecar::default();
         sidecar.meta.rating = 4;
-        sidecar.current.light.exposure = 0.1;
+        {
+            let mut e = sidecar.current().clone();
+            e.light.exposure = 0.1;
+            sidecar.record(e);
+        }
         sidecar
             .save_in(&source, greycard_edit::Placement::Beside)
             .unwrap();
@@ -1888,7 +2146,13 @@ mod tests {
         assert_eq!(export(true, &scratch.0.join("b.png")), WRITTEN);
         let written = std::fs::read_to_string(&xmp).expect("the .xmp is written");
         assert!(written.contains("Rating"), "{written}");
-        assert!(Sidecar::load(&source).unwrap().unwrap().xmp.is_some());
+        assert!(
+            Sidecar::load_as_file(&source)
+                .unwrap()
+                .unwrap()
+                .xmp
+                .is_some()
+        );
     }
 
     /// The exit code: 0 when every frame went as its edit asked, 2 when
@@ -1923,7 +2187,11 @@ mod tests {
         dng(&source, 96, 64);
         let mut sidecar = Sidecar::default();
         sidecar.meta.rating = 2;
-        sidecar.current.light.exposure = 0.1;
+        {
+            let mut e = sidecar.current().clone();
+            e.light.exposure = 0.1;
+            sidecar.record(e);
+        }
         sidecar
             .save_in(&source, greycard_edit::Placement::Beside)
             .unwrap();
@@ -1962,7 +2230,7 @@ mod tests {
         };
         assert!(rating(&after), "the other tool's rating stands:\n{after}");
         assert!(turned(&after), "the other tool's turn stands:\n{after}");
-        let kept = Sidecar::load(&source).unwrap().unwrap();
+        let kept = Sidecar::load_as_file(&source).unwrap().unwrap();
         assert_eq!(kept.meta.rating, 5, "the .gcd takes it");
         assert_eq!(kept.turn, 1, "and the turn");
         assert_eq!(kept.current_exports.len(), 2, "both exports noted");
@@ -1979,9 +2247,19 @@ mod tests {
         dng(&source, 96, 64);
         let export = |strength: f32, out: &str| {
             let mut sidecar = Sidecar::default();
-            sidecar.current.look_lut.lut =
-                greycard_edit::look::LutChoice::Named("No such look anywhere".into());
-            sidecar.current.look_lut.strength = strength;
+            {
+                let mut e = sidecar.current().clone();
+                {
+                    e.look_lut.lut =
+                        greycard_edit::look::LutChoice::Named("No such look anywhere".into())
+                }
+                sidecar.record(e);
+            }
+            {
+                let mut e = sidecar.current().clone();
+                e.look_lut.strength = strength;
+                sidecar.record(e);
+            }
             sidecar
                 .save_in(&source, greycard_edit::Placement::Beside)
                 .unwrap();
@@ -2007,7 +2285,12 @@ mod tests {
         let source = scratch.0.join("frame.dng");
         dng(&source, 96, 64);
         let mut sidecar = Sidecar::default();
-        sidecar.current.light.exposure = -0.3;
+        {
+            let mut e = sidecar.current().clone();
+            e.light.exposure = -0.3;
+            sidecar.record(e);
+        }
+        let steps = sidecar.history.len();
         let id = sidecar.new_version(None, Some("Warm")).unwrap();
         sidecar
             .save_in(&source, greycard_edit::Placement::Beside)
@@ -2034,12 +2317,12 @@ mod tests {
             planned.frames[0].edit.light.exposure, 1.1,
             "the preset, on the version"
         );
-        let back = Sidecar::load(&source).unwrap().unwrap();
-        assert_eq!(back.current.light.exposure, -0.3, "version 0 as it was");
-        assert!(back.history.is_empty(), "no step on version 0");
+        let back = Sidecar::load_as_file(&source).unwrap().unwrap();
+        assert_eq!(back.current().light.exposure, -0.3, "version 0 as it was");
+        assert_eq!(back.history.len(), steps, "no step on version 0");
         let line = back.line(Some(&id)).unwrap();
-        assert_eq!(line.current.light.exposure, 1.1);
-        assert_eq!(line.current_label.as_deref(), Some("Preset: Bright"));
+        assert_eq!(line.current().light.exposure, 1.1);
+        assert_eq!(line.current_label(), Some("Preset: Bright"));
     }
 
     /// A Bayer frame on disk, `width` by `height`, with a lateral
@@ -2400,13 +2683,19 @@ mod tests {
         let source = scratch.0.join("frame.png");
         png(&source, 240, 160);
         let mut sidecar = Sidecar {
-            line: greycard_edit::Line::of(Edit::for_picture()),
+            line: greycard_edit::Line::of(Edit::for_picture(), 0).unwrap(),
             ..Sidecar::default()
         };
-        sidecar.current.white_balance = WhiteBalance::Offset {
-            mired: 40.0,
-            tint: 0.002,
-        };
+        {
+            let mut e = sidecar.current().clone();
+            {
+                e.white_balance = WhiteBalance::Offset {
+                    mired: 40.0,
+                    tint: 0.002,
+                }
+            }
+            sidecar.record(e);
+        }
         sidecar
             .save_in(&source, greycard_edit::Placement::Beside)
             .unwrap();
@@ -2416,7 +2705,7 @@ mod tests {
         let plan = plan(&req, &remembered, None, None).unwrap();
         assert_eq!(
             plan.frames[0].edit.white_balance,
-            sidecar.current.white_balance
+            sidecar.current().white_balance
         );
         let window = queue::Frame {
             out: scratch.0.join("window.tif"),

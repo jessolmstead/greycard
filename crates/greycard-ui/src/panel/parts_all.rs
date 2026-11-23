@@ -191,7 +191,7 @@ pub(crate) fn reached(st: &mut State, app: &App, preset: &Preset, cells: &[usize
 /// Whether cell `c`'s line holds `shape`.
 fn holds(st: &State, c: usize, shape: &Shape) -> bool {
     st.line(c).is_some_and(|l| {
-        l.current
+        l.current()
             .adjustments
             .iter()
             .any(|a| a.mask.components.iter().any(|k| k.shape == *shape))
@@ -343,7 +343,8 @@ pub(crate) fn used(st: &mut State, app: &App, worker: &Worker) {
             Some(PersonJob {
                 batch: 0,
                 frame: f.clone(),
-                edit: st.line(c)?.current.clone(),
+                // None of a frame whose masks wait on its shape (§724).
+                edit: st.line(c)?.ready()?.clone(),
                 turn: st.sidecar_at(c)?.turn,
                 carried: carried.clone(),
                 wanted: offer.wanted.clone(),
@@ -462,8 +463,10 @@ fn put(
         show_edit(st, &st.develop.edit, app, st.develop.target);
         return Ok(Landed::Open);
     }
-    let line = st.line_mut(c).ok_or(Count::Failed)?;
-    let mut edit = line.current.clone();
+    let mut line = st.line_mut(c).ok_or(Count::Failed)?;
+    // A state whose masks wait on the frame's shape takes no Part: what
+    // it shows is not the picture (§724).
+    let mut edit = line.ready().ok_or(Count::Failed)?.clone();
     if !give(&mut edit, carried, person) {
         return Err(Count::Changed);
     }
@@ -720,7 +723,7 @@ mod tests {
 
     /// The person of the lips on cell `c`'s line.
     fn person_on(st: &State, c: usize) -> Option<Person> {
-        person_in(&st.line(c)?.current)
+        person_in(st.line(c)?.current())
     }
 
     fn answer(app: &App, state: &Rc<Shared>, c: usize, found: PersonOn) {
@@ -786,7 +789,7 @@ mod tests {
         assert_eq!(person_on(&st, 3), Some(on_three));
         for c in [2, 3] {
             assert_eq!(
-                st.line(c).unwrap().current_label.as_deref(),
+                st.line(c).unwrap().current_label(),
                 Some("Person from IMG_0001.CR3")
             );
         }
@@ -832,7 +835,7 @@ mod tests {
         for c in [2, 3] {
             assert_eq!(person_on(&st, c), Some(her()));
             assert_eq!(
-                st.line(c).unwrap().current_label.as_deref(),
+                st.line(c).unwrap().current_label(),
                 Some("Sync from IMG_0000.CR3")
             );
         }
@@ -864,12 +867,12 @@ mod tests {
         let steps = {
             let mut st = state.borrow_mut();
             // Frame 2: the other person picked by hand, and brighter.
-            let mut edit = st.line(2).unwrap().current.clone();
+            let mut edit = st.line(2).unwrap().current().clone();
             give(&mut edit, &carried(), &mine);
             edit.light.exposure = 0.5;
             st.line_mut(2).unwrap().record(edit);
             // Frame 3: only brighter.
-            let mut edit = st.line(3).unwrap().current.clone();
+            let mut edit = st.line(3).unwrap().current().clone();
             edit.light.exposure = 0.7;
             st.line_mut(3).unwrap().record(edit);
             st.line(2).unwrap().history.len()
@@ -883,13 +886,13 @@ mod tests {
         {
             let st = state.borrow();
             let line = st.line(2).unwrap();
-            assert_eq!(person_in(&line.current), Some(mine));
-            assert_eq!(line.current.light.exposure, 0.5);
+            assert_eq!(person_in(line.current()), Some(mine));
+            assert_eq!(line.current().light.exposure, 0.5);
             assert_eq!(line.history.len(), steps, "no step");
             assert_eq!(on_disk(2), before, "nothing written");
             let line = st.line(3).unwrap();
-            assert_eq!(person_in(&line.current), Some(two(3)[1].person()));
-            assert_eq!(line.current.light.exposure, 0.7);
+            assert_eq!(person_in(line.current()), Some(two(3)[1].person()));
+            assert_eq!(line.current().light.exposure, 0.7);
         }
         crate::testing::remove_dir_retry(&dir);
     }
@@ -923,9 +926,11 @@ mod tests {
         let st = state.borrow();
         let line = st.line(2).unwrap();
         assert_eq!(line.history.len(), steps + 1);
-        assert_eq!(person_in(&line.current), Some(hers.clone()));
-        let back = greycard_edit::Sidecar::load(&files[2]).unwrap().unwrap();
-        assert_eq!(person_in(&back.current), Some(hers));
+        assert_eq!(person_in(line.current()), Some(hers.clone()));
+        let back = greycard_edit::Sidecar::load_as_file(&files[2])
+            .unwrap()
+            .unwrap();
+        assert_eq!(person_in(back.current()), Some(hers));
         drop(st);
         crate::testing::remove_dir_retry(&dir);
     }

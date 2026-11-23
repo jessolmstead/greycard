@@ -987,10 +987,10 @@ fn read_key(frame: &Key, iso: Iso, key_of: impl Fn(&Edit) -> u64) -> Read {
     let Some(line) = sidecar.line(frame.version()) else {
         return Read::Default;
     };
-    if !is_edited(path, &line.current, iso) {
+    if !is_edited(path, line.current(), iso) {
         return Read::Default;
     }
-    Read::Key(key_of(&line.current))
+    Read::Key(key_of(line.current()))
 }
 
 /// Whether `edit` is an edit of the frame at `path`, by the rule the
@@ -1696,7 +1696,7 @@ pub mod tests {
         let mut edit = Edit::for_picture();
         edit.light.exposure = 1.5;
         let mut sidecar = greycard_edit::Sidecar {
-            line: greycard_edit::Line::of(edit.clone()),
+            line: greycard_edit::Line::of(edit.clone(), 0).unwrap(),
             ..greycard_edit::Sidecar::default()
         };
         sidecar.save(&other).unwrap();

@@ -331,6 +331,41 @@ pub(crate) fn retouch_state(app: &App) -> (Rc<Shared>, Rc<Worker>) {
     state_for(app, Vec::new())
 }
 
+/// A sidecar whose current state waits on a shape nothing can measure
+/// (§724), read with no frame to ask: a radial mask placed under no
+/// turn, the file turned a quarter by a window that knew the frame's
+/// shape (1.5 wide for each unit of its height), and the shape not in
+/// the file.
+pub(crate) fn waiting_sidecar() -> greycard_edit::Sidecar {
+    use greycard_edit::mask::{Component, Mask, Shape};
+    let mut s = greycard_edit::Sidecar::default();
+    let mut e = greycard_edit::Edit::default();
+    e.adjustments.push(greycard_edit::Adjustment {
+        id: 1,
+        name: "Radial 1".into(),
+        mask: Mask {
+            components: vec![Component {
+                shape: Shape::Radial {
+                    center: [0.3, 0.25],
+                    radius: [0.2, 0.12],
+                    angle: 15.0,
+                    feather: 0.5,
+                },
+                ..Component::default()
+            }],
+            ..Mask::default()
+        },
+        ..Default::default()
+    });
+    s.record(e);
+    assert!(s.turn_by(1, Some(1.5)).is_some());
+    let mut file: serde_json::Value = serde_json::from_str(&s.to_json()).unwrap();
+    file.as_object_mut().unwrap().remove("shape");
+    let s = greycard_edit::Sidecar::from_value(file, &greycard_edit::Edit::default()).unwrap();
+    assert!(s.current_waits());
+    s
+}
+
 /// A folder of `count` frames nothing has ever written, named as a
 /// camera names them, in a directory that does not exist: the
 /// browser reads the sidecars it is given and never the disk.

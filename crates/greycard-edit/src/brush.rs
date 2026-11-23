@@ -125,6 +125,7 @@ pub struct Stroke {
     pub feather: f32,
     /// How much the stroke lays down or takes away, 0 to 1.
     pub flow: f32,
+    #[serde(deserialize_with = "crate::meta::newer_loose")]
     pub op: Op,
 }
 

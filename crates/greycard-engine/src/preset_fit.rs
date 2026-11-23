@@ -169,26 +169,33 @@ pub fn preset_at_start(
     preset: &Preset,
     placement: Option<greycard_edit::Placement>,
 ) -> bool {
-    let Some(line) = sidecar.line_mut(version) else {
+    // A newer build's sidecar is read-only (§724): no preset is laid.
+    if let Err(e) = sidecar.writable() {
+        tracing::warn!("{}: {e}; the preset is not laid", file.display());
+        return false;
+    }
+    let Some(mut line) = sidecar.line_mut(version) else {
         return false;
     };
     let camera = if preset.sections.contains(&Section::Camera) {
         preset.edit.camera.clone()
     } else {
-        line.current.camera.clone()
+        line.current().camera.clone()
     };
     let preset = &frame_fitted(preset, file, &camera);
-    let applied = preset.applied(&line.current);
-    if applied == line.current {
+    let applied = preset.applied(line.current());
+    if applied == *line.current() {
         return false;
     }
-    let mut over = line.current.clone();
-    if greycard_edit_io::on_disk::line_never_developed(line)
+    let mut over = line.current().clone();
+    if greycard_edit_io::on_disk::line_never_developed(&line)
         && !greycard_core::picture::is_picture_path(file)
         && let Ok(p) = greycard_core::decode::probe_path(file)
     {
         over.noise.learned_strength = greycard_edit::Noise::blend_for_iso(p.iso);
-        line.current.noise.learned_strength = over.noise.learned_strength;
+        // A line nobody developed holds no state (§724): the seed is
+        // its start's, recorded as the root under the preset's step.
+        line.seed(|e| e.noise.learned_strength = over.noise.learned_strength);
     }
     let label = greycard_edit::history::preset_label(&preset.name);
     if !line.record_as(preset.applied(&over), Some(label)) {
@@ -208,6 +215,34 @@ pub fn preset_at_start(
 mod tests {
     use super::*;
     use greycard_edit::preset::Choice;
+
+    /// A preset at the start (an import's, the headless `--preset`'s)
+    /// is not laid on a frame a newer greycard made (§724): nothing is
+    /// recorded, and nothing written.
+    #[test]
+    fn a_preset_at_start_is_not_laid_on_a_newer_build_s_frame() {
+        let dir = std::env::temp_dir().join(format!("greycard-fit-newer-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let raw = dir.join("IMG_0001.CR3");
+        std::fs::write(&raw, b"not a raw").unwrap();
+        let path = Sidecar::path_for(&raw);
+        let newer = r#"{"floors": {"read": 10, "write": 11}, "current": {"version": 11, "light": {"exposure": 0.5}}}"#;
+        std::fs::write(&path, newer).unwrap();
+        let mut sidecar = Sidecar::load_as_file(&raw).unwrap().unwrap();
+        let mut edit = greycard_edit::Edit::default();
+        edit.grain.amount = 0.4;
+        let preset = Preset::from_edit("Fine Grain", &edit, &[Section::Grain]);
+        assert!(!preset_at_start(
+            &mut sidecar,
+            None,
+            &raw,
+            &preset,
+            Some(greycard_edit::Placement::Beside)
+        ));
+        assert_eq!(sidecar.current_label(), None);
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), newer);
+        greycard_core::testing::remove_dir_retry(&dir);
+    }
 
     #[test]
     fn a_picture_neither_takes_nor_gives_a_display_curve() {

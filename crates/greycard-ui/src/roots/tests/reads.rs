@@ -170,7 +170,7 @@ fn a_view_of_the_roots_reads_no_sidecar() {
         assert!(st.from_row[1].read);
         assert!(!st.from_row[0].read && !st.from_row[2].read);
         assert_eq!(disk_reads_under(&dir), 1);
-        assert_eq!(st.sidecars[1].current.geometry.turns, 1);
+        assert_eq!(st.sidecars[1].current().geometry.turns, 1);
         assert_eq!(st.sidecars[1].history.len(), 1);
         assert_eq!(st.sidecars[1].meta.keywords, ["Harbor"]);
     }
@@ -198,10 +198,10 @@ fn a_frame_s_meta_follows_the_pass_while_its_sidecar_stands_in() {
         st.sidecars[2].meta.rating = 1;
     }
     // Another tool rates x five, gives y a label, and z four.
-    let mut s = Sidecar::load(&files[0]).unwrap().unwrap();
+    let mut s = Sidecar::load_as_file(&files[0]).unwrap().unwrap();
     s.meta.rating = 5;
     s.save(&files[0]).unwrap();
-    let mut s = Sidecar::load(&files[1]).unwrap().unwrap();
+    let mut s = Sidecar::load_as_file(&files[1]).unwrap().unwrap();
     s.meta.label = meta::Label::Red;
     s.save(&files[1]).unwrap();
     let mut s = Sidecar::default();
@@ -249,7 +249,7 @@ fn a_key_on_a_view_frame_reads_its_sidecar_then_writes_it() {
         assert_eq!(st.sidecars[1].meta.rating, 4);
         assert_eq!(st.sidecars[1].history.len(), 1, "the develop kept");
     }
-    let on_disk = Sidecar::load(&files[1]).unwrap().unwrap();
+    let on_disk = Sidecar::load_as_file(&files[1]).unwrap().unwrap();
     assert_eq!(on_disk.meta.rating, 4);
     assert_eq!(on_disk.meta.keywords, ["Harbor"]);
     assert_eq!(on_disk.history.len(), 1, "the develop written back whole");
@@ -484,10 +484,10 @@ fn a_folder_s_sidecar_that_will_not_read_is_held_and_never_written_over() {
     std::fs::write(gcd(&files[0]), &newer).unwrap();
     std::fs::write(gcd(&files[1]), &damaged).unwrap();
     assert!(matches!(
-        Sidecar::load(&files[0]),
+        Sidecar::load_as_file(&files[0]),
         Err(greycard_edit::Error::Newer(_))
     ));
-    assert!(Sidecar::load(&files[1]).is_err());
+    assert!(Sidecar::load_as_file(&files[1]).is_err());
     let untouched = |what: &str| {
         let on_disk = |f: &PathBuf| std::fs::read_to_string(gcd(f)).unwrap();
         assert_eq!(on_disk(&files[0]), newer, "{what}");
@@ -525,7 +525,14 @@ fn a_folder_s_sidecar_that_will_not_read_is_held_and_never_written_over() {
         meta::Change::Rating(4),
     );
     untouched("a rating");
-    assert_eq!(Sidecar::load(&files[2]).unwrap().unwrap().meta.rating, 4);
+    assert_eq!(
+        Sidecar::load_as_file(&files[2])
+            .unwrap()
+            .unwrap()
+            .meta
+            .rating,
+        4
+    );
     let status = app.get_status().to_string();
     assert!(status.contains("could not be read"), "{status}");
 
@@ -560,8 +567,8 @@ fn a_folder_s_sidecar_that_will_not_read_is_held_and_never_written_over() {
         |_, _| None,
     );
     untouched("a preset");
-    let third = Sidecar::load(&files[2]).unwrap().unwrap();
-    assert_eq!(third.current.light.exposure, 0.4, "the third took it");
+    let third = Sidecar::load_as_file(&files[2]).unwrap().unwrap();
+    assert_eq!(third.current().light.exposure, 0.4, "the third took it");
 
     // A sync from the third onto the other two.
     let synced = crate::panel::sync::sync_selection(

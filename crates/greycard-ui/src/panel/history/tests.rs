@@ -138,7 +138,7 @@ fn an_edit_from_before_the_session_is_undone_after_the_marks() {
     {
         // A step the sidecar was read with.
         let mut st = state.borrow_mut();
-        let mut e = st.sidecars[0].current.clone();
+        let mut e = st.sidecars[0].current().clone();
         e.light.exposure = 0.5;
         st.sidecars[0].record(e);
         st.sidecars[0].current_order = greycard_edit::Order::BEFORE;
@@ -938,7 +938,7 @@ fn an_export_landing_shows_its_mark() {
     assert_eq!(marks(&app, 0), (false, false));
 
     // An unedited frame exported: the export mark alone.
-    let plain = state.borrow().sidecars[0].current.clone();
+    let plain = state.borrow().sidecars[0].current().clone();
     crate::panel::deliver::deliver(
         &app,
         landed(&source, &plain, PathBuf::from("/out/IMG_0000.jpg"), None),
@@ -973,7 +973,7 @@ fn the_export_mark_outlives_the_state_it_was_made_from() {
     let source = state.borrow().files[0].clone();
     app.set_exposure(0.5);
     save(&app, &state);
-    let sent = state.borrow().sidecars[0].current.clone();
+    let sent = state.borrow().sidecars[0].current().clone();
     crate::panel::deliver::deliver(
         &app,
         landed(&source, &sent, PathBuf::from("/out/IMG_0000.jpg"), None),
@@ -1018,7 +1018,7 @@ fn an_export_is_a_row_on_the_state_it_was_written_from() {
     // file was written.
     app.set_exposure(0.5);
     save(&app, &state);
-    let sent = state.borrow().sidecars[0].current.clone();
+    let sent = state.borrow().sidecars[0].current().clone();
     assert_eq!(sent.light.exposure, 0.5);
     app.set_exposure(1.0);
     save(&app, &state);
@@ -1036,7 +1036,7 @@ fn an_export_is_a_row_on_the_state_it_was_written_from() {
         let st = state.borrow();
         let s = &st.sidecars[0];
         assert_eq!(s.states(), states, "no state for the export");
-        assert_eq!(s.current.light.exposure, 1.0, "the panel's moved on");
+        assert_eq!(s.current().light.exposure, 1.0, "the panel's moved on");
         assert!(s.current_exports.is_empty());
         let on = s.exports(1);
         assert_eq!(on.len(), 1);
@@ -1097,7 +1097,7 @@ fn an_export_is_a_row_on_the_state_it_was_written_from() {
 
     // Clicked: that state is current, the panel and all.
     app.invoke_history_clicked(1);
-    assert_eq!(state.borrow().sidecars[0].current, sent);
+    assert_eq!(*state.borrow().sidecars[0].current(), sent);
     assert_eq!(app.get_exposure(), 0.5);
     assert_eq!(app.get_history_current(), 2, "the state's row, lit");
     assert_eq!(state.borrow().sidecars[0].current_exports.len(), 1);
@@ -1109,14 +1109,14 @@ fn an_export_is_a_row_on_the_state_it_was_written_from() {
     // for the export; and a redo brings the record back with its
     // state.
     app.invoke_undo();
-    assert_eq!(state.borrow().sidecars[0].current, Edit::default());
+    assert_eq!(*state.borrow().sidecars[0].current(), Edit::default());
     // The export's state undone: its row is muted with it.
     assert_eq!(undone(&app), [true, true, true, false]);
     app.invoke_redo();
-    assert_eq!(state.borrow().sidecars[0].current, sent);
+    assert_eq!(*state.borrow().sidecars[0].current(), sent);
     assert_eq!(state.borrow().sidecars[0].current_exports.len(), 1);
     app.invoke_redo();
-    assert_eq!(state.borrow().sidecars[0].current.light.exposure, 1.0);
+    assert_eq!(state.borrow().sidecars[0].current().light.exposure, 1.0);
     assert!(rows(&app)[1].1);
 }
 
@@ -1144,16 +1144,16 @@ fn a_frame_no_longer_shown_is_noted_on_the_disk() {
     state.borrow_mut().window.write_sidecars = true;
     let exported = |edit: &Edit| landed(&raw, edit, dir.join("IMG_0100.jpg"), None);
     crate::panel::deliver::deliver(&app, exported(&edit));
-    let back = Sidecar::load(&raw).unwrap().unwrap();
+    let back = Sidecar::load_as_file(&raw).unwrap().unwrap();
     assert_eq!(back.saved, 2);
-    assert_eq!(back.current, edit);
+    assert_eq!(*back.current(), edit);
     assert_eq!(back.current_exports.len(), 1);
     assert_eq!(back.current_exports[0].label(), "IMG_0100.jpg");
     // The window's own frames are untouched.
     assert_eq!(state.borrow().sidecars[0], Sidecar::default());
 
     crate::panel::deliver::deliver(&app, exported(&Edit::for_picture()));
-    assert_eq!(Sidecar::load(&raw).unwrap().unwrap(), back);
+    assert_eq!(Sidecar::load_as_file(&raw).unwrap().unwrap(), back);
     crate::testing::remove_dir_retry(&dir);
 }
 
@@ -1203,7 +1203,7 @@ fn launched(
     {
         let mut st = state.borrow_mut();
         st.window.write_sidecars = true;
-        st.sidecars[0] = Sidecar::load(&raws[0]).unwrap().unwrap();
+        st.sidecars[0] = Sidecar::load_as_file(&raws[0]).unwrap().unwrap();
         st.launch.overrides_at_start = Some((
             0,
             crate::panel::startup::Overrides {
@@ -1218,7 +1218,7 @@ fn launched(
 }
 
 fn on_disk(raw: &Path) -> Sidecar {
-    Sidecar::load(raw).unwrap().unwrap()
+    Sidecar::load_as_file(raw).unwrap().unwrap()
 }
 
 /// `--exposure` on a batch export: the command line's value is the
@@ -1237,7 +1237,7 @@ fn a_command_line_exposure_leaves_the_sidecar_as_it_was() {
     let rendered = state.borrow().develop.edit.clone();
     assert_eq!(rendered.light.exposure, 1.0, "the panel's");
     assert_eq!(
-        state.borrow().sidecars[0].current,
+        *state.borrow().sidecars[0].current(),
         half,
         "not the sidecar's"
     );
@@ -1266,12 +1266,12 @@ fn a_command_line_exposure_leaves_the_sidecar_as_it_was() {
     app.set_exposure(1.5);
     save(&app, &state);
     assert_eq!(state.borrow().sidecars[0].states(), 3);
-    assert_eq!(on_disk(&raw).current.light.exposure, 1.5);
+    assert_eq!(on_disk(&raw).current().light.exposure, 1.5);
     app.set_exposure(1.0);
     save(&app, &state);
     assert_eq!(state.borrow().sidecars[0].states(), 4);
-    assert_eq!(state.borrow().sidecars[0].current.light.exposure, 1.0);
-    assert_eq!(on_disk(&raw).current.light.exposure, 1.0);
+    assert_eq!(state.borrow().sidecars[0].current().light.exposure, 1.0);
+    assert_eq!(on_disk(&raw).current().light.exposure, 1.0);
     crate::testing::remove_dir_retry(&dir);
 }
 
@@ -1291,7 +1291,7 @@ fn a_frame_left_and_come_back_to_is_its_sidecar_s_again() {
     app.set_exposure(1.0);
     save(&app, &state);
     assert_eq!(state.borrow().sidecars[0].states(), 3);
-    assert_eq!(on_disk(&raw).current, exposed(1.0));
+    assert_eq!(*on_disk(&raw).current(), exposed(1.0));
     crate::testing::remove_dir_retry(&dir);
 }
 
@@ -1310,7 +1310,7 @@ fn a_first_undo_under_an_override_records_nothing_and_keeps_the_redo() {
         let s = &mut st.sidecars[0];
         s.record(exposed(0.75));
         s.undo();
-        assert_eq!(s.current, exposed(0.5));
+        assert_eq!(*s.current(), exposed(0.5));
         assert_eq!(s.redo.len(), 1);
     }
     assert_eq!(app.get_exposure(), 1.0);
@@ -1319,7 +1319,7 @@ fn a_first_undo_under_an_override_records_nothing_and_keeps_the_redo() {
     {
         let st = state.borrow();
         let s = &st.sidecars[0];
-        assert_eq!(s.current, Edit::default());
+        assert_eq!(*s.current(), Edit::default());
         assert_eq!(s.states(), 3, "no state for the override");
         assert!(
             (0..s.states()).all(|i| s.state(i) != Some(&exposed(1.0))),
@@ -1330,9 +1330,9 @@ fn a_first_undo_under_an_override_records_nothing_and_keeps_the_redo() {
     }
     assert_eq!(app.get_exposure(), 0.0);
     app.invoke_redo();
-    assert_eq!(state.borrow().sidecars[0].current, exposed(0.5));
+    assert_eq!(*state.borrow().sidecars[0].current(), exposed(0.5));
     app.invoke_redo();
-    assert_eq!(state.borrow().sidecars[0].current, exposed(0.75));
+    assert_eq!(*state.borrow().sidecars[0].current(), exposed(0.75));
     crate::testing::remove_dir_retry(&dir);
 }
 
@@ -1386,12 +1386,12 @@ fn an_export_of_a_frame_never_opened_keeps_its_iso_seed() {
     // Both on disk, the one the window had and the one it had not:
     // the seed as current, no step, the record on it.
     for raw in [&listed, &gone] {
-        let back = Sidecar::load(raw).unwrap().unwrap();
-        assert_eq!(back.current, rendered, "{}", raw.display());
+        let back = Sidecar::load_as_file(raw).unwrap().unwrap();
+        assert_eq!(*back.current(), rendered, "{}", raw.display());
         assert!(back.history.is_empty());
         assert_eq!(back.current_exports.len(), 1);
         let (loaded, seed_again) = crate::panel::browser::load_sidecar(raw, true);
-        assert_eq!(loaded.current.noise.learned_strength, seed);
+        assert_eq!(loaded.current().noise.learned_strength, seed);
         assert!(!seed_again, "seeded already");
     }
     crate::testing::remove_dir_retry(&dir);
@@ -1526,7 +1526,7 @@ fn one_undo_takes_a_clone_spot_away_when_its_source_lands_after_the_save() {
     };
     let spots = |state: &Rc<Shared>| {
         state.borrow().sidecars[0]
-            .current
+            .current()
             .retouch
             .patches
             .iter()
@@ -1625,7 +1625,7 @@ fn a_source_lands_only_on_the_patch_it_was_chosen_for() {
     // that spot's own source, and nothing is recorded.
     assert_eq!(state.borrow().sidecars[0].states(), states);
     assert_eq!(
-        state.borrow().sidecars[0].current.retouch.patches,
+        state.borrow().sidecars[0].current().retouch.patches,
         vec![developed.clone()]
     );
 
@@ -1706,7 +1706,7 @@ fn a_click_back_keeps_the_rows_above_it_through_what_follows() {
     assert_eq!(walk(&state), (steps.clone(), 3));
     let panel_is_current = |state: &Rc<Shared>| {
         let st = state.borrow();
-        read_edit(&app, &st.develop.edit, st.develop.target) == st.sidecars[0].current
+        read_edit(&app, &st.develop.edit, st.develop.target) == st.sidecars[0].current().clone()
     };
     assert!(
         panel_is_current(&state),
@@ -1845,7 +1845,7 @@ fn a_snapshot_s_icons_restore_and_rename_and_a_double_click_only_renames() {
     app.set_exposure(1.0);
     app.invoke_view_changed();
     rest();
-    let exposure = |state: &Rc<Shared>| state.borrow().sidecars[0].current.light.exposure;
+    let exposure = |state: &Rc<Shared>| state.borrow().sidecars[0].current().light.exposure;
     assert_eq!(exposure(&state), 1.0);
     let middle = |(at, size): (slint::LogicalPosition, slint::LogicalSize)| {
         (at.x + size.width / 2.0, at.y + size.height / 2.0)
@@ -2008,4 +2008,59 @@ fn the_pencil_leaves_a_name_being_typed_on_another_row() {
         .map(|s| s.name.clone())
         .collect();
     assert_eq!(names, ["Base", "Two"], "the typed name kept");
+}
+
+/// An undone state whose masks wait on a shape nothing can measure
+/// (§724), its row clicked over a panel moved on the state before it:
+/// refused, nothing recorded, the state still there to go to and as
+/// written. With the panel unmoved the click goes to it, as written,
+/// and the frame is read-only on it.
+#[test]
+fn a_waiting_undone_row_clicked_over_a_moved_panel_is_refused() {
+    use i_slint_backend_testing::ElementHandle;
+    let app = crate::testing::window(1);
+    app.window()
+        .set_size(slint::LogicalSize::new(1500.0, 1200.0));
+    let (state, _worker) = crate::testing::state_for(&app, crate::testing::folder(1));
+    state.borrow_mut().sidecars[0] = crate::testing::waiting_sidecar();
+    let written = state.borrow().sidecars[0].current_written().into_owned();
+    app.invoke_select(0);
+    app.set_panel_tab("Develop".into());
+    let click = |index: usize| {
+        let row = state.borrow().sidecars[0]
+            .row_of_state(index)
+            .expect("a row for every state");
+        // A pointer move first, so the rows just drawn are there.
+        app.window()
+            .dispatch_event(slint::platform::WindowEvent::PointerMoved {
+                position: slint::LogicalPosition::new(0.0, 0.0),
+            });
+        ElementHandle::find_by_element_id(&app, "HistorySection::history-row")
+            .nth(row)
+            .expect("the row is drawn")
+            .invoke_accessible_default_action();
+    };
+    // Back to the state before it, which has nothing placed.
+    click(0);
+    assert_eq!(state.borrow().sidecars[0].position(), 0);
+    assert!(!state.borrow().sidecars[0].current_waits());
+    // The panel moved on it, and the waiting state's row clicked.
+    app.set_exposure(0.7);
+    click(1);
+    {
+        let st = state.borrow();
+        let s = &st.sidecars[0];
+        assert_eq!(s.position(), 0, "not gone to");
+        assert!(s.history.is_empty(), "nothing recorded");
+        assert_eq!(s.redo.len(), 1, "still there to go to");
+        assert!(s.waits_at(1));
+    }
+    // The panel unmoved: gone to, as written, and read-only.
+    app.set_exposure(0.0);
+    click(1);
+    let st = state.borrow();
+    let s = &st.sidecars[0];
+    assert_eq!(s.position(), 1);
+    assert!(s.current_waits());
+    assert_eq!(s.current_written().into_owned(), written);
 }

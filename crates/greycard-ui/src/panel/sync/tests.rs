@@ -95,7 +95,7 @@ fn a_paste_onto_the_open_frame_keeps_no_switch_its_profile_lacks() {
     assert!(synced.moved.is_empty());
     let line = st.line(2).unwrap();
     assert_eq!(line.history.len(), steps);
-    assert!(!line.current.camera.tone_curve);
+    assert!(!line.current().camera.tone_curve);
     assert!(!app.get_camera_tone_curve());
 }
 use crate::filter;
@@ -136,9 +136,9 @@ fn a_sync_and_a_paste_carry_the_highlight_fill_with_the_demosaic() {
     app.invoke_sync_applied();
     {
         let st = state.borrow();
-        assert_eq!(st.sidecars[0].current, with(1.25, Some("hl-1")));
+        assert_eq!(*st.sidecars[0].current(), with(1.25, Some("hl-1")));
         for f in [1, 2] {
-            let current = &st.sidecars[f].current;
+            let current = &st.sidecars[f].current();
             assert_eq!(current.light.exposure, 1.25, "{f}");
             assert_eq!(current.highlight_fill.as_deref(), Some("hl-1"), "{f}");
         }
@@ -162,10 +162,10 @@ fn a_sync_and_a_paste_carry_the_highlight_fill_with_the_demosaic() {
         &[],
         |_, _| None,
     );
-    assert_eq!(st.line(1).unwrap().current.light.exposure, 1.25);
-    assert_eq!(st.line(1).unwrap().current.highlight_fill, None);
+    assert_eq!(st.line(1).unwrap().current().light.exposure, 1.25);
+    assert_eq!(st.line(1).unwrap().current().highlight_fill, None);
     assert_eq!(
-        st.line(2).unwrap().current.highlight_fill.as_deref(),
+        st.line(2).unwrap().current().highlight_fill.as_deref(),
         Some("hl-9")
     );
     paste_onto(
@@ -179,7 +179,7 @@ fn a_sync_and_a_paste_carry_the_highlight_fill_with_the_demosaic() {
     );
     for f in [1, 2] {
         assert_eq!(
-            st.line(f).unwrap().current.highlight_fill.as_deref(),
+            st.line(f).unwrap().current().highlight_fill.as_deref(),
             Some("hl-1"),
             "{f}"
         );
@@ -195,7 +195,7 @@ fn a_sync_and_a_paste_carry_the_highlight_fill_with_the_demosaic() {
         &[],
         |_, _| None,
     );
-    assert_eq!(st.line(2).unwrap().current.highlight_fill, None, "off");
+    assert_eq!(st.line(2).unwrap().current().highlight_fill, None, "off");
 }
 
 /// The sheet's headings as its rows read: each section's settings
@@ -395,13 +395,15 @@ fn a_sync_onto_unindexed_frames_reads_their_mosaics_off_the_window() {
     {
         let st = state.borrow();
         for s in &st.sidecars[1..] {
-            assert_eq!(s.current.light.exposure, 1.25);
+            assert_eq!(s.current().light.exposure, 1.25);
         }
         assert!(st.views.loads.queue.is_empty());
     }
     for f in &files[1..] {
-        let back = Sidecar::load(f).unwrap().expect("the sidecar written");
-        assert_eq!(back.current.light.exposure, 1.25);
+        let back = Sidecar::load_as_file(f)
+            .unwrap()
+            .expect("the sidecar written");
+        assert_eq!(back.current().light.exposure, 1.25);
     }
     // Read once a session: the next sync runs at once.
     app.set_exposure(-0.5);
@@ -409,7 +411,7 @@ fn a_sync_onto_unindexed_frames_reads_their_mosaics_off_the_window() {
     app.invoke_sync_applied();
     assert_eq!(app.get_status(), "synced 19 sections onto 3 frames");
     assert_eq!(crate::rows::land_pending(&state, &app, &worker), 0);
-    assert_eq!(state.borrow().sidecars[3].current.light.exposure, -0.5);
+    assert_eq!(state.borrow().sidecars[3].current().light.exposure, -0.5);
     crate::rows::HOLD_MOSAICS.with(|h| h.set(false));
     crate::testing::remove_dir_retry(&dir);
 }
@@ -551,25 +553,25 @@ fn apply_lays_the_current_frame_over_the_others_and_saves_them() {
     let st = state.borrow();
     // The frame synced from kept what it had and recorded the
     // panel's state; the frame outside the set is untouched.
-    assert_eq!(st.sidecars[0].current.light.exposure, 1.25);
+    assert_eq!(st.sidecars[0].current().light.exposure, 1.25);
     assert_eq!(st.sidecars[1], Sidecar::default());
     // The frame synced onto has the exposure, keeps its crop,
     // and has one step more.
     let s = &st.sidecars[2];
-    assert_eq!(s.current.light.exposure, 1.25);
-    assert_eq!(s.current.sharpen, Edit::default().sharpen);
-    assert!(s.current.geometry.crop.is_some());
+    assert_eq!(s.current().light.exposure, 1.25);
+    assert_eq!(s.current().sharpen, Edit::default().sharpen);
+    assert!(s.current().geometry.crop.is_some());
     assert_eq!(s.history.len(), 2);
     // Its step is named for the frame it came from; the frame
     // synced from recorded its panel as a plain step.
-    assert_eq!(s.current_label.as_deref(), Some("Sync from IMG_0000.CR3"));
-    assert_eq!(st.sidecars[0].current_label, None);
+    assert_eq!(s.current_label(), Some("Sync from IMG_0000.CR3"));
+    assert_eq!(st.sidecars[0].current_label(), None);
     // Written where the setting says, and it reads back the same.
     let on_disk = Sidecar::path_in(&files[2], greycard_edit::Placement::Folder);
     assert!(on_disk.exists(), "{}", on_disk.display());
-    let back = Sidecar::load(&files[2]).unwrap().unwrap();
-    assert_eq!(back.current, s.current);
-    assert_eq!(back.current_label, s.current_label);
+    let back = Sidecar::load_as_file(&files[2]).unwrap().unwrap();
+    assert_eq!(back.current(), s.current());
+    assert_eq!(back.current_label(), s.current_label());
     assert!(!Sidecar::path_in(&files[1], greycard_edit::Placement::Folder).exists());
     drop(st);
     crate::testing::remove_dir_retry(&dir);
@@ -665,8 +667,16 @@ fn a_profile_skips_another_body_and_a_waiting_blend_is_seeded() {
     let (state, worker) = state_for(&app, folder(3));
     {
         let mut st = state.borrow_mut();
-        st.sidecars[0].current.camera.profile = ProfileChoice::Named("r5".into());
-        st.sidecars[0].current.light.exposure = 0.5;
+        {
+            let mut e = st.sidecars[0].current().clone();
+            e.camera.profile = ProfileChoice::Named("r5".into());
+            st.sidecars[0].record(e);
+        }
+        {
+            let mut e = st.sidecars[0].current().clone();
+            e.light.exposure = 0.5;
+            st.sidecars[0].record(e);
+        }
         // Frames 1 and 2 are raws never developed: each waits for
         // its ISO's blend, as its own line says.
         assert!(!crate::rows::wants_seed(&st, 0));
@@ -686,18 +696,18 @@ fn a_profile_skips_another_body_and_a_waiting_blend_is_seeded() {
     assert_eq!(synced.moved, [1, 2]);
     assert_eq!(synced.profile_left_off, [2]);
     let st = state.borrow();
-    assert_eq!(st.sidecars[1].current.camera.profile.name(), "r5");
-    assert!(st.sidecars[2].current.camera.profile.is_embedded());
-    assert_eq!(st.sidecars[1].current.light.exposure, 0.5);
-    assert_eq!(st.sidecars[2].current.light.exposure, 0.5);
+    assert_eq!(st.sidecars[1].current().camera.profile.name(), "r5");
+    assert!(st.sidecars[2].current().camera.profile.is_embedded());
+    assert_eq!(st.sidecars[1].current().light.exposure, 0.5);
+    assert_eq!(st.sidecars[2].current().light.exposure, 0.5);
     // Noise was not synced, so each frame's own ISO seeded its
     // blend, under the sync's step, and is not seeded again.
     let blend = |iso| greycard_edit::Noise::blend_for_iso(Some(iso));
     assert_eq!(
-        st.sidecars[1].history[0].edit.noise.learned_strength,
+        st.sidecars[1].history[0].edit().noise.learned_strength,
         blend(3200)
     );
-    assert_eq!(st.sidecars[2].current.noise.learned_strength, blend(100));
+    assert_eq!(st.sidecars[2].current().noise.learned_strength, blend(100));
     assert!((0..3).all(|c| !crate::rows::wants_seed(&st, c)));
     assert!(
         synced_words(
@@ -732,8 +742,8 @@ fn a_profile_skips_another_body_and_a_waiting_blend_is_seeded() {
     let st = state.borrow();
     assert!((0..3).all(|c| !crate::rows::wants_seed(&st, c)));
     assert_eq!(
-        st.sidecars[2].current.noise.learned_strength,
-        st.sidecars[0].current.noise.learned_strength
+        st.sidecars[2].current().noise.learned_strength,
+        st.sidecars[0].current().noise.learned_strength
     );
 }
 
@@ -752,8 +762,16 @@ fn a_sync_carries_the_exposure_s_zero_with_the_exposure() {
     let (state, worker) = state_for(&app, folder(3));
     {
         let mut st = state.borrow_mut();
-        st.sidecars[0].current.light.exposure = 0.3;
-        st.sidecars[0].current.light.baseline = older;
+        {
+            let mut e = st.sidecars[0].current().clone();
+            e.light.exposure = 0.3;
+            st.sidecars[0].record(e);
+        }
+        {
+            let mut e = st.sidecars[0].current().clone();
+            e.light.baseline = older;
+            st.sidecars[0].record(e);
+        }
     }
     let none = |_: &State, _: usize| None;
     let exposure = Choice {
@@ -781,8 +799,8 @@ fn a_sync_carries_the_exposure_s_zero_with_the_exposure() {
         );
         assert_eq!(synced.moved, [1]);
         let st = state.borrow();
-        assert_eq!(st.sidecars[1].current.light.exposure, 0.3);
-        assert_eq!(st.sidecars[1].current.light.baseline, older, "{choice:?}");
+        assert_eq!(st.sidecars[1].current().light.exposure, 0.3);
+        assert_eq!(st.sidecars[1].current().light.baseline, older, "{choice:?}");
     }
     // From the frame on screen, through the panel.
     open_row(&mut state.borrow_mut(), &app, &worker, 0, false);
@@ -798,13 +816,25 @@ fn a_sync_carries_the_exposure_s_zero_with_the_exposure() {
         &[],
         none,
     );
-    assert_eq!(state.borrow().sidecars[2].current.light.baseline, older);
+    assert_eq!(state.borrow().sidecars[2].current().light.baseline, older);
     // A new edit carries none, over an older one's.
     {
         let mut st = state.borrow_mut();
-        st.sidecars[1].current.light.baseline = older;
-        st.sidecars[2].current.light.baseline = None;
-        st.sidecars[2].current.light.exposure = 0.5;
+        {
+            let mut e = st.sidecars[1].current().clone();
+            e.light.baseline = older;
+            st.sidecars[1].record(e);
+        }
+        {
+            let mut e = st.sidecars[2].current().clone();
+            e.light.baseline = None;
+            st.sidecars[2].record(e);
+        }
+        {
+            let mut e = st.sidecars[2].current().clone();
+            e.light.exposure = 0.5;
+            st.sidecars[2].record(e);
+        }
     }
     sync_onto(
         &mut state.borrow_mut(),
@@ -818,15 +848,19 @@ fn a_sync_carries_the_exposure_s_zero_with_the_exposure() {
     );
     {
         let st = state.borrow();
-        assert_eq!(st.sidecars[1].current.light.exposure, 0.5);
-        assert_eq!(st.sidecars[1].current.light.baseline, None);
+        assert_eq!(st.sidecars[1].current().light.exposure, 0.5);
+        assert_eq!(st.sidecars[1].current().light.baseline, None);
     }
     // Shifted: the older source's +0.3 moves a new frame's own +0.2
     // to +0.5 from that frame's own zero, not the source's.
     {
         let mut st = state.borrow_mut();
         st.sidecars[1] = Sidecar::default();
-        st.sidecars[1].current.light.exposure = 0.2;
+        {
+            let mut e = st.sidecars[1].current().clone();
+            e.light.exposure = 0.2;
+            st.sidecars[1].record(e);
+        }
     }
     let shift = SyncShift {
         exposure: true,
@@ -845,8 +879,8 @@ fn a_sync_carries_the_exposure_s_zero_with_the_exposure() {
     assert_eq!(synced.moved, [1]);
     assert_eq!(moved.exposure, Some(0.3));
     let st = state.borrow();
-    assert!((st.sidecars[1].current.light.exposure - 0.5).abs() < 1e-6);
-    assert_eq!(st.sidecars[1].current.light.baseline, None);
+    assert!((st.sidecars[1].current().light.exposure - 0.5).abs() < 1e-6);
+    assert_eq!(st.sidecars[1].current().light.baseline, None);
 }
 
 /// The demosaic goes as the source frame runs it, and only to the
@@ -859,7 +893,11 @@ fn a_demosaic_syncs_as_it_runs_and_only_to_its_own_mosaic() {
     use greycard_core::raw::Mosaic;
     let app = window(3);
     let (state, worker) = state_for(&app, folder(3));
-    state.borrow_mut().sidecars[0].current.demosaic = greycard_edit::Demosaic::Amaze;
+    {
+        let mut e = state.borrow_mut().sidecars[0].current().clone();
+        e.demosaic = greycard_edit::Demosaic::Amaze;
+        state.borrow_mut().sidecars[0].record(e);
+    }
     open_row(&mut state.borrow_mut(), &app, &worker, 0, false);
     state.borrow_mut().views.picked = vec![0, 1, 2];
     // What the worker has said of each file's mosaic.
@@ -885,10 +923,10 @@ fn a_demosaic_syncs_as_it_runs_and_only_to_its_own_mosaic() {
     {
         let st = state.borrow();
         assert_eq!(
-            st.sidecars[1].current.demosaic,
+            st.sidecars[1].current().demosaic,
             greycard_edit::Demosaic::Markesteijn3
         );
-        assert_eq!(st.sidecars[2].current.demosaic, Edit::default().demosaic);
+        assert_eq!(st.sidecars[2].current().demosaic, Edit::default().demosaic);
         assert!(
             profile_left_off_words(&st, &synced)
                 .ends_with("; the demosaic left off IMG_0002.CR3 (a method of another mosaic)")
@@ -896,7 +934,11 @@ fn a_demosaic_syncs_as_it_runs_and_only_to_its_own_mosaic() {
     }
 
     // From a Bayer frame: its RCD to the Bayer frame alone.
-    state.borrow_mut().sidecars[2].current.demosaic = greycard_edit::Demosaic::Rcd;
+    {
+        let mut e = state.borrow().sidecars[2].current().clone();
+        e.demosaic = greycard_edit::Demosaic::Rcd;
+        state.borrow_mut().sidecars[2].record(e);
+    }
     state.borrow_mut().sidecars[1] = Sidecar::default();
     open_row(&mut state.borrow_mut(), &app, &worker, 2, false);
     state.borrow_mut().views.picked = vec![2, 1, 0];
@@ -909,9 +951,9 @@ fn a_demosaic_syncs_as_it_runs_and_only_to_its_own_mosaic() {
     );
     assert_eq!(synced.demosaic_left_off, [0, 1]);
     let st = state.borrow();
-    assert_eq!(st.sidecars[1].current.demosaic, Edit::default().demosaic);
+    assert_eq!(st.sidecars[1].current().demosaic, Edit::default().demosaic);
     assert_eq!(
-        st.sidecars[0].current.demosaic,
+        st.sidecars[0].current().demosaic,
         greycard_edit::Demosaic::Amaze
     );
     // And the rule alone.
@@ -968,7 +1010,11 @@ fn a_sync_takes_the_mosaics_from_the_library_and_reads_no_file() {
         );
         // From the index, not a read: nothing was kept as read.
         assert!(st.develop.mosaics.is_empty() && st.develop.stances.is_empty());
-        st.sidecars[0].current.demosaic = greycard_edit::Demosaic::Amaze;
+        {
+            let mut e = st.sidecars[0].current().clone();
+            e.demosaic = greycard_edit::Demosaic::Amaze;
+            st.sidecars[0].record(e);
+        }
     }
     open_row(&mut state.borrow_mut(), &app, &worker, 0, false);
     state.borrow_mut().views.picked = vec![0, 1, 2];
@@ -982,7 +1028,7 @@ fn a_sync_takes_the_mosaics_from_the_library_and_reads_no_file() {
     assert_eq!(synced.demosaic_left_off, [2]);
     let st = state.borrow();
     assert_eq!(
-        st.sidecars[1].current.demosaic,
+        st.sidecars[1].current().demosaic,
         greycard_edit::Demosaic::Markesteijn3
     );
     assert!(
@@ -1118,11 +1164,11 @@ fn a_preset_click_with_three_selected_lays_it_over_each_and_leaves_the_rest() {
     let st = state.borrow();
     // The current frame took it, through the panel, as it always
     // has.
-    assert_eq!(st.sidecars[0].current.light.exposure, 0.5);
+    assert_eq!(st.sidecars[0].current().light.exposure, 0.5);
     assert_eq!(st.sidecars[0].history.len(), 1);
     // The other selected frame took it, through the sidecar, as a
     // sync's target does.
-    assert_eq!(st.sidecars[1].current.light.exposure, 0.5);
+    assert_eq!(st.sidecars[1].current().light.exposure, 0.5);
     assert_eq!(st.sidecars[1].history.len(), 1);
     // Already had it: no new step.
     assert_eq!(st.sidecars[2].history.len(), 1);
@@ -1130,12 +1176,12 @@ fn a_preset_click_with_three_selected_lays_it_over_each_and_leaves_the_rest() {
     // step under the set's words; the one that had it, none.
     for f in [0, 1] {
         assert_eq!(
-            st.sidecars[f].current_label.as_deref(),
+            st.sidecars[f].current_label(),
             Some("Preset ×3: Portra 400"),
             "frame {f}"
         );
     }
-    assert_eq!(st.sidecars[2].current_label, None);
+    assert_eq!(st.sidecars[2].current_label(), None);
     assert_eq!(
         app.get_history_rows()
             .row_data(0)
@@ -1153,9 +1199,9 @@ fn a_preset_click_with_three_selected_lays_it_over_each_and_leaves_the_rest() {
     // Written where the setting says.
     let on_disk = Sidecar::path_in(&files[1], greycard_edit::Placement::Folder);
     assert!(on_disk.exists(), "{}", on_disk.display());
-    let back = Sidecar::load(&files[1]).unwrap().unwrap();
-    assert_eq!(back.current, st.sidecars[1].current);
-    assert_eq!(back.current_label, st.sidecars[1].current_label);
+    let back = Sidecar::load_as_file(&files[1]).unwrap().unwrap();
+    assert_eq!(back.current(), st.sidecars[1].current());
+    assert_eq!(back.current_label(), st.sidecars[1].current_label());
     assert!(!Sidecar::path_in(&files[3], greycard_edit::Placement::Folder).exists());
     drop(st);
     crate::testing::remove_dir_retry(&dir);
@@ -1190,11 +1236,11 @@ fn a_preset_click_with_one_frame_selected_is_unchanged() {
     assert_eq!(chosen_frames(&state.borrow()), vec![0]);
 
     app.invoke_preset_applied(0);
-    assert_eq!(state.borrow().sidecars[0].current.light.exposure, 0.5);
+    assert_eq!(state.borrow().sidecars[0].current().light.exposure, 0.5);
     assert_eq!(state.borrow().sidecars[0].history.len(), 1);
     assert_eq!(app.get_status(), "Portra 400 applied");
     assert_eq!(
-        state.borrow().sidecars[0].current_label.as_deref(),
+        state.borrow().sidecars[0].current_label(),
         Some("Preset: Portra 400")
     );
     assert_eq!(state.borrow().sidecars[1], Sidecar::default());
@@ -1235,7 +1281,11 @@ fn a_preset_carrying_noise_leaves_the_learned_tier_to_each_frames_iso() {
     {
         let mut st = state.borrow_mut();
         st.sidecars[1] = Sidecar::default();
-        st.sidecars[0].current.noise.learned_strength = 0.123;
+        {
+            let mut e = st.sidecars[0].current().clone();
+            e.noise.learned_strength = 0.123;
+            st.sidecars[0].record(e);
+        }
         assert!(!crate::rows::wants_seed(&st, 0));
         assert!(crate::rows::wants_seed(&st, 1));
     }
@@ -1258,19 +1308,20 @@ fn a_preset_carrying_noise_leaves_the_learned_tier_to_each_frames_iso() {
     let st = state.borrow();
     let blend = |iso| greycard_edit::Noise::blend_for_iso(Some(iso));
     for f in [0, 1] {
-        assert!(st.sidecars[f].current.noise.profiled, "frame {f}");
-        assert_eq!(st.sidecars[f].current.noise.strength, 1.8, "frame {f}");
+        assert!(st.sidecars[f].current().noise.profiled, "frame {f}");
+        assert_eq!(st.sidecars[f].current().noise.strength, 1.8, "frame {f}");
         assert_eq!(
-            st.sidecars[f].current.noise.learned,
+            st.sidecars[f].current().noise.learned,
             Learned::Off,
             "the preset's Noise never carries a tier, frame {f}"
         );
     }
     assert_eq!(
-        st.sidecars[0].current.noise.learned_strength, 0.123,
+        st.sidecars[0].current().noise.learned_strength,
+        0.123,
         "its own blend, not the ISO's"
     );
-    assert_eq!(st.sidecars[1].current.noise.learned_strength, blend(3200));
+    assert_eq!(st.sidecars[1].current().noise.learned_strength, blend(3200));
     assert!(!crate::rows::wants_seed(&st, 1), "seeded");
     assert!(crate::rows::wants_seed(&st, 2), "not a target: still waits");
 }
@@ -1324,11 +1375,12 @@ fn a_preset_click_checks_every_bodys_fit_the_open_frame_included() {
         "the open frame fit, so it stands alone"
     );
     let st = state.borrow();
-    assert_eq!(st.sidecars[1].current.camera.profile.name(), "r5");
-    assert!(st.sidecars[2].current.camera.profile.is_embedded());
-    assert_eq!(st.sidecars[1].current.light.exposure, 0.4);
+    assert_eq!(st.sidecars[1].current().camera.profile.name(), "r5");
+    assert!(st.sidecars[2].current().camera.profile.is_embedded());
+    assert_eq!(st.sidecars[1].current().light.exposure, 0.4);
     assert_eq!(
-        st.sidecars[2].current.light.exposure, 0.4,
+        st.sidecars[2].current().light.exposure,
+        0.4,
         "Light still lands"
     );
     drop(st);
@@ -1392,14 +1444,15 @@ fn apply_preset_names_the_open_frame_among_a_left_off_profile() {
     );
     let st = state.borrow();
     assert!(
-        st.sidecars[0].current.camera.profile.is_embedded(),
+        st.sidecars[0].current().camera.profile.is_embedded(),
         "left off the open frame"
     );
     assert_eq!(
-        st.sidecars[0].current.light.exposure, 0.4,
+        st.sidecars[0].current().light.exposure,
+        0.4,
         "Light still lands"
     );
-    assert_eq!(st.sidecars[1].current.camera.profile.name(), "r5");
+    assert_eq!(st.sidecars[1].current().camera.profile.name(), "r5");
 }
 
 /// A single-frame click that leaves the camera profile off says
@@ -1456,9 +1509,9 @@ fn a_single_frame_click_names_a_left_off_profile_and_the_words_ride_the_develop(
     // The profile was left off; the rest of the preset still
     // landed.
     let st = state.borrow();
-    assert!(st.sidecars[0].current.camera.profile.is_embedded());
+    assert!(st.sidecars[0].current().camera.profile.is_embedded());
     assert_eq!(
-        st.sidecars[0].current.white_balance,
+        st.sidecars[0].current().white_balance,
         WhiteBalance::Custom {
             temperature: 3200.0,
             tint: 0.0
@@ -1547,7 +1600,7 @@ fn a_preset_click_in_culling_saves_the_open_frames_sidecar() {
             "{tag}: the click left culling"
         );
         assert_eq!(
-            state.borrow().sidecars[0].current.light.exposure,
+            state.borrow().sidecars[0].current().light.exposure,
             0.5,
             "{tag}"
         );
@@ -1556,8 +1609,8 @@ fn a_preset_click_in_culling_saves_the_open_frames_sidecar() {
             "{tag}: the step was saved, not just recorded in memory"
         );
         assert_eq!(
-            Sidecar::load(&files[0]).unwrap().unwrap().current,
-            state.borrow().sidecars[0].current,
+            Sidecar::load_as_file(&files[0]).unwrap().unwrap().current(),
+            state.borrow().sidecars[0].current(),
             "{tag}"
         );
         let words = if tag == "one" {
@@ -1566,19 +1619,15 @@ fn a_preset_click_in_culling_saves_the_open_frames_sidecar() {
             "Preset ×2: Portra 400"
         };
         assert_eq!(
-            Sidecar::load(&files[0])
+            Sidecar::load_as_file(&files[0])
                 .unwrap()
                 .unwrap()
-                .current_label
-                .as_deref(),
+                .current_label(),
             Some(words),
             "{tag}"
         );
         if tag == "set" {
-            assert_eq!(
-                state.borrow().sidecars[1].current_label.as_deref(),
-                Some(words)
-            );
+            assert_eq!(state.borrow().sidecars[1].current_label(), Some(words));
         }
         crate::testing::remove_dir_retry(&dir);
     }
@@ -1683,7 +1732,7 @@ fn the_history_rows_read_a_named_step_by_its_words() {
     assert_eq!(app.get_history_current(), 1);
     app.invoke_redo();
     assert_eq!(
-        state.borrow().sidecars[0].current_label.as_deref(),
+        state.borrow().sidecars[0].current_label(),
         Some("Preset: Faded film")
     );
 
@@ -1809,18 +1858,18 @@ fn copy_and_paste_lay_the_copy_over_the_set_and_leave_its_source() {
         let st = state.borrow();
         for f in [0, 3] {
             let s = &st.sidecars[f];
-            assert_eq!(s.current.light.exposure, 0.8, "{f}");
-            assert_eq!(s.current_label.as_deref(), Some("Paste from IMG_0001.CR3"));
-            let back = Sidecar::load(&files[f]).unwrap().unwrap();
-            assert_eq!(back.current, s.current);
-            assert_eq!(back.current_label, s.current_label);
+            assert_eq!(s.current().light.exposure, 0.8, "{f}");
+            assert_eq!(s.current_label(), Some("Paste from IMG_0001.CR3"));
+            let back = Sidecar::load_as_file(&files[f]).unwrap().unwrap();
+            assert_eq!(back.current(), s.current());
+            assert_eq!(back.current_label(), s.current_label());
         }
         // The crop stayed the frame's own; one step more.
-        assert!(st.sidecars[3].current.geometry.crop.is_some());
+        assert!(st.sidecars[3].current().geometry.crop.is_some());
         assert_eq!(st.sidecars[3].history.len(), 2);
         // The source is untouched by the paste; the frame outside
         // the set is untouched altogether.
-        assert_eq!(st.sidecars[1].current_label, None);
+        assert_eq!(st.sidecars[1].current_label(), None);
         assert_eq!(st.sidecars[2], Sidecar::default());
         assert_eq!(
             st.sheets.sync_last.as_ref().map(|c| c.choice()),
@@ -1906,8 +1955,8 @@ fn a_paste_carries_the_display_curve_when_its_row_is_on() {
     {
         let st = state.borrow();
         let s = &st.sidecars[3];
-        assert_eq!(s.current.light.exposure, 0.4);
-        assert_eq!(s.current.display_curve, DisplayCurve::Channels);
+        assert_eq!(s.current().light.exposure, 0.4);
+        assert_eq!(s.current().display_curve, DisplayCurve::Channels);
     }
 
     // Light and the curve: frame 3 takes AgX, in one more step
@@ -1917,16 +1966,16 @@ fn a_paste_carries_the_display_curve_when_its_row_is_on() {
     app.invoke_sync_applied();
     let st = state.borrow();
     let s = &st.sidecars[3];
-    assert_eq!(s.current.display_curve, DisplayCurve::Agx);
-    assert_eq!(s.current.light.exposure, 0.4);
-    assert_eq!(s.current_label.as_deref(), Some("Paste from IMG_0001.CR3"));
+    assert_eq!(s.current().display_curve, DisplayCurve::Agx);
+    assert_eq!(s.current().light.exposure, 0.4);
+    assert_eq!(s.current_label(), Some("Paste from IMG_0001.CR3"));
     assert_eq!(s.history.len(), 2);
     let jpeg = &st.sidecars[2];
-    assert_eq!(jpeg.current.light.exposure, 0.4);
-    assert_eq!(jpeg.current.display_curve, DisplayCurve::Channels);
+    assert_eq!(jpeg.current().light.exposure, 0.4);
+    assert_eq!(jpeg.current().display_curve, DisplayCurve::Channels);
     // Frame 0, outside the set, is as it was.
-    assert_eq!(st.sidecars[0].current.display_curve, DisplayCurve::Agx);
-    assert_eq!(st.sidecars[0].current.light.exposure, 0.0);
+    assert_eq!(st.sidecars[0].current().display_curve, DisplayCurve::Agx);
+    assert_eq!(st.sidecars[0].current().light.exposure, 0.0);
 }
 
 /// Pasted onto the frame on screen, the curve reaches the panel's
@@ -2032,15 +2081,15 @@ fn a_paste_onto_the_frame_on_screen_goes_through_the_panel_and_undoes() {
     assert_eq!(app.get_exposure(), -0.6);
     assert_eq!(history_rows(&app), ["Paste from IMG_0000.CR3", "Original"]);
     assert_eq!(
-        state.borrow().sidecars[2].current_label.as_deref(),
+        state.borrow().sidecars[2].current_label(),
         Some("Paste from IMG_0000.CR3")
     );
     // Undone as any step is: the frame back as it was.
     app.invoke_undo();
     assert_eq!(app.get_exposure(), 0.0);
-    assert_eq!(state.borrow().sidecars[2].current.light.exposure, 0.0);
+    assert_eq!(state.borrow().sidecars[2].current().light.exposure, 0.0);
     // The frame it was copied from never took a step of it.
-    assert!(state.borrow().sidecars[0].current_label.is_none());
+    assert!(state.borrow().sidecars[0].current_label().is_none());
 }
 
 /// The paste sheet from the keys alone (issue 78): it opens with
@@ -2398,7 +2447,7 @@ fn a_pasted_subject_mask_is_made_for_each_frame_and_never_shared() {
     choose(&app, |s| s == Section::Adjustments);
     app.invoke_sync_applied();
     assert_eq!(
-        state.borrow().sidecars[2].current.adjustments[0].id,
+        state.borrow().sidecars[2].current().adjustments[0].id,
         1,
         "the same key"
     );
@@ -2465,7 +2514,7 @@ fn a_pasted_part_keeps_its_person() {
         "pasted 1 section from IMG_0000.CR3 onto 1 frame"
     );
     let st = state.borrow();
-    let pasted = &st.sidecars[2].current.adjustments[0].mask.components[0].shape;
+    let pasted = &st.sidecars[2].current().adjustments[0].mask.components[0].shape;
     assert_eq!(pasted, &part);
 }
 
@@ -2514,12 +2563,9 @@ fn a_paste_in_culling_goes_onto_the_sidecars_and_stays_in_culling() {
     );
     for f in [0, 1] {
         let st = state.borrow();
-        assert_eq!(st.sidecars[f].current.light.exposure, 1.1, "{f}");
-        let back = Sidecar::load(&files[f]).unwrap().unwrap();
-        assert_eq!(
-            back.current_label.as_deref(),
-            Some("Paste from IMG_0002.CR3")
-        );
+        assert_eq!(st.sidecars[f].current().light.exposure, 1.1, "{f}");
+        let back = Sidecar::load_as_file(&files[f]).unwrap().unwrap();
+        assert_eq!(back.current_label(), Some("Paste from IMG_0002.CR3"));
     }
     crate::testing::remove_dir_retry(&dir);
 }
@@ -2546,7 +2592,7 @@ fn a_selection_moved_under_the_paste_sheet_is_refused() {
         st.sidecars
             .iter()
             .skip(1)
-            .all(|s| s.current_label.is_none())
+            .all(|s| s.current_label().is_none())
     );
 }
 
@@ -2724,7 +2770,7 @@ fn the_sheet_sends_one_part_and_one_mask_and_the_rest_stays() {
         "synced 1 section and 2 parts onto 1 frame"
     );
     let st = state.borrow();
-    let got = &st.sidecars[2].current;
+    let got = &st.sidecars[2].current();
     assert_eq!(got.light.exposure, 0.7);
     assert_eq!(got.detail.dehaze, 0.4);
     // The rest of Light and Detail is the frame's own.
@@ -2795,7 +2841,7 @@ fn a_mask_pasted_alone_replaces_the_frames_and_the_sheet_remembers() {
     );
     {
         let st = state.borrow();
-        let got = &st.sidecars[2].current;
+        let got = &st.sidecars[2].current();
         // Replacing, as masks always have: the frame's own gone,
         // the Sky carried as its ask, to be found on this frame.
         assert_eq!(mask_names(got), ["Sky 1"]);
@@ -2863,7 +2909,7 @@ fn copy_masks_opens_the_paste_on_every_mask_and_nothing_else() {
     );
     {
         let st = state.borrow();
-        let got = &st.sidecars[2].current;
+        let got = &st.sidecars[2].current();
         assert_eq!(mask_names(got), ["Sky 1", "Face 2"]);
         assert_eq!(got.light.exposure, 0.0, "no Light was chosen");
         assert_eq!(got.light.tone.shadows, -0.5);
@@ -2908,7 +2954,7 @@ fn copy_masks_keeps_the_join_and_leaves_the_sections_chosen() {
     press_join(&app, false);
     app.invoke_sync_applied();
     assert_eq!(
-        mask_names(&state.borrow().sidecars[1].current),
+        mask_names(state.borrow().sidecars[1].current()),
         ["Sky 1", "Face 2"]
     );
     app.invoke_select(0);
@@ -2943,8 +2989,8 @@ fn a_mask_copied_alone_joins_the_selection_and_the_open_frame() {
     );
     {
         let st = state.borrow();
-        assert_eq!(mask_names(&st.sidecars[1].current), ["Face 2"]);
-        let got = &st.sidecars[2].current;
+        assert_eq!(mask_names(st.sidecars[1].current()), ["Face 2"]);
+        let got = &st.sidecars[2].current();
         assert_eq!(mask_names(got), ["Mine 1", "Face 2"]);
         assert_eq!(got.adjustments[1].id, 2);
         assert_eq!(
@@ -2955,7 +3001,7 @@ fn a_mask_copied_alone_joins_the_selection_and_the_open_frame() {
         assert_eq!(got.light.tone.shadows, -0.5, "its own look kept");
         assert_eq!(got.light.exposure, 0.0, "nothing but the mask");
         assert_eq!(
-            st.sidecars[2].current_label.as_deref(),
+            st.sidecars[2].current_label(),
             Some("Paste from IMG_0000.CR3")
         );
         assert_eq!(mask_names(&st.develop.edit), ["Sky 1", "Face 2"]);
@@ -2971,7 +3017,7 @@ fn a_mask_copied_alone_joins_the_selection_and_the_open_frame() {
     assert_eq!(names(&state), ["Sky 1", "Face 2", "Mine 1"]);
     assert_eq!(app.get_adjustment_names().row_count(), 4);
     assert_eq!(
-        state.borrow().sidecars[0].current_label.as_deref(),
+        state.borrow().sidecars[0].current_label(),
         Some("Paste from IMG_0002.CR3")
     );
     app.invoke_undo();
@@ -3005,8 +3051,8 @@ fn a_masks_output_sharpen_travels_with_its_mask() {
         app.invoke_paste_asked();
         app.invoke_sync_applied();
         let st = state.borrow();
-        assert_eq!(share_of(&st.sidecars[2].current, "Sky 1"), Some(0.4));
-        assert_eq!(share_of(&st.sidecars[2].current, "Face 2"), Some(0.0));
+        assert_eq!(share_of(st.sidecars[2].current(), "Sky 1"), Some(0.4));
+        assert_eq!(share_of(st.sidecars[2].current(), "Face 2"), Some(0.0));
     }
     // Paste mask onto frame 2.
     {
@@ -3016,7 +3062,7 @@ fn a_masks_output_sharpen_travels_with_its_mask() {
         state.borrow_mut().views.picked = vec![2];
         app.invoke_mask_pasted();
         let st = state.borrow();
-        assert_eq!(share_of(&st.sidecars[2].current, "Sky 1"), Some(0.4));
+        assert_eq!(share_of(st.sidecars[2].current(), "Sky 1"), Some(0.4));
     }
     // A sync of the mask alone onto frame 2.
     {
@@ -3028,7 +3074,7 @@ fn a_masks_output_sharpen_travels_with_its_mask() {
         tick(&app, "mask.1");
         app.invoke_sync_applied();
         let st = state.borrow();
-        assert_eq!(share_of(&st.sidecars[2].current, "Sky 1"), Some(0.4));
+        assert_eq!(share_of(st.sidecars[2].current(), "Sky 1"), Some(0.4));
     }
     // A preset of the mask, laid over frame 2.
     {
@@ -3046,7 +3092,7 @@ fn a_masks_output_sharpen_travels_with_its_mask() {
             .expect("saved")
             .preset;
         assert_eq!(share_of(&saved.edit, "Sky 1"), Some(0.4));
-        let out = saved.applied(&state.borrow().sidecars[2].current);
+        let out = saved.applied(state.borrow().sidecars[2].current());
         assert_eq!(share_of(&out, "Sky 1"), Some(0.4));
         drop(app);
         crate::testing::remove_dir_retry(&dir);
@@ -3055,11 +3101,11 @@ fn a_masks_output_sharpen_travels_with_its_mask() {
     {
         let (_app, state, _worker) = two_frames();
         let mut st = state.borrow_mut();
-        let mut own = st.sidecars[2].current.clone();
+        let mut own = st.sidecars[2].current().clone();
         own.adjustments[0].look.detail.output_sharpen = -0.7;
         st.sidecars[2].record(own);
         let id = st.sidecars[2].new_version(None, Some("Soft")).unwrap();
-        let copy = &st.sidecars[2].version(&id).unwrap().line.current;
+        let copy = &st.sidecars[2].version(&id).unwrap().line.current();
         assert_eq!(share_of(copy, "Mine 1"), Some(-0.7));
     }
 }
@@ -3074,7 +3120,7 @@ fn paste_mask_leaves_a_frame_at_the_most_masks_as_it_is() {
         .collect();
     {
         let mut st = state.borrow_mut();
-        let mut own = st.sidecars[2].current.clone();
+        let mut own = st.sidecars[2].current().clone();
         own.adjustments = full.clone();
         st.sidecars[2].record(own);
     }
@@ -3082,7 +3128,7 @@ fn paste_mask_leaves_a_frame_at_the_most_masks_as_it_is() {
     state.borrow_mut().views.picked = vec![0, 2];
     app.invoke_mask_pasted();
     assert_eq!(app.get_status(), "the 2 frames had these already");
-    assert_eq!(state.borrow().sidecars[2].current.adjustments, full);
+    assert_eq!(state.borrow().sidecars[2].current().adjustments, full);
 }
 
 /// Enter on a check of the preset sheet is its Save, once there
@@ -3157,7 +3203,7 @@ fn the_preset_sheet_saves_a_single_part_and_a_single_mask() {
     assert_eq!(mask_names(&saved.edit), ["Face 2"]);
     // Laid over frame 2's edit: the dehaze, the mask in place of
     // its own, and nothing else.
-    let out = saved.applied(&state.borrow().sidecars[2].current);
+    let out = saved.applied(state.borrow().sidecars[2].current());
     assert_eq!(out.detail.dehaze, 0.4);
     assert_eq!(out.detail.texture, 0.2);
     assert_eq!(mask_names(&out), ["Face 2"]);
@@ -3486,7 +3532,7 @@ fn a_relative_sync_moves_each_frames_rendered_card_by_the_shift() {
         });
     }
     let before: Vec<Edit> = (0..4)
-        .map(|c| state.borrow().sidecars[c].current.clone())
+        .map(|c| state.borrow().sidecars[c].current().clone())
         .collect();
     app.invoke_select(0);
     // The source warmed 300 K from its as-shot and half a stop up.
@@ -3514,7 +3560,7 @@ fn a_relative_sync_moves_each_frames_rendered_card_by_the_shift() {
     );
 
     let after: Vec<Edit> = (0..4)
-        .map(|c| state.borrow().sidecars[c].current.clone())
+        .map(|c| state.borrow().sidecars[c].current().clone())
         .collect();
     // Each from its own by the source's mired move (300 K at its
     // own light, the f32 of the panel's slider aside) and half a
@@ -3676,7 +3722,7 @@ fn a_middle_click_on_the_panels_sync_syncs_without_the_sheet() {
     let edits = || {
         let st = state.borrow();
         [3, 4].map(|f| {
-            let e = &st.sidecars[f].current;
+            let e = &st.sidecars[f].current();
             (e.light.exposure, e.color.vibrance)
         })
     };
@@ -3700,7 +3746,7 @@ fn a_middle_click_on_the_panels_sync_syncs_without_the_sheet() {
 /// Frame `c`'s line given an exposure and a vibrance of its own.
 fn own_edit(state: &Rc<Shared>, c: usize, exposure: f32, vibrance: f32) {
     let mut st = state.borrow_mut();
-    let mut e = st.line(c).unwrap().current.clone();
+    let mut e = st.line(c).unwrap().current().clone();
     e.light.exposure = exposure;
     e.color.vibrance = vibrance;
     assert!(st.line_mut(c).unwrap().record(e));
@@ -3752,17 +3798,17 @@ fn a_middle_click_on_a_frame_syncs_it_onto_the_rest_of_the_set() {
         let st = state.borrow();
         assert_eq!(chosen_frames(&st), vec![1, 3, 4], "the set stays");
         assert_eq!(st.current, Some(1), "the open frame stays");
-        let e = &st.sidecars[4].current;
+        let e = &st.sidecars[4].current();
         assert_eq!((e.light.exposure, e.color.vibrance), (-1.0, 0.0));
-        assert_eq!(st.sidecars[1].current.light.exposure, -1.0);
+        assert_eq!(st.sidecars[1].current().light.exposure, -1.0);
         assert_eq!(
             st.sidecars[3].history.len(),
             source_steps,
             "no step on the source"
         );
-        assert_eq!(st.sidecars[3].current.color.vibrance, 0.5);
+        assert_eq!(st.sidecars[3].current().color.vibrance, 0.5);
         assert_eq!(
-            st.sidecars[4].current_label.as_deref(),
+            st.sidecars[4].current_label(),
             Some("Sync from IMG_0003.CR3")
         );
     }
@@ -3777,7 +3823,7 @@ fn a_middle_click_on_a_frame_syncs_it_onto_the_rest_of_the_set() {
     // The open frame's step is undone as any is.
     app.invoke_undo();
     assert_eq!(app.get_exposure(), 0.6);
-    assert_eq!(state.borrow().sidecars[1].current.light.exposure, 0.6);
+    assert_eq!(state.borrow().sidecars[1].current().light.exposure, 0.6);
 }
 
 /// A middle click on a frame outside the set lands on the whole
@@ -3841,7 +3887,7 @@ fn a_middle_click_outside_the_set_syncs_onto_the_set() {
     let st = state.borrow();
     assert_eq!(chosen_frames(&st), vec![1]);
     assert_eq!(st.current, Some(1));
-    assert_eq!(st.sidecars[1].current.light.exposure, -1.0);
+    assert_eq!(st.sidecars[1].current().light.exposure, -1.0);
     drop(st);
     let said = said(&state, &app);
     assert!(
@@ -3883,7 +3929,7 @@ fn a_middle_release_in_a_left_press_or_after_a_cancel_syncs_nothing() {
         released(PointerEventButton::Left),
     ]);
     assert_eq!(
-        state.borrow().sidecars[1].current.light.exposure,
+        state.borrow().sidecars[1].current().light.exposure,
         0.0,
         "no sync"
     );
@@ -3928,9 +3974,9 @@ fn a_middle_click_onto_the_open_frame_writes_what_its_panel_held() {
     own_edit(&state, 1, 0.5, 0.0);
     app.invoke_select(0);
     let on_disk = || {
-        Sidecar::load(&files[0])
+        Sidecar::load_as_file(&files[0])
             .unwrap()
-            .map(|s| (s.current.light.exposure, s.current.color.vibrance))
+            .map(|s| (s.current().light.exposure, s.current().color.vibrance))
     };
     // The same Light as the source, unsaved: nothing moves.
     app.set_exposure(0.5);
@@ -3970,10 +4016,11 @@ fn a_second_middle_click_changes_nothing_whatever_the_sheets_shift() {
     }
     let st = state.borrow();
     assert_eq!(
-        st.sidecars[2].current.light.exposure, 1.0,
+        st.sidecars[2].current().light.exposure,
+        1.0,
         "set, not shifted"
     );
-    assert_eq!(st.sidecars[0].current.light.exposure, 1.0);
+    assert_eq!(st.sidecars[0].current().light.exposure, 1.0);
     assert_eq!(st.sidecars[2].history.len(), 1, "one step");
     drop(st);
     assert_eq!(app.get_exposure(), 1.0);
@@ -4003,7 +4050,8 @@ fn the_buttons_middle_click_sets_and_the_sheet_still_shifts() {
     {
         let st = state.borrow();
         assert_eq!(
-            st.sidecars[2].current.light.exposure, 1.0,
+            st.sidecars[2].current().light.exposure,
+            1.0,
             "set, not shifted"
         );
         assert_eq!(st.sidecars[2].history.len(), 2, "its own and one sync");
@@ -4018,7 +4066,7 @@ fn the_buttons_middle_click_sets_and_the_sheet_still_shifts() {
     choose(&app, |s| s == Section::Light);
     app.invoke_sync_applied();
     crate::rows::land_pending(&state, &app, &worker);
-    assert_eq!(state.borrow().sidecars[2].current.light.exposure, 2.0);
+    assert_eq!(state.borrow().sidecars[2].current().light.exposure, 2.0);
 }
 
 /// A middle click onto the open frame with the crop up leaves the
@@ -4052,7 +4100,7 @@ fn a_middle_click_onto_the_open_frame_under_the_crop_and_a_mask_does_as_a_paste(
         assert!(app.get_crop_mode(), "{what}: the crop still up");
         assert_eq!(app.get_exposure(), -1.0, "{what}");
         let st = state.borrow();
-        assert_eq!(st.sidecars[0].current.geometry.crop, Some(crop), "{what}");
+        assert_eq!(st.sidecars[0].current().geometry.crop, Some(crop), "{what}");
     };
     app.invoke_frame_sync_asked(1);
     crate::rows::land_pending(&state, &app, &worker);
@@ -4074,7 +4122,7 @@ fn a_middle_click_onto_the_open_frame_under_the_crop_and_a_mask_does_as_a_paste(
     let check_mask = |what: &str| {
         let st = state.borrow();
         assert_eq!(st.develop.target, None, "{what}: back to the global look");
-        assert!(st.sidecars[0].current.adjustments.is_empty(), "{what}");
+        assert!(st.sidecars[0].current().adjustments.is_empty(), "{what}");
         assert_eq!(st.develop.edit.light.exposure, -1.0, "{what}");
     };
     app.invoke_frame_sync_asked(1);
@@ -4148,10 +4196,10 @@ fn a_middle_click_in_the_grid_syncs_as_in_the_strip() {
     let st = state.borrow();
     assert_eq!(chosen_frames(&st), vec![1, 3]);
     assert_eq!(st.current, Some(1));
-    assert_eq!(st.sidecars[3].current.light.exposure, -1.0);
-    assert_eq!(st.sidecars[1].current.light.exposure, -1.0);
+    assert_eq!(st.sidecars[3].current().light.exposure, -1.0);
+    assert_eq!(st.sidecars[1].current().light.exposure, -1.0);
     assert_eq!(
-        st.sidecars[3].current_label.as_deref(),
+        st.sidecars[3].current_label(),
         Some("Sync from IMG_0000.CR3")
     );
 }
@@ -4215,4 +4263,51 @@ fn time_a_paste_onto_300_frames() {
         );
     }
     crate::testing::remove_dir_retry(&dir);
+}
+
+/// A frame whose masks wait on a shape nothing can measure (§724) is no
+/// source: a sync from it, from its sidecar or from the panel with it on
+/// screen, moves nothing onto another frame, and a copy of it puts
+/// nothing in the clipboard. Measured, it is a source again, its masks
+/// laid turned with the frame.
+#[test]
+fn nothing_is_synced_or_copied_from_a_frame_whose_masks_wait_on_its_shape() {
+    let app = window(3);
+    let (state, worker) = state_for(&app, folder(3));
+    state.borrow_mut().sidecars[0] = crate::testing::waiting_sidecar();
+    let none = |_: &State, _: usize| None;
+    let masks = Choice::whole(&[Section::Adjustments]);
+    let sync = |to: usize| {
+        sync_onto(
+            &mut state.borrow_mut(),
+            &app,
+            0,
+            &[to],
+            &masks,
+            Default::default(),
+            &[],
+            none,
+        )
+        .0
+    };
+    assert!(sync(1).moved.is_empty(), "from its sidecar");
+    assert!(state.borrow().sidecars[1].current().adjustments.is_empty());
+    copy_settings_of(&mut state.borrow_mut(), &app, 0);
+    assert!(state.borrow().sheets.clipboard.is_none(), "not copied");
+    // On screen, through the panel: no more a source.
+    open_row(&mut state.borrow_mut(), &app, &worker, 0, false);
+    assert!(sync(2).moved.is_empty(), "from the panel");
+    assert!(state.borrow().sidecars[2].current().adjustments.is_empty());
+    copy_settings_of(&mut state.borrow_mut(), &app, 0);
+    assert!(state.borrow().sheets.clipboard.is_none(), "not copied");
+    // Measured: a source, its masks turned with the frame.
+    state.borrow_mut().sidecars[0].frame_known(1.0 / 1.5);
+    open_row(&mut state.borrow_mut(), &app, &worker, 1, false);
+    assert_eq!(sync(1).moved, [1]);
+    let st = state.borrow();
+    let shown = &st.sidecars[0].current().adjustments[0].mask.components;
+    assert_eq!(
+        st.sidecars[1].current().adjustments[0].mask.components,
+        *shown
+    );
 }

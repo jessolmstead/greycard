@@ -3970,7 +3970,7 @@ fn undo_in_culling_takes_back_the_tags_and_nothing_else() {
     {
         let mut st = state.borrow_mut();
         // A develop step on the frame, for undo to leave alone.
-        let mut e = st.sidecars[0].current.clone();
+        let mut e = st.sidecars[0].current().clone();
         e.light.exposure = 1.0;
         st.sidecars[0].record(e);
         enter_cull(&mut st, &app, 1);
@@ -4384,7 +4384,7 @@ fn opened_with_sidecars(app: &App, files: &[PathBuf]) -> (Rc<Shared>, Rc<Worker>
         let mut st = state.borrow_mut();
         st.window.write_sidecars = true;
         for (i, f) in files.iter().enumerate() {
-            if let Some(s) = Sidecar::load(f).unwrap() {
+            if let Some(s) = Sidecar::load_as_file(f).unwrap() {
                 st.sidecars[i] = s;
             }
         }
@@ -4443,7 +4443,7 @@ fn move_back_takes_the_frame_home_unflagged_and_leaves_a_taken_name_whole() {
     assert!(home.exists() && !files[1].exists());
     assert!(shoot.join("a.tif.gcd").exists() && shoot.join("a.xmp").exists());
     assert!(!rejects.join("a.tif.gcd").exists() && !rejects.join("a.xmp").exists());
-    let s = Sidecar::load(&home).unwrap().unwrap();
+    let s = Sidecar::load_as_file(&home).unwrap().unwrap();
     assert_eq!(s.meta.flag, meta::Flag::None);
     // b is whole where it was, still a reject; the file above as
     // it was.
@@ -4452,7 +4452,7 @@ fn move_back_takes_the_frame_home_unflagged_and_leaves_a_taken_name_whole() {
         .join(greycard_edit::SIDECAR_FOLDER)
         .join("b.tif.gcd");
     assert!(hidden.exists());
-    let s = Sidecar::load(&files[2]).unwrap().unwrap();
+    let s = Sidecar::load_as_file(&files[2]).unwrap().unwrap();
     assert_eq!(s.meta.flag, meta::Flag::Reject);
     assert_eq!(std::fs::read(shoot.join("b.tif")).unwrap(), b"another");
     // a went out of the list, as Move rejects takes its frames out.
@@ -5141,7 +5141,7 @@ fn a_quit_from_culling_at_launch_leaves_the_edited_frame_alone() {
         assert_eq!(st.current, Some(0));
         assert_ne!(
             read_edit(&app, &st.develop.edit, st.develop.target),
-            st.sidecars[0].current,
+            *st.sidecars[0].current(),
             "the panel is not the frame's"
         );
     }
@@ -5151,9 +5151,9 @@ fn a_quit_from_culling_at_launch_leaves_the_edited_frame_alone() {
         on_disk,
         "nothing written over it"
     );
-    assert_eq!(state.borrow().sidecars[0].current.light.exposure, 1.5);
+    assert_eq!(state.borrow().sidecars[0].current().light.exposure, 1.5);
     assert_eq!(state.borrow().sidecars[0].history.len(), 1);
-    assert!(Sidecar::load(&files[1]).unwrap().is_none());
+    assert!(Sidecar::load_as_file(&files[1]).unwrap().is_none());
     crate::testing::remove_scratch(state, &dir);
 }
 
@@ -5181,11 +5181,11 @@ fn a_quit_from_culling_writes_no_frames_edit_onto_another() {
     assert_eq!(app.get_exposure(), 1.5, "the panel is still a's");
     quit(&state, &app);
     assert!(
-        Sidecar::load(&files[1]).unwrap().is_none(),
+        Sidecar::load_as_file(&files[1]).unwrap().is_none(),
         "b has no sidecar"
     );
     assert!(state.borrow().sidecars[1].history.is_empty());
-    assert_eq!(state.borrow().sidecars[1].current, Edit::default());
+    assert_eq!(*state.borrow().sidecars[1].current(), Edit::default());
     assert_eq!(
         std::fs::read(Sidecar::path_for(&files[0])).unwrap(),
         on_disk,
@@ -5853,10 +5853,10 @@ fn an_edit_in_developed_cull_leaves_to_develop() {
     app.invoke_preset_applied(0);
     assert_eq!(seen(&app, &state), Seen::Develop, "the edit is the way out");
     assert_eq!(app.get_panel_tab(), "Develop");
-    assert_eq!(state.borrow().sidecars[2].current.light.exposure, 0.5);
+    assert_eq!(state.borrow().sidecars[2].current().light.exposure, 0.5);
     assert_eq!(app.get_exposure(), 0.5, "on the panel");
     app.invoke_undo();
-    assert_eq!(state.borrow().sidecars[2].current.light.exposure, 0.0);
+    assert_eq!(state.borrow().sidecars[2].current().light.exposure, 0.0);
     assert_eq!(
         state.borrow().sidecars[2].meta.rating,
         3,
@@ -5890,7 +5890,7 @@ fn cull_on_the_camera_jpeg_shows_the_camera_s_picture_of_an_edited_frame() {
     edit.bw.enabled = true;
     for f in &files {
         greycard_edit::Sidecar {
-            line: greycard_edit::Line::of(edit.clone()),
+            line: greycard_edit::Line::of(edit.clone(), 0).unwrap(),
             ..greycard_edit::Sidecar::default()
         }
         .save(f)
@@ -6158,15 +6158,21 @@ fn the_zoom_key_in_cull_goes_to_each_frames_own_point() {
         focus_frame(&mut st, 2, (6000, 4000), Some((point, Orientation::Normal)));
         st.sidecars[2].turn = 1;
         focus_frame(&mut st, 3, (6000, 4000), Some((point, Orientation::Normal)));
-        let g = &mut st.sidecars[3].line.current.geometry;
-        g.flip = true;
-        g.angle = 4.0;
-        g.crop = Some(greycard_edit::geometry::Crop {
-            x: 0.5,
-            y: 0.0,
-            w: 0.5,
-            h: 1.0,
-        });
+        {
+            let mut e = st.sidecars[3].current().clone();
+            {
+                let g = &mut e.geometry;
+                g.flip = true;
+                g.angle = 4.0;
+                g.crop = Some(greycard_edit::geometry::Crop {
+                    x: 0.5,
+                    y: 0.0,
+                    w: 0.5,
+                    h: 1.0,
+                });
+            }
+            st.sidecars[3].record(e);
+        }
         focus_frame(&mut st, 4, (6000, 4000), None);
     }
     let expected = [
@@ -6481,7 +6487,9 @@ fn an_unreject_that_will_not_save_is_noted() {
     std::fs::create_dir_all(&missing).expect("the folder");
     crate::sidecars::retry(&mut st);
     assert_eq!(app.get_sync_note(), "");
-    let back = Sidecar::load(&st.files[0]).unwrap().expect("written");
+    let back = Sidecar::load_as_file(&st.files[0])
+        .unwrap()
+        .expect("written");
     assert_eq!(back.meta.flag, meta::Flag::None);
     drop(st);
     crate::testing::remove_scratch(state, &dir);
@@ -6538,7 +6546,11 @@ fn loupe_at(
     {
         let mut st = state.borrow_mut();
         st.current = Some(1);
-        st.sidecars[1].line.current.geometry.flip = mirror;
+        {
+            let mut e = st.sidecars[1].current().clone();
+            e.geometry.flip = mirror;
+            st.sidecars[1].record(e);
+        }
         enter_cull(&mut st, &app, compare);
         let cull = st.culling.cull.as_mut().unwrap();
         for f in 0..4 {

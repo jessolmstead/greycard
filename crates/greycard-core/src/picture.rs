@@ -102,12 +102,24 @@ pub fn orientation_path(path: &Path) -> Result<Orientation> {
     Ok(stance_path(path)?.0)
 }
 
+/// A picture's orientation tag, and its size before that tag turns it.
+type Stance = (Orientation, Option<(u32, u32)>);
+
 /// A picture's orientation tag and its size before that tag turns it,
 /// both read the way [`decode_picture`] reads them and without
-/// decoding a pixel.
-pub fn stance_path(path: &Path) -> Result<(Orientation, Option<(u32, u32)>)> {
+/// decoding a pixel. A JPEG's or a PNG's are read from its head alone
+/// ([`head_stance`]), as [`probe_path`] reads its EXIF; a TIFF's
+/// directories may be anywhere in it, and it is read whole.
+pub fn stance_path(path: &Path) -> Result<Stance> {
+    if let Some(stance) = head_stance(path)? {
+        return Ok(stance);
+    }
+    stance_of(&std::fs::read(path)?)
+}
+
+/// [`stance_path`] of a picture held whole.
+fn stance_of(bytes: &[u8]) -> Result<Stance> {
     use image::ImageDecoder;
-    let bytes = std::fs::read(path)?;
     let reader = image::ImageReader::new(std::io::Cursor::new(&bytes))
         .with_guessed_format()
         .map_err(|e| Error::Decode(e.to_string()))?;
@@ -123,7 +135,7 @@ pub fn stance_path(path: &Path) -> Result<(Orientation, Option<(u32, u32)>)> {
         decoder.exif_metadata().ok().flatten()
     };
     let tiff: Option<&[u8]> = if is_tiff {
-        Some(&bytes)
+        Some(bytes)
     } else {
         chunk.as_deref()
     };
@@ -135,6 +147,144 @@ pub fn stance_path(path: &Path) -> Result<(Orientation, Option<(u32, u32)>)> {
         orientation,
         (size.0 > 0 && size.1 > 0).then_some((size.0, size.1)),
     ))
+}
+
+/// A JPEG's or a PNG's [`stance_path`] from the segments or chunks
+/// before its picture data, read [`PROBE_HEAD`] bytes first and more
+/// only as a segment asks: the size its frame header (a JPEG's start of
+/// frame, a PNG's `IHDR`) says, which is what the decoder reports, and
+/// the orientation in the EXIF the decoder finds there. None for any
+/// other file, and for a head this cannot walk, which is then read
+/// whole as before.
+fn head_stance(path: &Path) -> Result<Option<Stance>> {
+    use std::io::Read;
+    let mut file = std::fs::File::open(path)?;
+    let mut bytes = Vec::with_capacity(PROBE_HEAD);
+    file.by_ref()
+        .take(PROBE_HEAD as u64)
+        .read_to_end(&mut bytes)?;
+    let container = match Container::sniff(&bytes) {
+        Some(c @ (Container::Jpeg | Container::Png)) => c,
+        _ => return Ok(None),
+    };
+    loop {
+        match frame_head(container, &bytes) {
+            Head::Done { size, exif } => {
+                let orientation = exif
+                    .and_then(|r| read_tags(&bytes[r]))
+                    .map(|t| t.orientation)
+                    .unwrap_or_default();
+                let size = size.filter(|&(w, h)| w > 0 && h > 0);
+                return Ok(Some((orientation, size)));
+            }
+            Head::NeedMore(want) => {
+                let had = bytes.len();
+                file.by_ref()
+                    .take(want.saturating_sub(had) as u64)
+                    .read_to_end(&mut bytes)?;
+                if bytes.len() == had {
+                    return Ok(None);
+                }
+            }
+            Head::Broken => return Ok(None),
+        }
+    }
+}
+
+/// What a walk over a picture's head to its picture data found.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum Head {
+    /// The head, whole: the frame's size, and where its EXIF is.
+    Done {
+        size: Option<(u32, u32)>,
+        exif: Option<std::ops::Range<usize>>,
+    },
+    /// The buffer ends inside a segment; this many bytes would hold it.
+    NeedMore(usize),
+    /// Not a head this walks.
+    Broken,
+}
+
+/// [`Head`] of a JPEG or a PNG in `buf`.
+fn frame_head(container: Container, buf: &[u8]) -> Head {
+    match container {
+        Container::Jpeg => jpeg_head(buf),
+        Container::Png => {
+            // The `IHDR` is the first chunk, whole at a known place.
+            if buf.len() < 24 {
+                return Head::NeedMore(24);
+            }
+            if &buf[12..16] != b"IHDR" {
+                return Head::Broken;
+            }
+            let be =
+                |at: usize| u32::from_be_bytes([buf[at], buf[at + 1], buf[at + 2], buf[at + 3]]);
+            let size = Some((be(16), be(20)));
+            match png_exif(buf) {
+                Scan::Found(range) => Head::Done {
+                    size,
+                    exif: Some(range),
+                },
+                Scan::None => Head::Done { size, exif: None },
+                Scan::NeedMore(want) => Head::NeedMore(want),
+            }
+        }
+        Container::Tiff => Head::Broken,
+    }
+}
+
+/// A JPEG's segments from the SOI to the start of scan, as
+/// [`jpeg_exif`] walks them: the first EXIF, and the size in the start
+/// of frame.
+fn jpeg_head(buf: &[u8]) -> Head {
+    const EXIF: &[u8] = b"Exif\0\0";
+    let mut pos = 2;
+    let mut size = None;
+    let mut exif = None;
+    loop {
+        while pos < buf.len() && buf[pos] == 0xFF {
+            pos += 1;
+        }
+        if pos >= buf.len() {
+            return Head::NeedMore(pos + 4);
+        }
+        let marker = buf[pos];
+        pos += 1;
+        match marker {
+            0xDA | 0xD9 => return Head::Done { size, exif },
+            0xD0..=0xD7 | 0x01 => continue,
+            _ => {}
+        }
+        if pos + 2 > buf.len() {
+            return Head::NeedMore(pos + 2);
+        }
+        let len = u16::from_be_bytes([buf[pos], buf[pos + 1]]) as usize;
+        if len < 2 {
+            return Head::Broken;
+        }
+        let payload = pos + 2..pos + len;
+        if payload.end > buf.len() {
+            return Head::NeedMore(payload.end);
+        }
+        let body = &buf[payload.clone()];
+        match marker {
+            0xE1 if exif.is_none() && body.starts_with(EXIF) => {
+                exif = Some(payload.start + EXIF.len()..payload.end);
+            }
+            // A start of frame (not a Huffman or arithmetic table, nor
+            // JPG): precision, height, width.
+            0xC0..=0xCF if !matches!(marker, 0xC4 | 0xC8 | 0xCC) && size.is_none() => {
+                if body.len() < 5 {
+                    return Head::Broken;
+                }
+                let h = u32::from(u16::from_be_bytes([body[1], body[2]]));
+                let w = u32::from(u16::from_be_bytes([body[3], body[4]]));
+                size = Some((w, h));
+            }
+            _ => {}
+        }
+        pos = payload.end;
+    }
 }
 
 /// A picture's camera, lens, exposure and date from its EXIF chunk,
@@ -1162,6 +1312,71 @@ mod tests {
         ));
         std::fs::create_dir_all(&dir).unwrap();
         dir.join(name)
+    }
+
+    /// A JPEG's and a PNG's stance read from the head alone is the one
+    /// the whole file gives: past the first read, with a long tail, and
+    /// cut off after the head.
+    #[test]
+    fn the_stance_from_the_head_is_the_whole_file_s() {
+        use image::codecs::{jpeg::JpegEncoder, png::PngEncoder};
+        use image::{ExtendedColorType, ImageEncoder};
+        let (w, h) = (5u32, 3u32);
+        let px: Vec<u8> = (0..w * h * 3).map(|i| (i * 7) as u8).collect();
+        let mut jpeg = Vec::new();
+        {
+            let mut enc = JpegEncoder::new_with_quality(&mut jpeg, 95);
+            enc.set_exif_metadata(exif_payload()).unwrap();
+            enc.write_image(&px, w, h, ExtendedColorType::Rgb8).unwrap();
+        }
+        let mut png = Vec::new();
+        {
+            let mut enc = PngEncoder::new(&mut png);
+            enc.set_exif_metadata(exif_payload()).unwrap();
+            enc.write_image(&px, w, h, ExtendedColorType::Rgb8).unwrap();
+        }
+        // A comment run past the first read in front of the JPEG's
+        // segments, and a long tail behind either.
+        let mut padded = vec![0xFF, 0xD8];
+        for _ in 0..3 {
+            let len = 60_000u16;
+            padded.extend_from_slice(&[0xFF, 0xFE]);
+            padded.extend_from_slice(&len.to_be_bytes());
+            padded.extend(std::iter::repeat_n(b' ', len as usize - 2));
+        }
+        padded.extend_from_slice(&jpeg[2..]);
+        let tail = |b: &[u8]| {
+            let mut t = b.to_vec();
+            t.extend(std::iter::repeat_n(0u8, 3 * PROBE_HEAD));
+            t
+        };
+        let path = scratch("stance.jpg");
+        for (name, bytes) in [
+            ("a.jpg", jpeg.clone()),
+            ("far.jpg", padded.clone()),
+            ("tail.jpg", tail(&jpeg)),
+            ("a.png", png.clone()),
+            ("tail.png", tail(&png)),
+        ] {
+            let at = path.with_file_name(name);
+            std::fs::write(&at, &bytes).unwrap();
+            let whole = stance_of(&bytes).unwrap();
+            assert_eq!(whole.1, Some((w, h)), "{name}");
+            assert_eq!(head_stance(&at).unwrap(), Some(whole), "{name}");
+            assert_eq!(stance_path(&at).unwrap(), whole, "{name}");
+        }
+        // Cut off after the head: the head still says it.
+        let Head::Done { .. } = jpeg_head(&jpeg) else {
+            panic!("a whole head");
+        };
+        let sos = jpeg.windows(2).position(|m| m == [0xFF, 0xDA]).unwrap();
+        let cut = path.with_file_name("cut.jpg");
+        std::fs::write(&cut, &jpeg[..sos + 2]).unwrap();
+        assert_eq!(stance_path(&cut).unwrap(), stance_of(&jpeg).unwrap());
+        // A TIFF is not walked.
+        std::fs::write(&cut, b"II*\0........").unwrap();
+        assert_eq!(head_stance(&cut).unwrap(), None);
+        crate::testing::remove_dir_retry(path.parent().unwrap());
     }
 
     /// The probe reads a picture's head and no more: a JPEG's EXIF

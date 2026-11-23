@@ -738,11 +738,11 @@ pub(crate) fn auto_light(st: &mut State, app: &App, worker: &Worker) {
         return;
     }
     if let Some(edit) = crate::panel::edit::panel_state(st, edit)
-        && let Some(line) = st.line_mut(c)
+        && let Some(mut line) = st.line_mut(c)
     {
         line.record(edit);
     }
-    if let Some(line) = st.line_mut(c) {
+    if let Some(mut line) = st.line_mut(c) {
         line.record_as(auto, Some(greycard_edit::history::AUTO_LIGHT.to_string()));
     }
     crate::panel::history::take_current(st, app, worker);

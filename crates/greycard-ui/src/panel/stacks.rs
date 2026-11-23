@@ -864,7 +864,7 @@ mod tests {
         edit.meta.rating = 4;
         edit.save(&s.files[3]).unwrap();
         let rating = |raw: &Path| -> Option<u8> {
-            greycard_edit::Sidecar::load(raw)
+            greycard_edit::Sidecar::load_as_file(raw)
                 .unwrap()
                 .map(|sc| sc.meta.rating)
         };

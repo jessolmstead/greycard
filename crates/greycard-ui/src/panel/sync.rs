@@ -214,7 +214,7 @@ fn edit_shown(st: &State, app: &App, c: usize) -> Edit {
     if st.current == Some(c) && st.culling.cull.is_none() && crate::rows::panel_is_frames(st, c) {
         read_edit(app, &st.develop.edit, st.develop.target)
     } else {
-        st.line(c).map(|l| l.current.clone()).unwrap_or_default()
+        st.line(c).map(|l| l.current().clone()).unwrap_or_default()
     }
 }
 
@@ -393,7 +393,7 @@ fn lay_shifted_over_targets(
     // Each target's whole sidecar first, read where it stands in from
     // its row (on the pool when there are several); one under a root
     // that is offline is left out, and the status line says so.
-    let targets = &crate::rows::load_frames(st, app, targets);
+    let targets = &crate::rows::writable_frames(st, app, targets);
     // As a turn does: a sidecar from an older build is brought up to
     // date before anything acts on it, when its shape can be had.
     for &f in targets {
@@ -449,7 +449,7 @@ fn lay_shifted_over_targets(
         let wanted: Vec<(usize, PathBuf, greycard_edit::camera::Camera)> = targets
             .iter()
             .filter_map(|&c| {
-                let current = &st.line(c)?.current;
+                let current = &st.line(c)?.current();
                 let path = st.path_at(c)?;
                 let wanted = if offset {
                     !greycard_core::picture::is_picture_path(path)
@@ -481,14 +481,14 @@ fn lay_shifted_over_targets(
                 // A shift is the frame's own value moved: read from its
                 // line before the lay, its As shot from what was read.
                 let own = shift.and_then(|s| {
-                    let current = st.line(c)?.current.clone();
+                    let current = st.line(c)?.current().clone();
                     let shot = whites.get(&c).copied().flatten();
                     Some(shifted(preset, s, &current, shot))
                 });
                 let shot = whites.get(&c).copied().flatten();
                 let preset = &preset_for_target(st, own.as_ref().unwrap_or(preset), c, shot);
-                st.line_mut(c).is_some_and(|line| {
-                    greycard_edit::apply_preset_to_line(line, preset, learned_from, label)
+                st.line_mut(c).is_some_and(|mut line| {
+                    greycard_edit::apply_preset_to_line(&mut line, preset, learned_from, label)
                 })
             })
             .collect()
@@ -1157,6 +1157,12 @@ fn source_edit(st: &mut State, app: &App, from: usize) -> Option<Edit> {
         crate::rows::say_offline_for(st, app, from, &tr!(": nothing to sync from"));
         return None;
     }
+    // Its masks are where they were placed under another turn, for
+    // want of the frame's shape (§724): nothing is laid over a target
+    // from it, the panel's copy of it included.
+    if crate::panel::browser::waits_on_shape(st, app, from, "nothing was synced from it") {
+        return None;
+    }
     if st.current == Some(from)
         && st.culling.cull.is_none()
         && crate::rows::panel_is_frames(st, from)
@@ -1165,7 +1171,7 @@ fn source_edit(st: &mut State, app: &App, from: usize) -> Option<Edit> {
         save_edit(st, edit.clone());
         return Some(edit);
     }
-    st.line(from).map(|l| l.current.clone())
+    st.line(from).map(|l| l.current().clone())
 }
 
 /// What a preset click does, for the current frame alone or for a
@@ -1319,7 +1325,7 @@ pub(crate) fn apply_preset_to(
         // over the sidecar's current state, and the leaving develops
         // it.
         if st.culling.cull.is_some() {
-            let Some(edit) = st.line(c).map(|l| l.current.clone()) else {
+            let Some(edit) = st.line(c).map(|l| l.current().clone()) else {
                 return;
             };
             let applied = current_preset.applied(&edit);
@@ -1334,7 +1340,7 @@ pub(crate) fn apply_preset_to(
                 );
                 return;
             }
-            if let Some(line) = st.line_mut(c) {
+            if let Some(mut line) = st.line_mut(c) {
                 line.record_as(applied, Some(preset_label(&preset.name)));
             }
             // `leave_cull(.., None)` reads the edit to leave with off
@@ -1373,11 +1379,11 @@ pub(crate) fn apply_preset_to(
             return;
         }
         if let Some(edit) = panel_state(st, edit)
-            && let Some(line) = st.line_mut(c)
+            && let Some(mut line) = st.line_mut(c)
         {
             line.record(edit);
         }
-        if let Some(line) = st.line_mut(c) {
+        if let Some(mut line) = st.line_mut(c) {
             line.record_as(applied, Some(preset_label(&preset.name)));
         }
         let said = tr!(
@@ -1403,10 +1409,10 @@ pub(crate) fn apply_preset_to(
     // words.
     let label = preset_over_set_label(targets.len() + 1, &preset.name);
     let current_changed = if st.culling.cull.is_some() {
-        let edit = st.line(c).map(|l| l.current.clone()).unwrap_or_default();
+        let edit = st.line(c).map(|l| l.current().clone()).unwrap_or_default();
         let applied = current_preset.applied(&edit);
         let changed = applied != edit;
-        if changed && let Some(line) = st.line_mut(c) {
+        if changed && let Some(mut line) = st.line_mut(c) {
             line.record_as(applied, Some(label.clone()));
         }
         changed
@@ -1416,11 +1422,11 @@ pub(crate) fn apply_preset_to(
         let changed = applied != edit;
         if changed {
             if let Some(edit) = panel_state(st, edit)
-                && let Some(line) = st.line_mut(c)
+                && let Some(mut line) = st.line_mut(c)
             {
                 line.record(edit);
             }
-            if let Some(line) = st.line_mut(c) {
+            if let Some(mut line) = st.line_mut(c) {
                 line.record_as(applied, Some(label.clone()));
             }
         }
@@ -1631,14 +1637,17 @@ fn copy_of(st: &mut State, app: &App, cell: usize, masks_only: bool) {
     let queued = crate::panel::queue_view::frame_of(st, cell).map(|q| q.edit.clone());
     let edit = if let Some(queued) = queued {
         queued
+    } else if crate::panel::browser::waits_on_shape(st, app, cell, "nothing was copied from it") {
+        // Its masks wait on the frame's shape (§724): a paste would lay
+        // them over another frame unturned.
+        return;
     } else if st.culling.cull.is_none() && st.current == Some(cell) {
         read_edit(app, &st.develop.edit, st.develop.target)
     } else {
-        migrate_frame(st, cell);
         let Some(line) = st.line(cell) else {
             return;
         };
-        line.current.clone()
+        line.current().clone()
     };
     let Some(from) = st.key_of(cell) else {
         return;
@@ -1831,7 +1840,7 @@ pub(crate) fn paste_mask_onto(
         .filter(|c| !synced.moved.contains(c))
         .filter(|&&c| {
             st.line(c)
-                .is_some_and(|l| l.current.adjustments.len() >= greycard_edit::MAX_MASKS)
+                .is_some_and(|l| l.current().adjustments.len() >= greycard_edit::MAX_MASKS)
         })
         .count();
     if full > 0 {
@@ -1888,11 +1897,11 @@ fn lay_paste(
         let applied = crate::clipboard::laid(&fits, pasted.learned_from, &edit);
         if applied != edit {
             if let Some(edit) = panel_state(st, edit)
-                && let Some(line) = st.line_mut(c)
+                && let Some(mut line) = st.line_mut(c)
             {
                 line.record(edit);
             }
-            if let Some(line) = st.line_mut(c) {
+            if let Some(mut line) = st.line_mut(c) {
                 line.record_as(applied, Some(label.clone()));
             }
             current_changed = true;

@@ -901,11 +901,11 @@ Enabled=true
             "{totals:?}"
         );
         for (f, stars) in [("a.tif", 3), ("b.tif", 5)] {
-            let s = greycard_edit::Sidecar::load(&shots.join(f))
+            let s = greycard_edit::Sidecar::load_as_file(&shots.join(f))
                 .unwrap()
                 .unwrap();
             assert_eq!(s.meta.rating, stars);
-            assert_eq!(s.current.light.exposure, 1.25);
+            assert_eq!(s.current().light.exposure, 1.25);
         }
 
         // Run again: both held back, and the switch shows for them;
@@ -1069,24 +1069,27 @@ Enabled=true
         app.invoke_select(0);
         assert_eq!(state.borrow().current, Some(0));
         let a = shots.join("a.tif");
-        assert!(greycard_edit::Sidecar::load(&a).unwrap().is_none());
+        assert!(greycard_edit::Sidecar::load_as_file(&a).unwrap().is_none());
         open(&mut state.borrow_mut(), &app, shots.clone());
         land_now(&state, &app);
         write_now(&state, &app);
-        let written = greycard_edit::Sidecar::load(&a).unwrap().unwrap();
+        let written = greycard_edit::Sidecar::load_as_file(&a).unwrap().unwrap();
         assert!(!written.history.is_empty(), "the import's state");
-        assert_eq!(written.current.light.exposure, 1.25);
+        assert_eq!(written.current().light.exposure, 1.25);
         // The panel is the written edit's.
         assert_eq!(app.get_exposure(), 1.25);
         // A rating after it: the import's edit kept, the rating with it.
         assert_eq!(written.meta.rating, 3);
         assert!(app.invoke_meta_key("4".into()));
-        let after = greycard_edit::Sidecar::load(&a).unwrap().unwrap();
+        let after = greycard_edit::Sidecar::load_as_file(&a).unwrap().unwrap();
         assert_eq!(after.meta.rating, 4);
         assert_eq!(after.meta.label, written.meta.label);
         assert_eq!(after.history.len(), written.history.len());
-        assert_eq!(after.current.light.exposure, 1.25);
-        assert_eq!(after.current.white_balance, written.current.white_balance);
+        assert_eq!(after.current().light.exposure, 1.25);
+        assert_eq!(
+            after.current().white_balance,
+            written.current().white_balance
+        );
         WORKER.with(|w| *w.borrow_mut() = None);
         crate::testing::remove_scratch(state, &dir);
     }
@@ -1113,10 +1116,10 @@ Enabled=true
         );
         write_now(&state, &app);
         assert!(!state.borrow().develop.save_timer.running());
-        let a = greycard_edit::Sidecar::load(&shots.join("a.tif"))
+        let a = greycard_edit::Sidecar::load_as_file(&shots.join("a.tif"))
             .unwrap()
             .unwrap();
-        assert_eq!(a.current.light.exposure, 0.8);
+        assert_eq!(a.current().light.exposure, 0.8);
         let report = state.borrow().rawtherapee.report.clone().unwrap();
         assert_eq!(report.held(), 1, "the frame with the user's edit");
         assert_eq!(report.written(), [shots.join("b.tif")]);

@@ -1185,17 +1185,27 @@ fn mono(what: &str, mask: bool) -> Mono {
     state.borrow_mut().window.batch = true;
     app.set_collapsed_wb(false);
     for line in &mut state.borrow_mut().sidecars {
-        line.current.white_balance = ARRIVED;
+        {
+            let mut e = line.current().clone();
+            e.white_balance = ARRIVED;
+            line.record(e);
+        }
         if mask {
-            line.current.adjustments.push(greycard_edit::Adjustment {
-                id: 1,
-                name: "Lamp".into(),
-                look: greycard_edit::Look {
-                    white_balance: MASK_ARRIVED,
-                    ..Default::default()
-                },
-                ..Default::default()
-            });
+            {
+                let mut e = line.current().clone();
+                {
+                    e.adjustments.push(greycard_edit::Adjustment {
+                        id: 1,
+                        name: "Lamp".into(),
+                        look: greycard_edit::Look {
+                            white_balance: MASK_ARRIVED,
+                            ..Default::default()
+                        },
+                        ..Default::default()
+                    })
+                }
+                line.record(e);
+            }
         }
     }
     Mono {
@@ -1265,7 +1275,7 @@ impl Mono {
             (
                 c,
                 format!("{:?}", st.develop.edit),
-                format!("{:?}", line.current),
+                format!("{:?}", line.current()),
                 line.history.len(),
                 st.develop.generation,
                 (
@@ -1734,8 +1744,8 @@ fn button_keys() -> Vec<slint::SharedString> {
 fn stored_arrived(m: &Mono) {
     let st = m.state.borrow();
     let line = st.line(0).unwrap();
-    assert_eq!(line.current.white_balance, ARRIVED);
-    if let Some(a) = line.current.adjustments.first() {
+    assert_eq!(line.current().white_balance, ARRIVED);
+    if let Some(a) = line.current().adjustments.first() {
         assert_eq!(a.look.white_balance, MASK_ARRIVED);
     }
 }

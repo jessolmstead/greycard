@@ -141,18 +141,24 @@ fn an_export_s_exit_code_says_how_it_went() {
     let masked = home.0.join("masked.dng");
     std::fs::copy(&source, &masked).unwrap();
     let mut sidecar = greycard_edit::Sidecar::default();
-    sidecar.current.adjustments.push(greycard_edit::Adjustment {
-        name: "Person".into(),
-        mask: greycard_edit::mask::Mask {
-            components: vec![greycard_edit::mask::Component {
-                shape: greycard_edit::mask::Shape::Subject {},
+    {
+        let mut e = sidecar.current().clone();
+        {
+            e.adjustments.push(greycard_edit::Adjustment {
+                name: "Person".into(),
+                mask: greycard_edit::mask::Mask {
+                    components: vec![greycard_edit::mask::Component {
+                        shape: greycard_edit::mask::Shape::Subject {},
+                        ..Default::default()
+                    }],
+                    invert: false,
+                    ..Default::default()
+                },
                 ..Default::default()
-            }],
-            invert: false,
-            ..Default::default()
-        },
-        ..Default::default()
-    });
+            })
+        }
+        sidecar.record(e);
+    }
     sidecar
         .save_in(&masked, greycard_edit::Placement::Beside)
         .unwrap();
@@ -179,7 +185,9 @@ fn an_export_s_exit_code_says_how_it_went() {
     let profiled = home.0.join("profiled.dng");
     std::fs::copy(&source, &profiled).unwrap();
     let mut sidecar = greycard_edit::Sidecar::default();
-    sidecar.current.camera.profile = greycard_edit::camera::ProfileChoice::Named("Garbage".into());
+    let mut e = sidecar.current().clone();
+    e.camera.profile = greycard_edit::camera::ProfileChoice::Named("Garbage".into());
+    sidecar.record(e);
     sidecar
         .save_in(&profiled, greycard_edit::Placement::Beside)
         .unwrap();
@@ -279,18 +287,24 @@ fn without_onnx_runtime_an_export_runs_and_says_why() {
     let masked = home.0.join("masked.dng");
     std::fs::copy(&source, &masked).unwrap();
     let mut sidecar = greycard_edit::Sidecar::default();
-    sidecar.current.adjustments.push(greycard_edit::Adjustment {
-        name: "Sky".into(),
-        mask: greycard_edit::mask::Mask {
-            components: vec![greycard_edit::mask::Component {
-                shape: greycard_edit::mask::Shape::Subject {},
+    {
+        let mut e = sidecar.current().clone();
+        {
+            e.adjustments.push(greycard_edit::Adjustment {
+                name: "Sky".into(),
+                mask: greycard_edit::mask::Mask {
+                    components: vec![greycard_edit::mask::Component {
+                        shape: greycard_edit::mask::Shape::Subject {},
+                        ..Default::default()
+                    }],
+                    invert: false,
+                    ..Default::default()
+                },
                 ..Default::default()
-            }],
-            invert: false,
-            ..Default::default()
-        },
-        ..Default::default()
-    });
+            })
+        }
+        sidecar.record(e);
+    }
     sidecar
         .save_in(&masked, greycard_edit::Placement::Beside)
         .unwrap();

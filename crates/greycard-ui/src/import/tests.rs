@@ -665,10 +665,12 @@ fn a_preset_is_one_named_step_where_the_setting_puts_it() {
             greycard_edit::Sidecar::find(&file),
             Some(greycard_edit::Sidecar::path_in(&file, placement))
         );
-        let sidecar = greycard_edit::Sidecar::load(&file).unwrap().unwrap();
+        let sidecar = greycard_edit::Sidecar::load_as_file(&file)
+            .unwrap()
+            .unwrap();
         assert_eq!(sidecar.history.len(), 1);
-        assert_eq!(sidecar.current_label.as_deref(), Some("Preset: Faded film"));
-        assert_eq!(sidecar.current.light.exposure, 0.7);
+        assert_eq!(sidecar.current_label(), Some("Preset: Faded film"));
+        assert_eq!(sidecar.current().light.exposure, 0.7);
     }
     // Sidecars off: no preset laid, nothing written.
     let mut o = options(&card, &root.join("none"));
@@ -717,7 +719,7 @@ fn a_lightroom_xmp_that_comes_with_a_raw_is_its_first_state() {
         r.line(&dest)
     );
     let load = |name: &str| {
-        greycard_edit::Sidecar::load(&dest.join(name))
+        greycard_edit::Sidecar::load_as_file(&dest.join(name))
             .unwrap()
             .unwrap()
     };
@@ -725,8 +727,8 @@ fn a_lightroom_xmp_that_comes_with_a_raw_is_its_first_state() {
     let labels: Vec<_> = taken
         .history
         .iter()
-        .map(|s| s.label.clone())
-        .chain([taken.current_label.clone()])
+        .map(|s| s.label().map(String::from))
+        .chain([taken.current_label().map(String::from)])
         .collect();
     assert_eq!(
         labels,
@@ -736,12 +738,12 @@ fn a_lightroom_xmp_that_comes_with_a_raw_is_its_first_state() {
             Some("Preset: Rich".into())
         ]
     );
-    assert!((taken.current.light.exposure - 1.0).abs() < 1e-6);
-    assert_eq!(taken.current.color.saturation, 0.2);
+    assert!((taken.current().light.exposure - 1.0).abs() < 1e-6);
+    assert_eq!(taken.current().color.saturation, 0.2);
     assert_eq!(taken.meta.rating, 3);
     let bare = load("shoot-IMG_0002.CR3");
     assert_eq!(bare.history.len(), 1, "the preset alone");
-    assert_eq!(bare.current.light.exposure, 0.0);
+    assert_eq!(bare.current().light.exposure, 0.0);
     // Again: both already there, nothing taken.
     let again = go(&o);
     assert_eq!((again.already, again.lightroom), (2, 0), "{again:?}");
@@ -786,12 +788,12 @@ fn a_preset_s_camera_profile_is_left_off_another_body() {
     }];
     let r = go(&o);
     assert_eq!((r.frames, r.preset, r.profile_left_off), (1, 1, 1), "{r:?}");
-    let sidecar = greycard_edit::Sidecar::load(&root.join("dest/IMG_0001.tif"))
+    let sidecar = greycard_edit::Sidecar::load_as_file(&root.join("dest/IMG_0001.tif"))
         .unwrap()
         .unwrap();
-    assert_eq!(sidecar.current.light.exposure, 0.4);
+    assert_eq!(sidecar.current().light.exposure, 0.4);
     assert_eq!(
-        sidecar.current.camera.profile,
+        sidecar.current().camera.profile,
         greycard_edit::Edit::default().camera.profile
     );
     assert!(

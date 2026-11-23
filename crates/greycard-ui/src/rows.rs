@@ -63,7 +63,20 @@ use greycard_edit_io::on_disk::{Trouble, line_never_developed};
 use greycard_library::RowMeta;
 #[cfg(test)]
 pub(crate) use greycard_library::held::{DISK_READS, from_nothing};
-pub(crate) use greycard_library::held::{FromRow, Held, from_disk, from_row, versions_of_row};
+pub(crate) use greycard_library::held::{FromRow, Held, from_row, versions_of_row};
+
+/// [`greycard_library::held::from_disk`] as the window reads a frame on
+/// its own thread: what waits on the frame's shape asks the frame's
+/// header through a memory map (`browser::header_shape`), as the window
+/// measures a frame, never the unmapped read that takes a raw whole
+/// (§724).
+pub(crate) fn from_disk(
+    path: &std::path::Path,
+    sidecars: Option<greycard_edit::Placement>,
+    fresh: greycard_edit_io::on_disk::Fresh,
+) -> Held {
+    greycard_library::held::from_disk(path, sidecars, fresh, crate::panel::browser::header_shape)
+}
 
 use crate::panel::browser::file_name;
 use slint::ComponentHandle;
@@ -97,17 +110,15 @@ pub(crate) fn wants_seed(st: &State, c: usize) -> bool {
 }
 
 /// The ISO's seed landed for cell `c`'s line, as the open's develop or
-/// an export brought it: onto that line alone, in place and not as a
-/// step, when the line still waits for one. True when it took it.
+/// an export brought it: onto that line alone, as its start before it
+/// holds any state (§724), when the line still waits for one. True when
+/// it took it.
 pub(crate) fn seed_landed(st: &mut State, c: usize, blend: f32) -> bool {
     if !wants_seed(st, c) {
         return false;
     }
     match st.line_mut(c) {
-        Some(line) => {
-            line.current.noise.learned_strength = blend;
-            true
-        }
+        Some(mut line) => line.seed(|e| e.noise.learned_strength = blend),
         None => false,
     }
 }
@@ -117,13 +128,18 @@ pub(crate) fn seed_landed(st: &mut State, c: usize, blend: f32) -> bool {
 /// each sidecar read from disk, for the window's bar. The order is the
 /// list's. `sidecars` is where the session writes them, none with
 /// sidecars off (`Window::sidecars`), and `fresh` what a raw with none
-/// starts with (`Window::fresh`).
+/// starts with (`Window::fresh`). `shape` measures a frame whose
+/// sidecar waits on its shape (§724): the unmapped
+/// [`greycard_edit_io::on_disk::frame_shape`] for a read the window does
+/// not wait on, the mapped [`crate::panel::browser::header_shape`] for
+/// one it does, which never reads a raw whole.
 pub(crate) fn bring(
     files: &[PathBuf],
     rows: &[Option<RowMeta>],
     sidecars: Option<greycard_edit::Placement>,
     fresh: greycard_edit_io::on_disk::Fresh,
     read: Option<&AtomicUsize>,
+    shape: greycard_edit_io::on_disk::FrameShape,
 ) -> Vec<Held> {
     use rayon::prelude::*;
     debug_assert_eq!(files.len(), rows.len());
@@ -138,7 +154,7 @@ pub(crate) fn bring(
                 from_row(path, row, sidecars.is_some(), fresh)
             }
             None => {
-                let mut held = from_disk(path, sidecars, fresh);
+                let mut held = greycard_library::held::from_disk(path, sidecars, fresh, shape);
                 hold_unreadable(&mut held, path);
                 if let Some(read) = read {
                     read.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
@@ -1000,12 +1016,15 @@ fn read(st: &mut State, app: &App, id: u64, to_read: Vec<PathBuf>) {
             .spawn(move || {
                 let started = Instant::now();
                 let none = vec![None; to_read.len()];
+                // Nothing waits on it: the frame's header unmapped, as
+                // every reader off the window's thread asks it.
                 let held = bring(
                     &to_read,
                     &none,
                     write,
                     fresh,
                     progress.as_deref().map(|p| &p.read),
+                    greycard_edit_io::on_disk::frame_shape,
                 );
                 tracing::debug!(
                     "{} sidecar(s) read on the pool in {:.1} ms",
@@ -1029,7 +1048,15 @@ fn read(st: &mut State, app: &App, id: u64, to_read: Vec<PathBuf>) {
             tracing::warn!("{e}; the sidecars read on the window's thread");
             st.views.loads.in_flight.remove(&id);
             let none = vec![None; paths.len()];
-            let held = bring(&paths, &none, write, fresh, None);
+            // The window waits on it: its mapped header read.
+            let held = bring(
+                &paths,
+                &none,
+                write,
+                fresh,
+                None,
+                crate::panel::browser::header_shape,
+            );
             let results: Vec<(PathBuf, Held)> = paths.into_iter().zip(held).collect();
             for (path, h) in results {
                 if let Some(file) = st.file_by_path(&path)
@@ -1076,7 +1103,14 @@ pub(crate) fn land_pending(state: &Rc<Shared>, app: &App, worker: &Rc<Worker>) -
         land_mosaics(state, app, worker, mosaics);
         for (id, generation, to_read, write, fresh) in reads {
             let none = vec![None; to_read.len()];
-            let held = bring(&to_read, &none, write, fresh, None);
+            let held = bring(
+                &to_read,
+                &none,
+                write,
+                fresh,
+                None,
+                greycard_edit_io::on_disk::frame_shape,
+            );
             landed(
                 state,
                 app,
@@ -1402,6 +1436,19 @@ pub(crate) fn reread_file(st: &mut State, app: &App, file: usize) -> bool {
     take(st, app, file, held)
 }
 
+/// [`load_frames`] for a change to each frame's file: those whose
+/// sidecar is read-only (§724) left out too, each logged and the
+/// status line saying so.
+pub(crate) fn writable_frames(st: &mut State, app: &App, cells: &[usize]) -> Vec<usize> {
+    let mut kept = load_frames(st, app, cells);
+    let before = kept.len();
+    kept.retain(|&c| !crate::panel::browser::refused_read_only(st, c));
+    if kept.len() < before {
+        app.set_status(crate::panel::browser::newer_words().into());
+    }
+    kept
+}
+
 /// Every cell of `cells` loaded, those under an offline root left out
 /// and said; the ones in hand, in the order given. A file is read once
 /// however many of its cells are named; more than one to read is read
@@ -1455,7 +1502,16 @@ pub(crate) fn load_frames(st: &mut State, app: &App, cells: &[usize]) -> Vec<usi
             let started = std::time::Instant::now();
             let paths: Vec<PathBuf> = to_read.iter().map(|&f| st.files[f].clone()).collect();
             let rows = vec![None; n];
-            let held = bring(&paths, &rows, st.window.sidecars(), st.window.fresh(), None);
+            // The window waits on the pool: its mapped header read,
+            // never a raw read whole.
+            let held = bring(
+                &paths,
+                &rows,
+                st.window.sidecars(),
+                st.window.fresh(),
+                None,
+                crate::panel::browser::header_shape,
+            );
             for (file, h) in to_read.into_iter().zip(held) {
                 if !take(st, app, file, h) {
                     failed.push(file);
@@ -1823,6 +1879,7 @@ mod unreadable {
                 Some(greycard_edit::Placement::Beside),
                 Default::default(),
                 None,
+                greycard_edit_io::on_disk::frame_shape,
             )
             .remove(0);
             assert!(!held.from_row.read, "{name}");
@@ -1953,7 +2010,8 @@ mod camera_frames {
 
     /// The shape of a frame whose camera frame is not known yet is never
     /// read off a picture that may be cut to it: it waits. Known framed,
-    /// it is the area's; known whole, the picture's.
+    /// it is the area's; known whole, a picture still says nothing of it
+    /// (§724), and with no header to read it waits.
     #[test]
     fn a_frames_aspect_waits_rather_than_read_a_cut_picture() {
         let dir = crate::testing::scratch_dir("rows-aspect-unknown");
@@ -1970,8 +2028,7 @@ mod camera_frames {
         let a = crate::panel::browser::frame_aspect(&mut st, 0).unwrap();
         assert!((a - 5184.0 / 3888.0).abs() < 1e-4, "{a}");
         crate::edited_pictures::note_camera(&raw, None);
-        let a = crate::panel::browser::frame_aspect(&mut st, 0).unwrap();
-        assert!((a - 1.5).abs() < 1e-4, "{a}");
+        assert_eq!(crate::panel::browser::frame_aspect(&mut st, 0), None);
         drop(st);
         crate::edited_pictures::forget_camera(&raw);
         crate::testing::remove_scratch(state, &dir);

@@ -791,9 +791,9 @@ pub(crate) fn deliver(app: &App, outcome: Outcome) {
             if !original {
                 crate::edited::landed(&st, turn);
             }
-            // Sources the engine chose go into the edit, and into the
-            // sidecar's states in place: they finish a step, they are
-            // not one.
+            // Sources the engine chose go into the edit, and beside the
+            // sidecar's states (§724): they finish a step, they are not
+            // one, and no state changes.
             if take_sources(&mut st, &sources) {
                 show_history(&st, app);
             }
@@ -978,8 +978,17 @@ pub(crate) fn deliver(app: &App, outcome: Outcome) {
                 // waits for the editor, and the words come back with it.
                 let left = app.get_grid_open() || st.culling.lightbox.is_some();
                 let filling = (st.develop.highlight_pending && !left).then(fill_pending_words);
-                let status: Vec<String> = said
+                // A frame whose masks wait on a shape nothing has
+                // measured yet is read-only, and says so first (§724).
+                let read_only = st
+                    .current
+                    .filter(|&c| st.line(c).is_some_and(|l| l.current_waits()))
+                    .map(|c| crate::panel::browser::read_only_words(&st, c));
+                // Said once when a refused turn left the same words.
+                let said = said.filter(|s| Some(s) != read_only.as_ref());
+                let status: Vec<String> = read_only
                     .into_iter()
+                    .chain(said)
                     .chain(start)
                     .chain(without)
                     .chain(filling)
@@ -1762,10 +1771,16 @@ pub(crate) fn set_frames_of(st: &mut State, app: &App, frames: &[usize]) -> SetF
         .filter_map(|c| {
             // The panel is the current frame's outside culling only:
             // in it, the panel is no frame's (`save_edit`).
+            // A state whose masks wait on the frame's shape is not the
+            // picture (§724): left out, as an offline frame is, the
+            // panel's copy of it included.
+            if crate::panel::browser::waits_on_shape(st, app, c, "it was not exported") {
+                return None;
+            }
             let edit = if Some(c) == st.current && st.culling.cull.is_none() {
                 read_edit(app, &st.develop.edit, st.develop.target)
             } else {
-                st.line(c)?.current.clone()
+                st.line(c)?.ready()?.clone()
             };
             let file = st.file_of(c);
             let seed = crate::rows::wants_seed(st, c);
@@ -1788,7 +1803,7 @@ pub(crate) fn set_frames_of(st: &mut State, app: &App, frames: &[usize]) -> SetF
 fn time_shift_of(st: &State, source: &Path) -> i64 {
     match st.file_by_path(source) {
         Some(f) => st.sidecars[f].meta.time_shift,
-        None => greycard_edit::Sidecar::load(source)
+        None => greycard_edit::Sidecar::load_as_file(source)
             .ok()
             .flatten()
             .map_or(0, |s| s.meta.time_shift),
@@ -1891,7 +1906,7 @@ fn any_output_sharpens(st: &State, app: &App) -> bool {
         if Some(c) == st.current && st.culling.cull.is_none() {
             read_edit(app, &st.develop.edit, st.develop.target).output_sharpens()
         } else {
-            st.line(c).is_some_and(|l| l.current.output_sharpens())
+            st.line(c).is_some_and(|l| l.current().output_sharpens())
         }
     })
 }
@@ -2674,7 +2689,15 @@ pub(crate) fn pressed_frames(
             app.set_status(why.into());
             return None;
         }
+        // A frame whose masks wait on its shape (§724) is not exported,
+        // and the set is not exported in its place.
+        let waits = |st: &mut State| {
+            crate::panel::browser::waits_on_shape(st, app, p, "it was not exported")
+        };
         let edit = if on_screen {
+            if waits(&mut st) {
+                return None;
+            }
             let edit = read_edit(app, &st.develop.edit, st.develop.target);
             // What the panel holds is a state first, as for an
             // undo or a snapshot: the export is recorded on the
@@ -2685,10 +2708,10 @@ pub(crate) fn pressed_frames(
             show_history(&st, app);
             edit
         } else {
-            if !crate::rows::load_frame(&mut st, app, p) {
+            if !crate::rows::load_frame(&mut st, app, p) || waits(&mut st) {
                 return None;
             }
-            st.line(p)?.current.clone()
+            st.line(p)?.ready()?.clone()
         };
         let mut frames = set_frames_of(&mut st, app, frames);
         // One frame is the pressed one, as on screen it would be.

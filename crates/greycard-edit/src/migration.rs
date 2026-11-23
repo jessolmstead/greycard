@@ -134,6 +134,16 @@ impl Edit {
 /// the first and fill less than was painted, so it refuses the
 /// sidecar.
 ///
+/// Version 10 is the turn a state was placed under
+/// ([`Edit::placed_under`], §724): a turn of the frame changes the
+/// sidecar's turn and no state, each state shown under it from the turn
+/// it was placed under. Every state written before it was turned in
+/// place to the sidecar's turn, so it is placed under that turn; the
+/// step needs the sidecar's turn and is `migrate_line`'s, not this. A
+/// build from before would take a state placed under another turn for
+/// one placed under the frame's, and show it a turn off, so it refuses
+/// the sidecar.
+///
 /// [`brush`]: crate::brush
 /// [`Op::Lift`]: crate::brush::Op::Lift
 /// [`Patch::more`]: crate::retouch::Patch::more
@@ -344,6 +354,42 @@ fn past_f32(value: &serde_json::Value) -> Option<(String, f64)> {
     }
 }
 
+/// The key a line's read finds on an edit a build before version 10
+/// wrote, put there by [`migrate_line`] and taken out before the edit is
+/// read (`line::ReadEdit`): such a state with no id is given the one
+/// that build gave it ([`crate::sync::filled_id`]). Never written; no
+/// field of an edit can be called so.
+pub(crate) const BEFORE_PLACED_MARK: &str = "#before_placed";
+
+/// The key a line's read finds when [`migrate_line`] left states out
+/// that could not be read (`Line::unread`). Never written.
+pub(crate) const UNREAD_MARK: &str = "#unread";
+
+/// Version 10's step on one stored edit of a sidecar whose turn is
+/// `turn`: an edit a build before it wrote is placed under that turn,
+/// and marked as that build's ([`BEFORE_PLACED_MARK`]). One that is not
+/// an object, or whose version is not a number, is left for [`migrate`]
+/// to refuse.
+fn placed_before_ten(edit: &mut serde_json::Value, turn: u8) {
+    let Some(obj) = edit.as_object_mut() else {
+        return;
+    };
+    let version = match obj.get("version") {
+        None => 1,
+        Some(v) => match v.as_u64() {
+            Some(v) => v,
+            None => return,
+        },
+    };
+    if version >= 10 {
+        return;
+    }
+    obj.insert(BEFORE_PLACED_MARK.into(), true.into());
+    if turn != 0 && !obj.contains_key("placed_under") {
+        obj.insert("placed_under".into(), turn.into());
+    }
+}
+
 /// Whether a stored edit, its earlier steps already brought up, is a
 /// raw's or a picture's default: nothing in it but the version and the
 /// learned denoiser's blend, which the first open seeds from the ISO
@@ -354,6 +400,9 @@ fn develops_nothing(obj: &serde_json::Map<String, serde_json::Value>) -> bool {
         return false;
     };
     edit.version = VERSION;
+    // Where it was placed is no development (version 10's step has
+    // put it in already when the frame was turned).
+    edit.placed_under = 0;
     // A picture's default as an edit from before the bodies held it:
     // the one with its lens corrections on.
     let [_, picture_then] = Edit::picture_defaults();
@@ -366,13 +415,51 @@ fn develops_nothing(obj: &serde_json::Map<String, serde_json::Value>) -> bool {
 /// Bring every edit of a line's object up to the current schema, in
 /// place: the current one, the history and the snapshots. A history or
 /// a snapshot list that is not a list is left out, as it always was.
-pub(crate) fn migrate_line(obj: &mut serde_json::Map<String, serde_json::Value>) -> Result<()> {
+///
+/// `turn` is the sidecar's turn as read: version 10's step, which needs
+/// it and so is not [`migrate`]'s. Every state a build before version
+/// 10 wrote was turned in place to the sidecar's turn at each turn of
+/// the frame, so each is placed under it ([`Edit::placed_under`],
+/// §724). Nothing moves, and every state shows as it showed.
+///
+/// `budget` is what the file's differences may still make whole
+/// ([`crate::sparse::BUDGET`]), shared by its lines. `newer_ok` when the
+/// file's floors let this build read states past its schema: such a
+/// state is read as it is, unmigrated ([`crate::Floors`]).
+/// The schema version an edit says, none when it says none it could.
+pub(crate) fn version_of(edit: &serde_json::Value) -> Option<u32> {
+    edit.get("version")?.as_u64()?.try_into().ok()
+}
+
+pub(crate) fn migrate_line(
+    obj: &mut serde_json::Map<String, serde_json::Value>,
+    turn: u8,
+    budget: &mut usize,
+    newer_ok: bool,
+) -> Result<()> {
+    let migrated = |mut edit: serde_json::Value| {
+        if newer_ok && version_of(&edit).is_some_and(|v| v > VERSION) {
+            return Ok(edit);
+        }
+        placed_before_ten(&mut edit, turn);
+        migrate(edit)
+    };
+    // A difference only in the history, against an earlier entry: the
+    // current state and the snapshots are written whole (§724).
+    let whole = |edit: &serde_json::Value| edit.get("delta").is_none();
     if let Some(current) = obj.remove("current") {
-        obj.insert("current".into(), migrate(current)?);
+        if !whole(&current) {
+            return Err(refused("the current state is written whole"));
+        }
+        obj.insert("current".into(), migrated(current)?);
     }
     if let Some(serde_json::Value::Array(history)) = obj.remove("history") {
-        let history: Result<Vec<_>> = history.into_iter().map(migrate).collect();
+        let (history, lost) = crate::sparse::whole_history(history, budget);
+        let history: Result<Vec<_>> = history.into_iter().map(migrated).collect();
         obj.insert("history".into(), serde_json::Value::Array(history?));
+        if lost > 0 {
+            obj.insert(UNREAD_MARK.into(), lost.into());
+        }
     }
     if let Some(serde_json::Value::Array(mut snapshots)) = obj.remove("snapshots") {
         for snapshot in snapshots.iter_mut() {
@@ -382,7 +469,10 @@ pub(crate) fn migrate_line(obj: &mut serde_json::Map<String, serde_json::Value>)
                 return Err(refused("a snapshot is an object"));
             }
             if let Some(edit) = snapshot.get_mut("edit") {
-                *edit = migrate(edit.take())?;
+                if !whole(edit) {
+                    return Err(refused("a snapshot is written whole"));
+                }
+                *edit = migrated(edit.take())?;
             }
         }
         obj.insert("snapshots".into(), serde_json::Value::Array(snapshots));
@@ -508,8 +598,8 @@ mod tests {
 
     /// A sidecar migrates every state it holds, not only the current
     /// one, since undo, redo and a snapshot each put one of the
-    /// others back on the panel; and one already saved and reloaded
-    /// is not migrated a second time.
+    /// others back on the panel; in the copies shown, so the file keeps
+    /// what it was written with and the step is the same each read.
     #[test]
     fn a_sidecar_migrates_all_its_states_once_and_only_once() {
         let json = r#"{
@@ -518,16 +608,17 @@ mod tests {
             "snapshots": [{"name":"a","taken":0,
                 "edit":{"version":3,"geometry":{"aspect":{"kind":"original"}}}}]
         }"#;
-        let mut sidecar: Sidecar = serde_json::from_str(json).unwrap();
+        let mut sidecar: Sidecar = crate::sidecar::plain(json).unwrap();
         assert!(sidecar.needs_frame());
         // Written back before the frame is known, it is version 3
         // still, and reads back wanting the same step.
         let written = serde_json::to_string(&sidecar).unwrap();
-        let again: Sidecar = serde_json::from_str(&written).unwrap();
+        let again: Sidecar = crate::sidecar::plain(&written).unwrap();
         assert!(again.needs_frame());
 
-        // The frame stands on end: every state's flag turns.
-        sidecar.migrate_with_frame(true);
+        // The frame stands on end: every state's flag turns, in the
+        // copy shown (§724).
+        sidecar.frame_known(2.0 / 3.0);
         assert!(!sidecar.needs_frame());
         for edit in [
             &sidecar.current,
@@ -535,15 +626,41 @@ mod tests {
             &sidecar.snapshots[0].edit,
         ] {
             assert_eq!(edit.version, VERSION);
+            assert!(!edit.frame_pending);
             assert!(!edit.geometry.portrait, "an upright plane ends flag-false");
         }
-        // A round trip of the migrated sidecar does not migrate it
-        // again: the flag stays where the first pass put it.
-        let written = serde_json::to_string(&sidecar).unwrap();
-        let again: Sidecar = serde_json::from_str(&written).unwrap();
-        assert!(!again.needs_frame());
-        again.clone().migrate_with_frame(true);
-        assert!(!again.current.geometry.portrait);
+        // The states as written keep what they hold: written back, the
+        // file is the one read but for the shape now known beside them,
+        // so a read of it shows what the first did with nothing to
+        // measure; the file read before it waits for the frame again
+        // and, shown by it, shows the same.
+        let mut now: serde_json::Value =
+            serde_json::from_str(&serde_json::to_string(&sidecar).unwrap()).unwrap();
+        let shape = now.as_object_mut().unwrap().remove("shape").unwrap();
+        assert_eq!(
+            serde_json::from_value::<crate::Measured>(shape).unwrap(),
+            crate::Measured {
+                turn: 0,
+                aspect: 2.0 / 3.0
+            }
+        );
+        assert_eq!(
+            now,
+            serde_json::from_str::<serde_json::Value>(&written).unwrap()
+        );
+        let measured = Sidecar::from_json(
+            &serde_json::to_string(&sidecar).unwrap(),
+            &crate::Edit::default(),
+        )
+        .unwrap();
+        assert!(!measured.needs_frame());
+        assert_eq!(measured.current.geometry, sidecar.current.geometry);
+        let mut again: Sidecar = crate::sidecar::plain(&written).unwrap();
+        assert!(again.needs_frame());
+        again.frame_known(2.0 / 3.0);
+        assert_eq!(again.current, sidecar.current);
+        assert_eq!(again.history[0].edit, sidecar.history[0].edit);
+        assert_eq!(again.snapshots[0].edit, sidecar.snapshots[0].edit);
         assert_eq!(again, sidecar);
     }
 
@@ -614,15 +731,28 @@ mod tests {
     #[test]
     fn fuzz_an_edit_written_as_a_list_is_refused() {
         assert!(Edit::from_json("[0]").is_err());
-        assert!(Sidecar::from_json(r#"{"current": [0]}"#).is_err());
-        assert!(Sidecar::from_json(r#"{"history": [[0]]}"#).is_err());
-        assert!(Sidecar::from_json(r#"{"snapshots": [["s", 0, {}]]}"#).is_err());
-        assert!(Sidecar::from_json(r#"{"versions": [{"id": "a", "line": [[0]]}]}"#).is_err());
+        assert!(Sidecar::from_json(r#"{"current": [0]}"#, &crate::Edit::default()).is_err());
+        assert!(Sidecar::from_json(r#"{"history": [[0]]}"#, &crate::Edit::default()).is_err());
+        assert!(
+            Sidecar::from_json(r#"{"snapshots": [["s", 0, {}]]}"#, &crate::Edit::default())
+                .is_err()
+        );
+        assert!(
+            Sidecar::from_json(
+                r#"{"versions": [{"id": "a", "line": [[0]]}]}"#,
+                &crate::Edit::default()
+            )
+            .is_err()
+        );
         assert!(Preset::from_json(r#"[6, "p", ["light"], [], "replace", [0]]"#).is_err());
         // The same as objects read.
         assert!(Edit::from_json(r#"{"version": 0}"#).is_ok());
         assert!(
-            Sidecar::from_json(r#"{"snapshots": [{"name": "s", "taken": 0, "edit": {}}]}"#).is_ok()
+            Sidecar::from_json(
+                r#"{"snapshots": [{"name": "s", "taken": 0, "edit": {}}]}"#,
+                &crate::Edit::default()
+            )
+            .is_ok()
         );
         // A version entry with no id is left out, as the versions'
         // reader leaves it, whatever its line is.
@@ -631,8 +761,11 @@ mod tests {
             r#"{"line": [[0]]}"#,
             r#"{"id": " ", "line": [[0]]}"#,
         ] {
-            let sidecar = Sidecar::from_json(&format!(r#"{{"versions": [{junk}]}}"#))
-                .unwrap_or_else(|e| panic!("{junk}: {e}"));
+            let sidecar = Sidecar::from_json(
+                &format!(r#"{{"versions": [{junk}]}}"#),
+                &crate::Edit::default(),
+            )
+            .unwrap_or_else(|e| panic!("{junk}: {e}"));
             assert!(sidecar.versions.is_empty(), "{junk}");
         }
     }
@@ -665,7 +798,13 @@ mod tests {
             Edit::from_json(edit).unwrap_err().to_string(),
             "sidecar: detail.texture is 1e71, past the range of any setting"
         );
-        assert!(Sidecar::from_json(&format!(r#"{{"history": [{{}}, {edit}]}}"#)).is_err());
+        assert!(
+            Sidecar::from_json(
+                &format!(r#"{{"history": [{{}}, {edit}]}}"#),
+                &crate::Edit::default()
+            )
+            .is_err()
+        );
         let preset = r#"{"name": "p", "sections": ["mixer"],
             "edit": {"mixer": {"saturation": [0, 0, 0, 0, 0, 0, 0, -2.2e53]}}}"#;
         assert_eq!(
@@ -767,7 +906,7 @@ mod baselines {
             "current": {"version": 5, "light": {"exposure": 0.5}},
             "history": [{"version": 5}, {"version": 5, "light": {"exposure": 0.2}}],
         });
-        let s = Sidecar::from_json(&json.to_string()).unwrap();
+        let s = Sidecar::from_json(&json.to_string(), &crate::Edit::default()).unwrap();
         assert_eq!(s.line.current.light.baseline, Some(baseline::BEFORE_BODIES));
         assert_eq!(s.line.history.len(), 2);
         assert_eq!(s.line.history[0].edit.light.baseline, None);

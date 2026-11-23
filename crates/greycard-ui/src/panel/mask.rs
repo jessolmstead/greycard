@@ -1444,6 +1444,18 @@ pub(crate) fn install(app: &App, state: &Rc<Shared>, worker: &Rc<Worker>) {
                 return;
             };
             let mut st = state.borrow_mut();
+            // The open frame's masks wait on its shape (§724): a paste
+            // would lay one over another frame unturned.
+            if let Some(c) = st.current
+                && crate::panel::browser::waits_on_shape(
+                    &mut st,
+                    &app,
+                    c,
+                    "its mask was not copied",
+                )
+            {
+                return;
+            }
             let edit = read_edit(&app, &st.develop.edit, st.develop.target);
             let Some(id) = edit.adjustments.get(i.max(0) as usize).map(|a| a.id) else {
                 return;

@@ -30,11 +30,12 @@ use std::path::Path;
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-/// The process the kept pictures are of. Follows
-/// `greycard_edit::PROCESS` once that exists: a change that moves a
-/// kept picture bumps that number and blesses the set under it, and
-/// before 1.0 no older set is kept.
-const PROCESS: u32 = 1;
+/// The process the kept pictures are of: the edit's
+/// ([`greycard_edit::PROCESS`]), the rendering a state made now is
+/// stamped with. A change that moves a kept picture bumps that number
+/// (and the pictures' key with it, `greycard_edit::key::PROCESS_KEYED`)
+/// and blesses the set under it; before 1.0 no older set is kept.
+const PROCESS: u32 = greycard_edit::PROCESS;
 
 /// Where a picture outside the tolerance fails the gate. Elsewhere it
 /// is made and compared and the report printed, but the test passes,
@@ -754,9 +755,9 @@ fn how_to_bless() -> String {
     format!(
         "A change that moves an existing edit's picture is a decision, not an accident. \
          Put back what moved, or move the look on purpose: bump the process (PROCESS in \
-         crates/greycard-engine/src/worker/render_gate.rs, greycard_edit::PROCESS once it \
-         exists), write the changelog line that says what moves, and make the kept pictures \
-         again with\n  {BLESS}=1 cargo test -p greycard-engine --lib render_gate\n\
+         crates/greycard-edit/src/lib.rs, with the pictures' key as its test says), write \
+         the changelog line that says what moves, and make the kept pictures again with\n  \
+         {BLESS}=1 cargo test -p greycard-engine --lib render_gate\n\
          For a change we choose not to pin (a decode or a bug fix), say so in its notes \
          section and bless what moved under the same process with\n  \
          {BLESS}=unpinned cargo test -p greycard-engine --lib render_gate\n\

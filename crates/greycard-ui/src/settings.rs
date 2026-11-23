@@ -12,7 +12,7 @@
 //! that will not parse is set aside as `settings.json.bad` rather than
 //! written over, and only a change writes the file again.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
@@ -886,6 +886,105 @@ pub fn path() -> Option<PathBuf> {
     greycard_engine::settings::path()
 }
 
+/// This install's opaque id ([`greycard_edit::sync::install`]), the one
+/// a sidecar's `head_at` carries in place of the machine's name: kept in
+/// `install-id` beside the settings file, made at random the first time
+/// and never again. None with no configuration directory (and in a
+/// test, which has none), or when the file cannot be written.
+pub fn install_id() -> Option<String> {
+    install_id_at(&path()?.with_file_name("install-id"))
+}
+
+/// The id kept in `file`, made if there is none. Two instances starting
+/// at once both end on the one that landed first: a new id is written
+/// whole beside the file and linked into place only if the file is
+/// absent, and the file is read again after. Where the file system
+/// makes no links (FAT, exFAT, some shares), the file is made only if
+/// absent and written in place, and an instance that finds it made
+/// waits a moment for the other's write before taking it.
+fn install_id_at(file: &Path) -> Option<String> {
+    let read = || {
+        let text = std::fs::read_to_string(file).ok()?;
+        let id = text.trim();
+        (id.len() == 16 && id.chars().all(|c| c.is_ascii_hexdigit())).then(|| id.to_string())
+    };
+    if let Some(id) = read() {
+        return Some(id);
+    }
+    let id = greycard_edit::sync::new_install_id();
+    let line = format!("{id}\n");
+    let kept = (|| {
+        if let Some(dir) = file.parent() {
+            std::fs::create_dir_all(dir)?;
+        }
+        let whole = file.with_file_name(format!("install-id.{id}.new"));
+        {
+            use std::io::Write as _;
+            let mut f = std::fs::File::create(&whole)?;
+            f.write_all(line.as_bytes())?;
+            f.sync_all()?;
+        }
+        let linked = link(&whole, file);
+        let _ = std::fs::remove_file(&whole);
+        let made = match linked {
+            Err(e) if e.kind() != std::io::ErrorKind::AlreadyExists => {
+                // No links here: made only if absent, in place.
+                use std::io::Write as _;
+                match std::fs::OpenOptions::new()
+                    .write(true)
+                    .create_new(true)
+                    .open(file)
+                {
+                    Ok(mut f) => {
+                        f.write_all(line.as_bytes())?;
+                        f.sync_all()?;
+                        true
+                    }
+                    Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+                        // Another instance's, which may be mid-write.
+                        for _ in 0..20 {
+                            if read().is_some() {
+                                break;
+                            }
+                            std::thread::sleep(std::time::Duration::from_millis(10));
+                        }
+                        false
+                    }
+                    Err(e) => return Err(e),
+                }
+            }
+            other => other.is_ok(),
+        };
+        // Another instance's id, or a file that will not read: only the
+        // second is replaced.
+        if !made && read().is_none() {
+            greycard_edit::replace_synced(file, line.as_bytes())?;
+        }
+        Ok(())
+    })();
+    if let Err(e) = kept {
+        tracing::warn!("{}: install id not kept: {e}", file.display());
+        return None;
+    }
+    read()
+}
+
+#[cfg(test)]
+thread_local! {
+    /// This thread's file system makes no links: for the tests.
+    static NO_LINKS: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// [`std::fs::hard_link`], or in a test the error a file system with no
+/// links gives.
+fn link(from: &Path, to: &Path) -> std::io::Result<()> {
+    #[cfg(test)]
+    if NO_LINKS.get() {
+        return Err(std::io::ErrorKind::Unsupported.into());
+    }
+    std::fs::hard_link(from, to)
+}
+
 impl Settings {
     /// What was left last time, or the defaults.
     pub fn load() -> Self {
@@ -1098,6 +1197,74 @@ mod tests {
             }
         );
         assert_eq!(std::fs::read_to_string(&aside).unwrap(), "{ not json");
+        crate::testing::remove_dir_retry(&dir);
+    }
+
+    /// The install id is made once, at random, kept beside the settings
+    /// and read back the same; it is nothing of the machine's name (§724).
+    /// With no settings file, as a test has, there is none.
+    #[test]
+    fn the_install_id_is_made_once_and_kept() {
+        use_file(None);
+        assert_eq!(install_id(), None);
+        let dir = crate::testing::scratch_dir("settings-install");
+        use_file(Some(dir.join("settings.json")));
+        let id = install_id().expect("made");
+        assert!(id.len() == 16 && id.chars().all(|c| c.is_ascii_hexdigit()));
+        assert_eq!(install_id().as_deref(), Some(id.as_str()), "kept");
+        assert_eq!(
+            std::fs::read_to_string(dir.join("install-id"))
+                .unwrap()
+                .trim(),
+            id
+        );
+        assert!(
+            !id.contains(&greycard_edit::sync::host()) || greycard_edit::sync::host().is_empty()
+        );
+        use_file(None);
+        crate::testing::remove_dir_retry(&dir);
+    }
+
+    /// Instances starting at once all take the one id, and leave no
+    /// half-written file beside it, on a file system that links and on
+    /// one that does not.
+    #[test]
+    fn instances_starting_at_once_share_one_install_id() {
+        install_race("settings-install-race", false);
+        install_race("settings-install-nolink", true);
+    }
+
+    fn install_race(name: &str, no_links: bool) {
+        let dir = crate::testing::scratch_dir(name);
+        let file = dir.join("install-id");
+        let start = std::sync::Arc::new(std::sync::Barrier::new(8));
+        let threads: Vec<_> = (0..8)
+            .map(|_| {
+                let (file, start) = (file.clone(), start.clone());
+                std::thread::spawn(move || {
+                    NO_LINKS.set(no_links);
+                    start.wait();
+                    install_id_at(&file)
+                })
+            })
+            .collect();
+        let ids: Vec<_> = threads
+            .into_iter()
+            .map(|t| t.join().unwrap().expect("an id"))
+            .collect();
+        assert!(ids.iter().all(|i| *i == ids[0]), "{ids:?}");
+        let left: Vec<_> = std::fs::read_dir(&dir)
+            .unwrap()
+            .map(|e| e.unwrap().file_name())
+            .collect();
+        assert_eq!(left, vec![std::ffi::OsString::from("install-id")]);
+        // A file that will not read is replaced, once.
+        std::fs::write(&file, "not an id\n").unwrap();
+        NO_LINKS.set(no_links);
+        let fresh = install_id_at(&file).expect("replaced");
+        NO_LINKS.set(false);
+        assert_ne!(fresh, ids[0]);
+        assert_eq!(install_id_at(&file).as_deref(), Some(fresh.as_str()));
         crate::testing::remove_dir_retry(&dir);
     }
 

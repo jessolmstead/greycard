@@ -25,7 +25,7 @@ fn saved(name: &str) -> (PathBuf, PathBuf, Sidecar) {
     s.record(exposed(0.25));
     s.save_in_stamped(&raw, Placement::Beside, &stamp(100))
         .unwrap();
-    let read = Sidecar::read(&Sidecar::path_for(&raw)).unwrap();
+    let read = Sidecar::read_as_file(&Sidecar::path_for(&raw)).unwrap();
     (dir, raw, read)
 }
 
@@ -39,7 +39,7 @@ fn saved_before_revisions(name: &str, states: &[f32]) -> (PathBuf, PathBuf, Side
         base.record(exposed(ev));
     }
     base.write_to(&Sidecar::path_for(&raw)).unwrap();
-    let read = Sidecar::read(&Sidecar::path_for(&raw)).unwrap();
+    let read = Sidecar::read_as_file(&Sidecar::path_for(&raw)).unwrap();
     assert!(read.revisions.is_empty());
     (dir, raw, read)
 }
@@ -68,7 +68,7 @@ pub(super) fn other_saves(
     at: u64,
     change: impl FnOnce(&mut Sidecar),
 ) -> Sidecar {
-    let mut other = Sidecar::load(raw).unwrap().unwrap();
+    let mut other = Sidecar::load_as_file(raw).unwrap().unwrap();
     change(&mut other);
     other.save_in_stamped(raw, placement, &stamp(at)).unwrap();
     other
@@ -98,7 +98,7 @@ fn a_file_as_it_was_read_is_written() {
     let checked = s.save_checked(&raw, Placement::Beside, &stamp(200));
     assert_eq!(checked.unwrap(), Checked::Written);
     assert!(no_changes(&s, &raw));
-    assert_eq!(Sidecar::load(&raw).unwrap().unwrap(), s);
+    assert_eq!(Sidecar::load_as_file(&raw).unwrap().unwrap(), s);
     greycard_core::testing::remove_dir_retry(&dir);
 }
 
@@ -114,7 +114,7 @@ fn a_rating_here_keeps_another_writers_preset_current() {
     assert_eq!(s.current.grain.amount, 0.4);
     assert_eq!(labels(&s), labels(&other));
     assert_eq!(s.meta.rating, 3);
-    assert_eq!(Sidecar::load(&raw).unwrap().unwrap(), s);
+    assert_eq!(Sidecar::load_as_file(&raw).unwrap().unwrap(), s);
     greycard_core::testing::remove_dir_retry(&dir);
 }
 
@@ -150,7 +150,7 @@ fn a_false_change_writes_what_a_plain_save_would() {
     assert_eq!(checked.unwrap(), Checked::Written);
     plain.advance(&stamp(200));
     assert_eq!(s, plain);
-    assert_eq!(Sidecar::load(&raw).unwrap().unwrap(), plain);
+    assert_eq!(Sidecar::load_as_file(&raw).unwrap().unwrap(), plain);
     greycard_core::testing::remove_dir_retry(&dir);
 }
 
@@ -165,7 +165,7 @@ fn a_change_here_stands_against_a_same_bytes_rewrite_of_an_old_file() {
     let checked = s.save_checked(&raw, Placement::Beside, &later());
     assert_eq!(checked.unwrap(), Checked::Written);
     assert_eq!(s.current.light.exposure, 0.25, "the undo kept");
-    let back = Sidecar::load(&raw).unwrap().unwrap();
+    let back = Sidecar::load_as_file(&raw).unwrap().unwrap();
     assert_eq!(back.current.light.exposure, 0.25);
     greycard_core::testing::remove_dir_retry(&dir);
 
@@ -177,7 +177,7 @@ fn a_change_here_stands_against_a_same_bytes_rewrite_of_an_old_file() {
         base.record(exposed(0.25));
         let id = base.new_version(None, Some("Copy")).unwrap();
         base.write_to(&path).unwrap();
-        let mut s = Sidecar::read(&path).unwrap();
+        let mut s = Sidecar::read_as_file(&path).unwrap();
         if rename {
             assert!(s.rename_version(&id, "Mono"));
         } else {
@@ -186,7 +186,7 @@ fn a_change_here_stands_against_a_same_bytes_rewrite_of_an_old_file() {
         rewrite_same_bytes(&path);
         let checked = s.save_checked(&raw, Placement::Beside, &later());
         assert_eq!(checked.unwrap(), Checked::Written, "rename {rename}");
-        let back = Sidecar::load(&raw).unwrap().unwrap();
+        let back = Sidecar::load_as_file(&raw).unwrap().unwrap();
         if rename {
             assert_eq!(back.versions[0].name, "Mono");
         } else {
@@ -223,7 +223,7 @@ fn a_deleted_file_is_written_again() {
     s.record(exposed(0.5));
     let checked = s.save_checked(&raw, Placement::Beside, &stamp(200));
     assert_eq!(checked.unwrap(), Checked::Written);
-    assert_eq!(Sidecar::load(&raw).unwrap().unwrap(), s);
+    assert_eq!(Sidecar::load_as_file(&raw).unwrap().unwrap(), s);
     greycard_core::testing::remove_dir_retry(&dir);
 }
 
@@ -239,7 +239,7 @@ fn a_file_moved_to_the_other_place_is_joined() {
     assert_eq!(checked.unwrap(), Checked::Joined);
     assert_eq!(s.meta.rating, 2);
     assert!(!Sidecar::path_in(&raw, Placement::Folder).exists());
-    assert_eq!(Sidecar::load(&raw).unwrap().unwrap(), s);
+    assert_eq!(Sidecar::load_as_file(&raw).unwrap().unwrap(), s);
     greycard_core::testing::remove_dir_retry(&dir);
 }
 
@@ -282,7 +282,7 @@ fn a_newer_or_oversized_file_is_not_written_over() {
     let saved = s.save_checked(&raw, Placement::Beside, &stamp(300));
     checked::TEST_READ_MOST.set(checked::READ_MOST);
     assert_eq!(saved.unwrap(), Checked::Written);
-    assert_eq!(Sidecar::load(&raw).unwrap().unwrap(), s);
+    assert_eq!(Sidecar::load_as_file(&raw).unwrap().unwrap(), s);
     greycard_core::testing::remove_dir_retry(&dir);
 }
 
@@ -303,7 +303,7 @@ fn a_torn_file_is_set_aside_and_ours_written() {
         s.record(exposed(0.5 + round as f32));
         let checked = s.save_checked(&raw, Placement::Beside, &stamp(200 + round as u64));
         assert_eq!(checked.unwrap(), Checked::Written);
-        assert_eq!(Sidecar::load(&raw).unwrap().unwrap(), s);
+        assert_eq!(Sidecar::load_as_file(&raw).unwrap().unwrap(), s);
     }
     assert_eq!(
         std::fs::read_to_string(bad("")).unwrap(),
@@ -420,7 +420,7 @@ fn a_meta_change_on_disk_keeps_the_redo_stack() {
     assert_eq!(s.redo.len(), 2, "the redo stack kept");
     assert_eq!((s.meta.rating, s.meta.flag), (5, crate::meta::Flag::Pick));
     assert!(s.redo());
-    assert_eq!(Sidecar::load(&raw).unwrap().unwrap().meta.rating, 5);
+    assert_eq!(Sidecar::load_as_file(&raw).unwrap().unwrap().meta.rating, 5);
     greycard_core::testing::remove_dir_retry(&dir);
 }
 
@@ -441,7 +441,7 @@ fn a_file_that_is_not_utf8_is_set_aside() {
         saved.asides.bad,
         vec![path.with_file_name("IMG_0001.CR3.gcd.bad")]
     );
-    assert_eq!(Sidecar::load(&raw).unwrap().unwrap(), s);
+    assert_eq!(Sidecar::load_as_file(&raw).unwrap().unwrap(), s);
     greycard_core::testing::remove_dir_retry(&dir);
 }
 
@@ -532,7 +532,7 @@ fn a_fresh_start_takes_a_file_made_meanwhile() {
         let dir = scratch(&format!("checked-fresh-{rated}"));
         let raw = dir.join("IMG_0001.CR3");
         let mut s = Sidecar {
-            line: Line::of(exposed(0.1)),
+            line: Line::of(exposed(0.1), 0).unwrap(),
             ..Sidecar::default()
         };
         s.remember_fresh();
@@ -585,7 +585,10 @@ fn both_lines_changed_keeps_the_others_file() {
     assert_eq!(std::fs::read(&to).unwrap(), theirs, "theirs kept as it was");
     assert_eq!((&s.line, &s.versions), (&mine.line, &mine.versions));
     assert!(!has_state(&s, |e| e.grain.amount == 0.4));
-    assert_eq!(Sidecar::load(&raw).unwrap().unwrap().to_json(), s.to_json());
+    assert_eq!(
+        Sidecar::load_as_file(&raw).unwrap().unwrap().to_json(),
+        s.to_json()
+    );
     greycard_core::testing::remove_dir_retry(&dir);
 }
 
@@ -626,8 +629,11 @@ fn a_turn_elsewhere_is_taken_or_kept_whole() {
         s.take_snapshot("snap", 1);
         s.save_in_stamped(&raw, Placement::Beside, &stamp(100))
             .unwrap();
-        let mut s = Sidecar::read(&Sidecar::path_for(&raw)).unwrap();
-        let theirs = other_saves(&raw, Placement::Beside, 150, |o| o.turn_by(1, Some(1.5)));
+        let mut s = Sidecar::read_as_file(&Sidecar::path_for(&raw)).unwrap();
+        let theirs = other_saves(&raw, Placement::Beside, 150, |o| {
+            o.frame_known(1.5);
+            o.turn_by(1, None);
+        });
         match here {
             "rating" => s.meta.rating = 3,
             "slider" => {
@@ -637,7 +643,7 @@ fn a_turn_elsewhere_is_taken_or_kept_whole() {
         }
         let checked = s.save_checked(&raw, Placement::Beside, &later()).unwrap();
         assert_eq!(checked, want, "{here}");
-        let file = Sidecar::load(&raw).unwrap().unwrap();
+        let file = Sidecar::load_as_file(&raw).unwrap().unwrap();
         for (what, sc) in [("memory", &s), ("file", &file)] {
             assert_eq!(
                 sc.turn,
@@ -664,9 +670,9 @@ fn a_turn_here_and_a_rating_there_join_the_meta() {
     s.record(cropped_at(0.25));
     s.save_in_stamped(&raw, Placement::Beside, &stamp(100))
         .unwrap();
-    let mut s = Sidecar::read(&Sidecar::path_for(&raw)).unwrap();
+    let mut s = Sidecar::read_as_file(&Sidecar::path_for(&raw)).unwrap();
     other_saves(&raw, Placement::Beside, 150, |o| o.meta.rating = 5);
-    s.turn_by(1, None);
+    s.turn_by(1, Some(1.5));
     let checked = s.save_checked(&raw, Placement::Beside, &later());
     assert_eq!(checked.unwrap(), Checked::Joined);
     assert_eq!((s.turn, s.meta.rating), (1, 5));
@@ -692,7 +698,7 @@ fn an_in_place_change_here_is_told_by_content() {
         let checked = s.save_checked(&raw, Placement::Beside, &later());
         assert_eq!(checked.unwrap(), want, "{there}");
         assert_eq!(s.current.light.tone.contrast, 0.3, "{there}");
-        let file = Sidecar::load(&raw).unwrap().unwrap();
+        let file = Sidecar::load_as_file(&raw).unwrap().unwrap();
         assert_eq!(file.to_json(), s.to_json(), "{there}");
         greycard_core::testing::remove_dir_retry(&dir);
     }
@@ -721,7 +727,7 @@ fn a_write_right_after_ours_is_not_taken_for_ours() {
     s.record(exposed(0.5));
     super::checked::AFTER_RENAME.set(Some(|path| {
         let raw = path.with_extension("");
-        let mut o = Sidecar::load(&raw).unwrap().unwrap();
+        let mut o = Sidecar::load_as_file(&raw).unwrap().unwrap();
         o.record(exposed(9.0));
         o.save_in_stamped(&raw, Placement::Beside, &stamp(150))
             .unwrap();
@@ -732,7 +738,7 @@ fn a_write_right_after_ours_is_not_taken_for_ours() {
     let checked = s.save_checked(&raw, Placement::Beside, &stamp(200));
     assert_eq!(checked.unwrap(), Checked::Kept);
     let kept = kept_beside(&Sidecar::path_for(&raw));
-    let theirs = Sidecar::read(&kept[0]).unwrap();
+    let theirs = Sidecar::read_as_file(&kept[0]).unwrap();
     assert!(has_state(&theirs, |e| e.light.exposure == 9.0));
     greycard_core::testing::remove_dir_retry(&dir);
 }
@@ -743,7 +749,7 @@ fn a_write_right_after_ours_is_not_taken_for_ours() {
 fn a_copy_left_in_the_other_place_is_kept_before_it_goes() {
     let (dir, raw, mut s) = saved("checked-other-place");
     let folder = Sidecar::path_in(&raw, Placement::Folder);
-    let mut o = Sidecar::load(&raw).unwrap().unwrap();
+    let mut o = Sidecar::load_as_file(&raw).unwrap().unwrap();
     preset(&mut o);
     o.advance(&stamp(150));
     o.write_to(&folder).unwrap();
@@ -792,7 +798,7 @@ fn kept_copies_are_bounded_and_kept_once() {
 #[test]
 fn two_windows_saving_in_turn_settle() {
     let (dir, raw, mut s) = saved("checked-two-windows");
-    let mut o = Sidecar::read(&Sidecar::path_for(&raw)).unwrap();
+    let mut o = Sidecar::read_as_file(&Sidecar::path_for(&raw)).unwrap();
     s.record(exposed(1.0));
     o.record(exposed(-1.0));
     o.save_checked(&raw, Placement::Beside, &later()).unwrap();
@@ -842,6 +848,8 @@ fn the_lines_print_reads_the_lines_alone() {
     s.record(exposed(0.25));
     s.take_snapshot("snap", 1);
     s.new_version(None, Some("V2"));
+    // Each line's id as a save gives it, which the save below does.
+    s.fill_ids();
     let print = |s: &Sidecar| lines_print(s.to_json().as_bytes()).unwrap();
     let base = print(&s);
     let mut meta = s.clone();
@@ -889,7 +897,7 @@ fn has_ev(s: &Sidecar, ev: f32) -> bool {
 fn kept_read(raw: &Path) -> Vec<Sidecar> {
     kept_beside(&Sidecar::path_for(raw))
         .iter()
-        .map(|p| Sidecar::read(p).unwrap())
+        .map(|p| Sidecar::read_as_file(p).unwrap())
         .collect()
 }
 
@@ -904,7 +912,7 @@ fn a_kept_file_is_not_lineage_to_the_archive_sync() {
     let b = other_saves(&raw, Placement::Beside, 150, |o| {
         o.record(exposed(-1.0));
     });
-    let archive = Sidecar::read(&Sidecar::path_for(&raw)).unwrap();
+    let archive = Sidecar::read_as_file(&Sidecar::path_for(&raw)).unwrap();
     assert_eq!(compare(&archive, &b), Compared::Same);
     w.record(exposed(0.9));
     let mut last_writer = w.clone();
@@ -914,7 +922,7 @@ fn a_kept_file_is_not_lineage_to_the_archive_sync() {
         Checked::Kept
     );
     last_writer.advance(&at);
-    let here = Sidecar::load(&raw).unwrap().unwrap();
+    let here = Sidecar::load_as_file(&raw).unwrap().unwrap();
     assert!(!has_ev(&here, -1.0));
     assert_eq!(here.set_aside, [b.revisions.last().unwrap().hash.clone()]);
     assert_eq!(compare(&here, &archive), compare(&last_writer, &archive));
@@ -934,7 +942,7 @@ fn the_archive_keeps_what_the_pile_lets_go() {
     other_saves(&raw, Placement::Beside, 150, |o| {
         o.record(exposed(-1.0));
     });
-    let archive = Sidecar::read(&Sidecar::path_for(&raw)).unwrap();
+    let archive = Sidecar::read_as_file(&Sidecar::path_for(&raw)).unwrap();
     w.record(exposed(0.9));
     assert_eq!(
         w.save_checked(&raw, Placement::Beside, &stamp(200))
@@ -955,7 +963,7 @@ fn the_archive_keeps_what_the_pile_lets_go() {
     let kept = kept_read(&raw);
     assert_eq!(kept.len(), super::checked::KEEP_OTHERS);
     assert!(!kept.iter().any(|k| has_ev(k, -1.0)), "left the pile");
-    let here = Sidecar::load(&raw).unwrap().unwrap();
+    let here = Sidecar::load_as_file(&raw).unwrap().unwrap();
     assert_eq!(compare(&here, &archive), Compared::Diverged);
     assert!(has_ev(&join(&here, &archive), -1.0));
     greycard_core::testing::remove_dir_retry(&dir);
@@ -969,7 +977,7 @@ fn the_archive_keeps_what_the_pile_lets_go() {
 #[test]
 fn a_window_with_a_rating_takes_the_file_its_own_was_kept_under() {
     let (dir, raw, mut a) = saved("checked-kept-then-rating");
-    let mut b = Sidecar::read(&Sidecar::path_for(&raw)).unwrap();
+    let mut b = Sidecar::read_as_file(&Sidecar::path_for(&raw)).unwrap();
     b.record(exposed(-1.0));
     b.save_checked(&raw, Placement::Beside, &stamp(150))
         .unwrap();
@@ -986,7 +994,7 @@ fn a_window_with_a_rating_takes_the_file_its_own_was_kept_under() {
         Checked::Joined
     );
     assert!(!has_ev(&b, -1.0) && has_ev(&b, 0.9) && b.meta.rating == 4);
-    let file = Sidecar::load(&raw).unwrap().unwrap();
+    let file = Sidecar::load_as_file(&raw).unwrap().unwrap();
     assert!(has_ev(&file, 0.9) && file.meta.rating == 4);
     let kept = kept_read(&raw);
     assert!(kept.len() == 1 && has_ev(&kept[0], -1.0));
@@ -1001,7 +1009,7 @@ fn a_window_with_a_rating_takes_the_file_its_own_was_kept_under() {
 fn an_older_build_drops_the_marks_and_the_file_is_kept_again() {
     let (dir, raw, mut a) = saved("checked-old-build-marks");
     let path = Sidecar::path_for(&raw);
-    let mut b = Sidecar::read(&path).unwrap();
+    let mut b = Sidecar::read_as_file(&path).unwrap();
     b.record(exposed(-1.0));
     b.save_checked(&raw, Placement::Beside, &stamp(150))
         .unwrap();
@@ -1020,7 +1028,7 @@ fn an_older_build_drops_the_marks_and_the_file_is_kept_again() {
             .unwrap(),
         Checked::Kept
     );
-    let file = Sidecar::load(&raw).unwrap().unwrap();
+    let file = Sidecar::load_as_file(&raw).unwrap().unwrap();
     assert!(has_ev(&file, -1.0) && !has_ev(&file, 0.9));
     let kept = kept_read(&raw);
     assert_eq!(kept.len(), 2);
@@ -1127,7 +1135,7 @@ fn a_copy_that_cannot_be_kept_refuses_the_save() {
 #[test]
 fn two_windows_alternating_edits_lose_nothing_latest() {
     let (dir, raw, mut a) = saved("checked-alternating");
-    let mut b = Sidecar::read(&Sidecar::path_for(&raw)).unwrap();
+    let mut b = Sidecar::read_as_file(&Sidecar::path_for(&raw)).unwrap();
     for k in 0..8u64 {
         a.record(exposed(10.0 + k as f32));
         a.save_checked(&raw, Placement::Beside, &stamp(200 + 4 * k))
@@ -1137,7 +1145,7 @@ fn two_windows_alternating_edits_lose_nothing_latest() {
             .unwrap();
     }
     let mut files = kept_read(&raw);
-    files.push(Sidecar::load(&raw).unwrap().unwrap());
+    files.push(Sidecar::load_as_file(&raw).unwrap().unwrap());
     let lost: Vec<f32> = (0..8)
         .flat_map(|k| [10.0 + k as f32, -10.0 - k as f32])
         .filter(|&ev| !files.iter().any(|f| has_ev(f, ev)))
@@ -1183,7 +1191,7 @@ fn an_unchanged_window_over_an_old_shape_keeps_rather_than_takes() {
     let v: serde_json::Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
     std::fs::remove_file(&path).unwrap();
     std::fs::write(&path, serde_json::to_vec(&v).unwrap()).unwrap();
-    let mut s = Sidecar::read(&path).unwrap();
+    let mut s = Sidecar::read_as_file(&path).unwrap();
     other_saves(&raw, Placement::Beside, 150, preset);
     assert_eq!(
         s.save_checked(&raw, Placement::Beside, &stamp(200))

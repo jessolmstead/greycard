@@ -1,0 +1,32 @@
+[
+  {
+    "id": "6b48223e0254a7f62be19081e0f96c88754fd90fcfbdc49e96a6e1248e926f97",
+    "name": "default",
+    "text": "{\"process\":1,\"version\":10}"
+  },
+  {
+    "id": "e28f8ad44e9dad34831bb2e95478f5c2cbfe4045e416d2244a526b267616e97d",
+    "name": "picture",
+    "text": "{\"lens\":{\"chromatic_aberration\":false,\"distortion\":false,\"vignetting\":false},\"process\":1,\"sharpen\":{\"enabled\":false},\"version\":10}"
+  },
+  {
+    "id": "4efc991c1645fc884cefd631bed9cebde18a4f40b11ea4da9ee03fa2d11a5f73",
+    "name": "everything",
+    "text": "{\"adjustments\":[{\"id\":1,\"mask\":{\"components\":[{\"shape\":{\"from\":[0.1,0.2],\"kind\":\"linear\",\"to\":[0.4,0.9]}},{\"shape\":{\"angle\":20.0,\"center\":[0.48,0.42],\"feather\":0.5,\"kind\":\"radial\",\"radius\":[0.12,0.09]}},{\"shape\":{\"kind\":\"brush\",\"strokes\":[{\"points\":[[0.2,0.3],[0.25,0.31]],\"radius\":0.03}]}},{\"shape\":{\"kind\":\"sky\",\"picks\":[{\"pos\":[0.6,0.1],\"positive\":true}]}},{\"shape\":{\"boxes\":[[[0.1,0.15],[0.3,0.4]]],\"kind\":\"object\",\"picks\":[{\"pos\":[0.3,0.5],\"positive\":false}]}},{\"shape\":{\"kind\":\"part\",\"person\":{\"at\":[0.55,0.35],\"signature\":{\"kind\":\"test\",\"values\":[0.1,0.2]}},\"phrase\":\"iris of the eye\",\"route\":\"eye\"}},{\"shape\":{\"kind\":\"subject\"}},{\"shape\":{\"high\":1.0,\"high_feather\":0.0,\"kind\":\"luminance\",\"low\":0.7,\"low_feather\":0.1}}]},\"name\":\"All\"}],\"geometry\":{\"aspect\":{\"h\":2.0,\"kind\":\"ratio\",\"w\":3.0},\"crop\":{\"h\":0.6,\"w\":0.5,\"x\":0.1,\"y\":0.2},\"horizontal\":-2.5,\"portrait\":true,\"vertical\":4.0},\"light\":{\"exposure\":0.3},\"process\":1,\"retouch\":{\"patches\":[{\"id\":1,\"more\":[{\"points\":[[0.7,0.5],[0.72,0.52]],\"radius\":0.015}],\"points\":[[0.31,0.77]],\"source\":[0.05,-0.03]}]},\"version\":10}"
+  },
+  {
+    "id": "d37fbf85aebc4591e4ba91f1dc6933b9265a55728b87f11a52915f74b527e3ee",
+    "name": "custom white, original aspect",
+    "text": "{\"geometry\":{\"aspect\":{\"kind\":\"original\"},\"crop\":{\"h\":1.0,\"w\":1.0,\"x\":0.0,\"y\":0.0}},\"light\":{\"exposure\":0.25},\"process\":1,\"version\":10,\"white_balance\":{\"mode\":\"custom\",\"temperature\":4300.0,\"tint\":0.004}}"
+  },
+  {
+    "id": "e2d59b8b74c56304e6e0696e80cf2ccbad00888fa556cf32ec0fcd78a90d9eba",
+    "name": "offset white, free aspect",
+    "text": "{\"geometry\":{\"crop\":{\"h\":1.0,\"w\":0.5,\"x\":0.25,\"y\":0.0}},\"light\":{\"exposure\":0.5},\"process\":1,\"version\":10,\"white_balance\":{\"mode\":\"as_shot\",\"offset\":{\"tint\":0.002}}}"
+  },
+  {
+    "id": "e5ecf457cae97d249e7c5c9c7c89d7737d4b6aac16dfa3d0d12cf72bd83d5926",
+    "name": "local whites, the other shapes, a clone",
+    "text": "{\"adjustments\":[{\"id\":1,\"look\":{\"white_balance\":{\"mode\":\"absolute\"}},\"mask\":{\"components\":[{\"shape\":{\"kind\":\"sky\"}}]},\"name\":\"One\"},{\"id\":1,\"look\":{\"white_balance\":{\"mired\":-12.0,\"mode\":\"relative\"}},\"mask\":{\"components\":[{\"shape\":{\"kind\":\"part\",\"phrase\":\"hair\",\"route\":\"eye\"}}]},\"name\":\"One\"},{\"id\":1,\"look\":{\"white_balance\":{\"temperature\":3200.0,\"tint\":0.001}},\"mask\":{\"components\":[{\"shape\":{\"group\":\"water\",\"kind\":\"landscape\"}}]},\"name\":\"One\"},{\"id\":1,\"look\":{\"white_balance\":{\"mired\":5.0,\"mode\":\"kept_relative\"}},\"mask\":{\"components\":[{\"shape\":{\"kind\":\"background\"}}]},\"name\":\"One\"},{\"id\":1,\"mask\":{\"components\":[{\"shape\":{\"chroma\":0.05,\"chroma_feather\":0.02,\"hue\":200.0,\"hue_feather\":20.0,\"kind\":\"color\",\"width\":40.0}}]},\"name\":\"One\"}],\"light\":{\"exposure\":0.75},\"process\":1,\"retouch\":{\"patches\":[{\"id\":2,\"method\":\"clone\",\"points\":[[0.5,0.5]],\"radius\":0.05}]},\"version\":10}"
+  }
+]

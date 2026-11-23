@@ -698,13 +698,13 @@ mod tests {
         save(&app, &state);
         assert_eq!(state.borrow().sidecars[0].states(), steps + 1);
         assert_eq!(
-            state.borrow().sidecars[0].current.retouch.patches[0].seed,
+            state.borrow().sidecars[0].current().retouch.patches[0].seed,
             1
         );
         app.invoke_patch_another();
         save(&app, &state);
         assert_eq!(
-            state.borrow().sidecars[0].current.retouch.patches[0].seed,
+            state.borrow().sidecars[0].current().retouch.patches[0].seed,
             2
         );
 
@@ -740,14 +740,13 @@ mod tests {
         assert_eq!(back, edit);
 
         let sidecar = greycard_edit::Sidecar {
-            line: greycard_edit::Line {
-                current: edit.clone(),
-                ..Default::default()
-            },
+            line: greycard_edit::Line::of(edit.clone(), 0).unwrap(),
             ..Default::default()
         };
-        let read = greycard_edit::Sidecar::from_json(&sidecar.to_json()).unwrap();
-        assert_eq!(read.current.retouch.patches[0].seed, 3);
+        let read =
+            greycard_edit::Sidecar::from_json(&sidecar.to_json(), &greycard_edit::Edit::default())
+                .unwrap();
+        assert_eq!(read.current().retouch.patches[0].seed, 3);
 
         edit.retouch.patches[0].seed = 0;
         edit.retouch.patches[0].remove = false;

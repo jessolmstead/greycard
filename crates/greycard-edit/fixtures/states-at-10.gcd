@@ -1,0 +1,339 @@
+{
+  "floors": {
+    "read": 10,
+    "write": 10
+  },
+  "current": {
+    "light": {
+      "exposure": -0.1
+    },
+    "placed_under": 1,
+    "process": 1,
+    "retouch": {
+      "patches": [
+        {
+          "id": 1,
+          "points": [[0.099999964,0.6]],
+          "radius": 0.044999998
+        }
+      ]
+    },
+    "version": 10
+  },
+  "last_export": {
+    "file": "/out/frame.jpg",
+    "preset": "Web",
+    "at": 1800000000
+  },
+  "id": "26cc95fa819bfaf5a421767e33cd6ab933194bb70e746f161dfd7dd2989dcac7",
+  "parent": "6014caa42790fda3c4a5411bf28c73a6f5b6b5fd39ae7f4df976eaf1ff057a6a",
+  "history": [
+    {
+      "process": 1,
+      "version": 10,
+      "id": "6b48223e0254a7f62be19081e0f96c88754fd90fcfbdc49e96a6e1248e926f97"
+    },
+    {
+      "light": {
+        "exposure": 0.4
+      },
+      "process": 1,
+      "version": 10,
+      "id": "62a3a90d531b3075f3408433ea174684deeac112390225add12fd055d48e5bde",
+      "parent": "6b48223e0254a7f62be19081e0f96c88754fd90fcfbdc49e96a6e1248e926f97"
+    },
+    {
+      "adjustments": [
+        {
+          "id": 1,
+          "mask": {
+            "components": [
+              {
+                "shape": {
+                  "from": [0.1,0.2],
+                  "kind": "linear",
+                  "to": [0.4,0.9]
+                }
+              },
+              {
+                "shape": {
+                  "angle": 20.0,
+                  "center": [0.48,0.42],
+                  "feather": 0.5,
+                  "kind": "radial",
+                  "radius": [0.12,0.09]
+                }
+              },
+              {
+                "shape": {
+                  "kind": "brush",
+                  "strokes": [
+                    {
+                      "points": [[0.2,0.3],[0.25,0.31]],
+                      "radius": 0.03
+                    }
+                  ]
+                }
+              },
+              {
+                "shape": {
+                  "kind": "sky",
+                  "picks": [
+                    {
+                      "pos": [0.6,0.1],
+                      "positive": true
+                    }
+                  ]
+                }
+              },
+              {
+                "shape": {
+                  "boxes": [[[0.1,0.15],[0.3,0.4]]],
+                  "kind": "object",
+                  "picks": [
+                    {
+                      "pos": [0.3,0.5],
+                      "positive": false
+                    }
+                  ]
+                }
+              },
+              {
+                "shape": {
+                  "kind": "part",
+                  "person": {
+                    "at": [0.55,0.35],
+                    "signature": {
+                      "kind": "test",
+                      "values": [0.1,0.2]
+                    }
+                  },
+                  "phrase": "iris of the eye",
+                  "route": "eye"
+                }
+              },
+              {
+                "shape": {
+                  "kind": "subject"
+                }
+              },
+              {
+                "shape": {
+                  "high": 1.0,
+                  "high_feather": 0.0,
+                  "kind": "luminance",
+                  "low": 0.7,
+                  "low_feather": 0.1
+                }
+              }
+            ]
+          },
+          "name": "All"
+        }
+      ],
+      "geometry": {
+        "aspect": {
+          "h": 2.0,
+          "kind": "ratio",
+          "w": 3.0
+        },
+        "crop": {
+          "h": 0.6,
+          "w": 0.5,
+          "x": 0.1,
+          "y": 0.2
+        },
+        "horizontal": -2.5,
+        "portrait": true,
+        "vertical": 4.0
+      },
+      "light": {
+        "exposure": 0.3
+      },
+      "process": 1,
+      "retouch": {
+        "patches": [
+          {
+            "id": 1,
+            "more": [
+              {
+                "points": [[0.7,0.5],[0.72,0.52]],
+                "radius": 0.015
+              }
+            ],
+            "points": [[0.31,0.77]],
+            "source": [0.05,-0.03]
+          }
+        ]
+      },
+      "version": 10,
+      "id": "b549d43ffd10d9b2126d150823afe7c9eab70e3d6b3ce48e846743537b524d61",
+      "parent": "62a3a90d531b3075f3408433ea174684deeac112390225add12fd055d48e5bde"
+    },
+    {
+      "light": {
+        "exposure": 0.5
+      },
+      "process": 1,
+      "version": 10,
+      "white_balance": {
+        "mode": "as_shot",
+        "offset": {
+          "mired": 10.0
+        }
+      },
+      "id": "2edd58c93c409a75fbc2f3feea767c43fb9ec2591aca55c5ac11a563adabae46",
+      "parent": "b549d43ffd10d9b2126d150823afe7c9eab70e3d6b3ce48e846743537b524d61"
+    },
+    {
+      "light": {
+        "exposure": -0.2
+      },
+      "process": 1,
+      "version": 10,
+      "step": "Preset: Faded film",
+      "exported": [
+        {
+          "file": "/out/frame.jpg",
+          "preset": "Web",
+          "at": 1800000000
+        }
+      ],
+      "id": "e87ad4678c0fde64f780675f717074583ee958d460eccf28476aceeb81072ceb",
+      "parent": "2edd58c93c409a75fbc2f3feea767c43fb9ec2591aca55c5ac11a563adabae46"
+    },
+    {
+      "light": {
+        "exposure": -0.2
+      },
+      "process": 1,
+      "retouch": {
+        "patches": [
+          {
+            "id": 1,
+            "points": [[0.4,0.6]],
+            "radius": 0.03
+          }
+        ]
+      },
+      "version": 10,
+      "id": "6014caa42790fda3c4a5411bf28c73a6f5b6b5fd39ae7f4df976eaf1ff057a6a",
+      "parent": "e87ad4678c0fde64f780675f717074583ee958d460eccf28476aceeb81072ceb"
+    }
+  ],
+  "undone": [
+    "015fdf9b56b65655402fdaf6fade3d1930672f7bc20da7fdf0ddb8204db12ba9"
+  ],
+  "line_id": "85c3615b2c4fbca1",
+  "head_at": {
+    "at": 1800000150,
+    "install": "0123456789abcdef"
+  },
+  "snapshots": [
+    {
+      "id": "b7db93f2d61864ff8d326123130fbaf147ff3f1bcce9043d204ad8047f8375b4",
+      "name": "Before the spot, kept",
+      "named": 1800000150,
+      "taken": 1800000100,
+      "edit": {
+        "light": {
+          "exposure": -0.2
+        },
+        "process": 1,
+        "version": 10
+      }
+    }
+  ],
+  "snapshots_removed": {
+    "566944fecb5efd8bb2c4979604181bf34064a6eb5616f8b1455b0729e3824f47": 1800000150
+  },
+  "sources": {
+    "d2052541a493fbba3c7f6b189ac3a176": [0.03,0.075],
+    "f77b63e4a2bd4b0f95cbadf5f57ab5e1": [0.05,-0.02]
+  },
+  "meta": {
+    "rating": 4,
+    "flag": "none",
+    "label": "none",
+    "keywords": [
+      "kept"
+    ],
+    "title": "",
+    "caption": ""
+  },
+  "meta_at": {
+    "rating": "1800000200 67e4f24eda45ced3f28f06a164423828 4d067153",
+    "keywords": "1800000200 67e4f24eda45ced3f28f06a164423828 d53d18c2",
+    "turn": "1800000200 67e4f24eda45ced3f28f06a164423828 4d067153"
+  },
+  "turn": 1,
+  "shape": {
+    "turn": 0,
+    "aspect": 1.5
+  },
+  "saved": 0,
+  "revisions": [
+    "67e4f24eda45ced3f28f06a164423828 1800000200 golden"
+  ],
+  "versions": [
+    {
+      "id": "9e3779b97f4a7c15",
+      "name": "Warm, kept",
+      "made": 1800000150,
+      "named": 1800000150,
+      "line": {
+        "current": {
+          "light": {
+            "exposure": 0.9
+          },
+          "placed_under": 1,
+          "process": 1,
+          "version": 10
+        },
+        "id": "ffcaef66fd8e00ed510a93c878bfac801d54593d17ba065bcb3bc2a4d213cb1f",
+        "parent": "7a9c675abdf61f47a224ead7026adc677d2fada7f94437384cc3678e4cc88536",
+        "history": [
+          {
+            "light": {
+              "exposure": -0.1
+            },
+            "placed_under": 1,
+            "process": 1,
+            "retouch": {
+              "patches": [
+                {
+                  "id": 1,
+                  "points": [[0.099999964,0.6]],
+                  "radius": 0.044999998
+                }
+              ]
+            },
+            "version": 10,
+            "step": "From the original",
+            "id": "7a9c675abdf61f47a224ead7026adc677d2fada7f94437384cc3678e4cc88536"
+          }
+        ],
+        "line_id": "9e3779b97f4a7c15",
+        "head_at": {
+          "at": 1800000150,
+          "install": "0123456789abcdef"
+        },
+        "snapshots": [],
+        "sources": {
+          "d2052541a493fbba3c7f6b189ac3a176": [0.03,0.075],
+          "f77b63e4a2bd4b0f95cbadf5f57ab5e1": [0.05,-0.02]
+        }
+      }
+    },
+    {
+      "id": "3c6ef372fe94f82a",
+      "name": "Plain",
+      "made": 1800000150,
+      "line": {}
+    }
+  ],
+  "removed": {
+    "daa66d2c7ddf743f": 1800000150
+  },
+  "original_at": 1800000151
+}

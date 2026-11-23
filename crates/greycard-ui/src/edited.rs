@@ -139,12 +139,16 @@ pub(crate) fn saved(st: &mut crate::State, c: usize) {
     };
     let iso = iso_of(st, c);
     if st.current == Some(c) && st.culling.cull.is_none() {
-        worker.send(crate::worker::Job::Keep {
-            frame,
-            edit: line.current.clone(),
-            turn: sidecar.turn,
-            iso,
-        });
+        // Nothing kept of a state whose masks wait on the frame's shape
+        // (§724): it is not the picture.
+        if let Some(edit) = line.ready() {
+            worker.send(crate::worker::Job::Keep {
+                frame,
+                edit: edit.clone(),
+                turn: sidecar.turn,
+                iso,
+            });
+        }
         return;
     }
     // A base of it the worker shelved under the edit before is no base
@@ -152,8 +156,8 @@ pub(crate) fn saved(st: &mut crate::State, c: usize) {
     worker.edit_changed(frame.path.clone(), file_edits(st, c));
     // The line's key under the edit just written is its hint until the
     // thumbnail reads it: what the cell shows now, not before the save.
-    let edited = is_edited(&frame.path, &line.current, iso);
-    let key = edited.then(|| worker.edited().key_known(&frame.path, &line.current));
+    let edited = is_edited(&frame.path, line.current(), iso);
+    let key = edited.then(|| worker.edited().key_known(&frame.path, line.current()));
     if worker.edited().note(&frame, edited, iso, key) {
         worker.send(crate::rows::thumb_job(st, c));
     }
@@ -176,20 +180,26 @@ pub(crate) fn landed(st: &crate::State, turn: u8) {
     };
     // The sidecar on disk is the frame's own, and holds what was
     // developed: nothing on the panel is unsaved.
-    if !crate::sidecars::writable(st, c) || line.current != st.develop.edit || sidecar.turn != turn
+    if !crate::sidecars::writable(st, c)
+        || *line.current() != st.develop.edit
+        || sidecar.turn != turn
     {
+        return;
+    }
+    // Nor of a state whose masks wait on the frame's shape (§724).
+    if line.current_waits() {
         return;
     }
     let Some(worker) = crate::WORKER.with(|w| w.borrow().clone()) else {
         return;
     };
     let iso = iso_of(st, c);
-    if !is_edited(&frame.path, &line.current, iso) && !worker.edited().holds(&frame) {
+    if !is_edited(&frame.path, line.current(), iso) && !worker.edited().holds(&frame) {
         return;
     }
     worker.send(crate::worker::Job::Keep {
         frame,
-        edit: line.current.clone(),
+        edit: line.current().clone(),
         turn,
         iso,
     });
@@ -353,7 +363,7 @@ fn file_edits(st: &crate::State, c: usize) -> Option<crate::worker::FileNow> {
     Some(crate::worker::FileNow {
         edits: std::iter::once(&sidecar.line)
             .chain(sidecar.versions.iter().map(|v| &v.line))
-            .map(|l| l.current.clone())
+            .map(|l| l.current().clone())
             .collect(),
         turn: sidecar.turn,
     })
@@ -451,7 +461,7 @@ mod tests {
             let mut st = state.borrow_mut();
             st.window.write_sidecars = true;
             for s in &mut st.sidecars {
-                s.current = Edit::for_picture();
+                s.record(Edit::for_picture());
             }
             st.current = Some(0);
             crate::panel::browser::rebuild_browser(&mut st, &app);
@@ -507,7 +517,11 @@ mod tests {
         // Brightened on the panel and saved by the panel's own save.
         {
             let mut st = state.borrow_mut();
-            st.sidecars[0].current.light.exposure = 1.0;
+            {
+                let mut e = st.sidecars[0].current().clone();
+                e.light.exposure = 1.0;
+                st.sidecars[0].record(e);
+            }
             assert!(crate::sidecars::save_sidecar(&mut st, 0));
         }
         pump(
@@ -524,7 +538,7 @@ mod tests {
         // Reset and saved: the camera's again.
         {
             let mut st = state.borrow_mut();
-            st.sidecars[0].current = Edit::for_picture();
+            st.sidecars[0].record(Edit::for_picture());
             assert!(crate::sidecars::save_sidecar(&mut st, 0));
         }
         pump(
@@ -534,7 +548,11 @@ mod tests {
         // Brightened and kept again, then left for the other frame.
         {
             let mut st = state.borrow_mut();
-            st.sidecars[0].current.light.exposure = 1.0;
+            {
+                let mut e = st.sidecars[0].current().clone();
+                e.light.exposure = 1.0;
+                st.sidecars[0].record(e);
+            }
             assert!(crate::sidecars::save_sidecar(&mut st, 0));
         }
         pump(
@@ -752,7 +770,7 @@ mod tests {
             dark.detail.texture = 0.0;
             dark.light.exposure = -1.0;
             let mut sidecar = greycard_edit::Sidecar {
-                line: greycard_edit::Line::of(dark.clone()),
+                line: greycard_edit::Line::of(dark.clone(), 0).unwrap(),
                 turn: 1,
                 ..Default::default()
             };

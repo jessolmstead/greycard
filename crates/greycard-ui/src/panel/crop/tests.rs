@@ -1160,8 +1160,16 @@ fn the_crop_opens_under_the_starting_aspect() {
     };
     {
         let mut st = state.borrow_mut();
-        st.sidecars[7].current.geometry.crop = Some(kept);
-        st.sidecars[7].current.geometry.aspect = crate::Aspect::Ratio { w: 16.0, h: 9.0 };
+        {
+            let mut e = st.sidecars[7].current().clone();
+            e.geometry.crop = Some(kept);
+            st.sidecars[7].record(e);
+        }
+        {
+            let mut e = st.sidecars[7].current().clone();
+            e.geometry.aspect = crate::Aspect::Ratio { w: 16.0, h: 9.0 };
+            st.sidecars[7].record(e);
+        }
     }
     let wide = (6000, 4000);
     let tall = (4000, 6000);
@@ -1412,7 +1420,7 @@ fn a_frame_the_camera_framed_crops_from_the_cameras_frame() {
     rest();
     {
         let st = state.borrow();
-        let geometry = &st.sidecars[0].current.geometry;
+        let geometry = &st.sidecars[0].current().geometry;
         let c = geometry.crop.expect("the drag made a crop");
         assert!(
             (ratio_of(&c, size) - 1.5).abs() < 1e-3,
@@ -1433,7 +1441,7 @@ fn a_frame_the_camera_framed_crops_from_the_cameras_frame() {
     rest();
     let st = state.borrow();
     let c = st.sidecars[0]
-        .current
+        .current()
         .geometry
         .crop
         .expect("4:3 stores a crop");
@@ -1484,7 +1492,7 @@ fn opening_the_crop_under_original_stores_nothing() {
     rest();
     let st = state.borrow();
     // As saved: the drag's step on the frame's line.
-    let geometry = &st.sidecars[0].current.geometry;
+    let geometry = &st.sidecars[0].current().geometry;
     assert_eq!(geometry.aspect, crate::Aspect::Original);
     let c = geometry.crop.expect("the drag made a crop");
     assert!(
@@ -1532,7 +1540,7 @@ fn a_frame_arrived_at_while_cropping_is_not_cropped_until_touched() {
     drag_corner(&app);
     rest();
     let st = state.borrow();
-    let geometry = &st.sidecars[1].current.geometry;
+    let geometry = &st.sidecars[1].current().geometry;
     assert_eq!(geometry.aspect, crate::Aspect::Ratio { w: 1.0, h: 1.0 });
     let c = geometry.crop.expect("the drag made a crop");
     assert!(
@@ -1735,7 +1743,7 @@ fn a_ratio_opened_with_the_crop_button_stores_the_crop_it_shows() {
     rest();
     {
         let st = state.borrow();
-        let stored = &st.sidecars[0].current.geometry;
+        let stored = &st.sidecars[0].current().geometry;
         assert_eq!(stored.aspect, crate::Aspect::Ratio { w: 3.0, h: 2.0 });
         let c = stored.crop.expect("the crop the box showed");
         assert!(
@@ -1758,12 +1766,12 @@ fn a_ratio_opened_with_the_crop_button_stores_the_crop_it_shows() {
             "the kept picture: {tw}x{th}"
         );
     }
-    let saved = greycard_edit::Sidecar::load(&raw)
+    let saved = greycard_edit::Sidecar::load_as_file(&raw)
         .unwrap()
         .expect("a sidecar written");
     assert_eq!(
-        saved.current.geometry,
-        state.borrow().sidecars[0].current.geometry
+        saved.current().geometry,
+        state.borrow().sidecars[0].current().geometry
     );
     drop(app);
     crate::testing::remove_scratch(state, &dir);
@@ -1793,7 +1801,7 @@ fn a_ratio_taken_before_the_develop_lands_is_fitted_when_it_does() {
         assert!(app.get_geo_has_crop(), "done first {done_first}");
         rest();
         let st = state.borrow();
-        let stored = &st.sidecars[0].current.geometry;
+        let stored = &st.sidecars[0].current().geometry;
         let c = stored.crop.expect("the fitted crop stored");
         assert!(
             ((c.w * 4000.0) / (c.h * 3000.0) - 1.5).abs() < 1e-3,
@@ -1835,9 +1843,12 @@ fn a_late_fit_after_the_save_is_named_as_the_crop_buttons_step() {
         let mut states: Vec<_> = line
             .history
             .iter()
-            .map(|s| (s.label.clone(), s.edit.clone()))
+            .map(|s| (s.label().map(String::from), s.edit().clone()))
             .collect();
-        states.push((line.current_label.clone(), line.current.clone()));
+        states.push((
+            line.current_label().map(String::from),
+            line.current().clone(),
+        ));
         states
             .windows(2)
             .map(|w| {
@@ -1876,7 +1887,7 @@ fn a_late_fit_after_the_save_is_named_as_the_crop_buttons_step() {
     rest();
     let late = named(&state.borrow().sidecars[0]);
     assert_eq!(late, [now[0].clone(), now[0].clone()]);
-    assert!(state.borrow().sidecars[0].current.geometry.crop.is_some());
+    assert!(state.borrow().sidecars[0].current().geometry.crop.is_some());
     drop(app);
     crate::testing::remove_scratch(state, &dir);
 }
@@ -1890,8 +1901,12 @@ fn a_late_fit_after_the_save_is_named_as_the_crop_buttons_step() {
 fn a_late_fit_due_on_one_frame_is_not_made_on_another() {
     let (app, state, raw, dir) = four_three("crop-late-other", "Last used", "3:2");
     let other = raw.with_file_name("P1010002.ORF");
-    state.borrow_mut().sidecars[1].current.geometry.aspect =
-        crate::Aspect::Ratio { w: 3.0, h: 2.0 };
+    {
+        let mut e = state.borrow_mut().sidecars[1].current().clone();
+        e.geometry.aspect = crate::Aspect::Ratio { w: 3.0, h: 2.0 };
+        state.borrow_mut().sidecars[1].record(e);
+    }
+    let steps = state.borrow().sidecars[1].history.len();
     app.invoke_select(0);
     press_crop(&app);
     assert!(state.borrow().develop.crop_fit_due.is_some());
@@ -1908,8 +1923,8 @@ fn a_late_fit_due_on_one_frame_is_not_made_on_another() {
     let st = state.borrow();
     assert!(st.develop.crop_fit_due.is_none(), "let go");
     assert!(!app.get_geo_has_crop());
-    assert_eq!(st.sidecars[1].current.geometry.crop, None);
-    assert!(st.sidecars[1].history.is_empty(), "no step on B");
+    assert_eq!(st.sidecars[1].current().geometry.crop, None);
+    assert_eq!(st.sidecars[1].history.len(), steps, "no step on B");
     assert!(!greycard_edit::Sidecar::path_for(&other).exists());
     drop(st);
     drop(app);
@@ -2540,7 +2555,7 @@ fn an_undo_across_a_crop_over_a_fill_develops() {
         let mut st = state.borrow_mut();
         let mut edit = st.develop.edit.clone();
         edit.geometry = g;
-        st.line_mut(0).expect("the open frame's line").current = edit;
+        st.line_mut(0).expect("the open frame's line").record(edit);
         crate::panel::history::take_current_settled(&mut st, &app, &worker);
     };
     let before = generation(&state);

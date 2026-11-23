@@ -365,6 +365,7 @@ pub struct Noise {
     /// The engine's strength; 1.5 is what its benchmark chose.
     pub strength: f32,
     /// The learned denoiser, by tier, or off.
+    #[serde(deserialize_with = "crate::meta::newer_loose")]
     pub learned: Learned,
     /// How much of the learned answer shows, 0 to 1: it is blended
     /// with the plain demosaic of the same mosaic, so the slider does

@@ -392,7 +392,13 @@ pub(super) fn masks_for(
         tracing::info!("the masks of {name}: no such version in its sidecar");
         return MasksMade::Short;
     };
-    let edit = std::mem::take(&mut line.current);
+    // A state whose masks wait where they were placed under another
+    // turn is not the picture (§724).
+    if line.ready().is_none() {
+        tracing::info!("the masks of {name}: they wait on the frame's shape");
+        return MasksMade::Short;
+    }
+    let edit = line.current().clone();
     let turn = sidecar.turn;
     if !crate::reduced::draws_learned(&edit) {
         return MasksMade::All;

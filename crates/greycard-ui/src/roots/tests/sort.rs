@@ -483,7 +483,7 @@ fn a_time_shift_reorders_a_list_by_capture_time_once_the_index_has_it() {
     crate::rows::land_pending(&state, &app, &worker);
     let b = root.join("b");
     for name in ["_DSC0001.tif", "_DSC0002.tif"] {
-        let on_disk = greycard_edit::Sidecar::load(&b.join(name))
+        let on_disk = greycard_edit::Sidecar::load_as_file(&b.join(name))
             .unwrap()
             .unwrap();
         assert_eq!(on_disk.meta.time_shift, 2, "{name}");
@@ -512,7 +512,7 @@ fn a_time_shift_reorders_a_list_by_capture_time_once_the_index_has_it() {
     // Culling's undo: the shift off both, and the list back.
     let _ = crate::panel::browser::step_tags(&mut state.borrow_mut(), &app, true);
     for name in ["_DSC0001.tif", "_DSC0002.tif"] {
-        let on_disk = greycard_edit::Sidecar::load(&b.join(name))
+        let on_disk = greycard_edit::Sidecar::load_as_file(&b.join(name))
             .unwrap()
             .unwrap();
         assert_eq!(on_disk.meta.time_shift, 0, "{name}");
