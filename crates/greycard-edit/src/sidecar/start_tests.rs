@@ -397,3 +397,25 @@ fn a_version_made_from_a_seeded_start_is_seeded() {
         assert_eq!(line.current().noise.learned_strength, 0.37);
     }
 }
+
+/// A file with a history but no current state (found by the
+/// `sidecar_json` fuzz target; no build writes one) reads as the line
+/// nobody developed it writes as: no history held that the write drops,
+/// so the shape that history asked for is not written once and lost on
+/// the next read.
+#[test]
+fn a_history_with_no_current_state_is_not_held() {
+    let json = r#"{"history":[{"retouch":{"patches":[{}]},"version":10}],
+        "snapshots":[{"name":"S","taken":1,"edit":{"version":10}}],
+        "versions":[{"id":"9e3779b97f4a7c15","line":{"history":[{"version":10}]}}],
+        "turn":1,"shape":{"turn":0,"aspect":1}}"#;
+    let s = Sidecar::from_json(json, &Edit::default()).unwrap();
+    assert!(!s.line.recorded());
+    assert!(s.line.history.is_empty());
+    assert!(s.line.snapshots.is_empty());
+    assert!(s.versions[0].line.history.is_empty());
+    let written = s.to_json();
+    let back = Sidecar::from_json(&written, &Edit::default()).unwrap();
+    assert_eq!(back.to_json(), written, "the round trip is stable");
+    assert_eq!(back, s);
+}

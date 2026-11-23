@@ -39,8 +39,12 @@ the reasoning lives in `docs/notes.md`.
 - [ ] The library index's step from 17 to 18 changes only data, yet
       locks 0.12 out (issue 199). Keep `user_version` at 17 with a
       marker row, or accept it; before the cut
-- [ ] The fuzz targets run, not only built, against schema 10's
-      sidecar round trip (§734)
+- [ ] A sidecar of many tiny states costs memory and time past its
+      size: 100,000 `{}` history entries (300 KB) take 644 MB and 17 s
+      over three reads, since no read caps history. Cap at read, charge
+      each state against the budget, or refuse past a count
+- [ ] A fuzz target for the join of two sidecars: a throwaway one
+      found a line id held twice, which no kept target reaches
 - [ ] The Back up sheet says "N frames already there have newer
       sidecars here" for every sidecar-only item, also when the
       archive's edit is the newer one coming home, or a join

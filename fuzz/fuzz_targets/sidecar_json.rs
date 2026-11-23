@@ -10,6 +10,17 @@ fuzz_target!(|data: &[u8]| {
         return;
     };
     if let Ok(sidecar) = Sidecar::from_json(text, &greycard_edit::Edit::default()) {
+        // A write floor past ours is a newer build's file, never saved.
+        let floor = serde_json::from_str::<serde_json::Value>(text)
+            .ok()
+            .and_then(|v| v["floors"]["write"].as_u64())
+            .unwrap_or(0);
+        if floor > u64::from(greycard_edit::VERSION) {
+            assert!(
+                sidecar.read_only(),
+                "a write floor of {floor} reads as writable"
+            );
+        }
         greycard_fuzz::sidecar_round_trips(&sidecar, "sidecar");
     }
 });

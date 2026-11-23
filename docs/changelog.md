@@ -119,6 +119,8 @@ design note behind it.
 
 ### Fixes
 
+- A keyword or caption holding a carriage return now reads back
+  unchanged from the XMP greycard writes.
 - Pentax bodies lensfun files under Ricoh, such as the K-1 and K-3
   III, now find their lens profiles (issue 197,
   [§737](https://github.com/jessolmstead/greycard/blob/master/docs/notes/737-pentax-lenses-found-and-the-lens-in-an-export.md)).

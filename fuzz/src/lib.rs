@@ -10,11 +10,18 @@
 use greycard_edit::{Edit, Preset, Sidecar};
 use greycard_library::filter::{Cmp, Filter, NumberField, Term, TextField, TextOp};
 
-/// `edit` writes as JSON and reads back as it was.
+/// `edit` writes as JSON and reads back as it was. A mask shape this
+/// build does not know is read and, by design, not written back
+/// (`Shape::Unknown`): an edit holding one is held to what it writes
+/// instead, which reads back and writes the same.
 pub fn edit_round_trips(edit: &Edit, what: &str) {
     let json = edit.to_json();
     let back = Edit::from_json(&json)
         .unwrap_or_else(|e| panic!("{what}: the edit does not read back: {e}\n{json}"));
+    if edit.adjustments.iter().any(|a| a.mask.unknown() > 0) {
+        assert_eq!(back.to_json(), json, "{what}: the edit writes back changed");
+        return;
+    }
     assert_eq!(&back, edit, "{what}: the edit reads back changed");
 }
 
@@ -37,10 +44,27 @@ pub fn applied_round_trips(preset: &Preset, what: &str) {
 /// `sidecar` writes as JSON, reads back, and writes the same JSON
 /// again. A sidecar has no equality of its own, and what it writes is
 /// all of what it keeps.
+///
+/// A newer build's file (its write floor past ours, §724) is never
+/// written: it refuses a write, and what it would write reads back
+/// under that floor again, as the file it came from does.
 pub fn sidecar_round_trips(sidecar: &Sidecar, what: &str) {
     let json = sidecar.to_json();
-    let back = Sidecar::from_json(&json, &Edit::default())
+    let mut value: serde_json::Value = serde_json::from_str(&json)
+        .unwrap_or_else(|e| panic!("{what}: the sidecar writes no JSON: {e}\n{json}"));
+    if let Some(floor) = sidecar.newer {
+        assert!(
+            sidecar.writable().is_err(),
+            "{what}: a newer build's sidecar is writable"
+        );
+        value["floors"]["write"] = floor.into();
+    }
+    let back = Sidecar::from_value(value, &Edit::default())
         .unwrap_or_else(|e| panic!("{what}: the sidecar does not read back: {e}\n{json}"));
+    assert_eq!(
+        back.newer, sidecar.newer,
+        "{what}: the sidecar's write floor reads back changed"
+    );
     assert_eq!(
         back.to_json(),
         json,

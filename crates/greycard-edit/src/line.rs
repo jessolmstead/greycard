@@ -710,14 +710,27 @@ impl From<LineIn> for Line {
             undone,
             line_id,
             head_at,
-            mut snapshots,
+            snapshots,
             snapshots_removed,
-            sources,
+            mut sources,
             unread,
         } = read;
-        fill_snapshot_ids(&mut snapshots);
+        // An offset too large for an f32 reads as infinite, which writes
+        // as null and does not read back: no source at all, so the engine
+        // chooses again.
+        sources.retain(|_, o| o.iter().all(|v| v.is_finite()));
         // No current state written: a line nobody developed (§724).
         let recorded = current.is_some();
+        // Such a line writes none of what follows a state, so none of it
+        // is read: a file that has it with no current state (no build
+        // writes one) would otherwise be held here as it is not written,
+        // its history asking for a shape its next read does not.
+        let (history, undone, line_id, head_at, mut snapshots) = if recorded {
+            (history, undone, line_id, head_at, snapshots)
+        } else {
+            Default::default()
+        };
+        fill_snapshot_ids(&mut snapshots);
         let (current, current_written) = current.unwrap_or_default().into_parts();
         let mut line = Line {
             current_written,
@@ -3455,6 +3468,20 @@ mod tests {
         let (x, _) = Line::joined_sources(&a, &b);
         let (y, _) = Line::joined_sources(&b, &a);
         assert_eq!(x.sources["k"][0].to_bits(), y.sources["k"][0].to_bits());
+    }
+
+    /// A chosen source past an f32's range (found by the `sidecar_json`
+    /// fuzz target) is no source: kept, it reads as infinite and writes
+    /// as null, which the next read drops.
+    #[test]
+    fn a_source_past_f32_is_not_kept() {
+        let json = r#"{"sources":{"a":[0,1e308],"b":[0.25,-0.5]}}"#;
+        let s = Sidecar::from_json(json, &Edit::default()).unwrap();
+        assert_eq!(s.line.sources.len(), 1);
+        assert_eq!(s.line.sources["b"], [0.25, -0.5]);
+        let written = s.to_json();
+        let back = Sidecar::from_json(&written, &Edit::default()).unwrap();
+        assert_eq!(back.to_json(), written, "the round trip is stable");
     }
 
     /// The key is the patch's placing alone: its id, seed, and fill

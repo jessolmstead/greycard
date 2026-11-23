@@ -1080,6 +1080,12 @@ fn escape(text: &str, attribute: bool) -> String {
             '<' => out.push_str("&lt;"),
             '>' => out.push_str("&gt;"),
             '"' if attribute => out.push_str("&quot;"),
+            // A parser turns a carriage return written as itself into a
+            // line feed, and in an attribute a line feed or a tab into a
+            // space: as references they read back as they were.
+            '\r' => out.push_str("&#13;"),
+            '\n' if attribute => out.push_str("&#10;"),
+            '\t' if attribute => out.push_str("&#9;"),
             _ => out.push(c),
         }
     }
@@ -1778,6 +1784,22 @@ mod tests {
 
     fn meta_of(xml: &str) -> Meta {
         read(xml).unwrap().meta
+    }
+
+    /// Found by fuzzing: a carriage return read from a reference was
+    /// written as itself, which a parser reads as a line feed, so a
+    /// keyword or a caption with one read back changed.
+    #[test]
+    fn fuzz_a_carriage_return_reads_back_as_written() {
+        let xml = r#"<x:xmpmeta xmlns:x=""><rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"><rdf:Description xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:subject><rdf:Seq><rdf:li>{&#13;/</rdf:li></rdf:Seq></dc:subject><dc:description><rdf:Alt><rdf:li xml:lang="x-default">one&#13;&#10;two</rdf:li></rdf:Alt></dc:description></rdf:Description></rdf:RDF></x:xmpmeta>"#;
+        let meta = meta_of(xml);
+        assert_eq!(meta.keywords, ["{\r/"]);
+        assert_eq!(meta.caption, "one\r\ntwo");
+        let fresh = fresh(&meta, None);
+        assert_eq!(meta_of(&fresh), meta, "{fresh}");
+        let written = write(xml, &meta, None).unwrap();
+        assert_eq!(meta_of(&written), meta, "{written}");
+        assert_eq!(escape("a\tb\nc\rd", true), "a&#9;b&#10;c&#13;d");
     }
 
     /// Found by fuzzing: a description nested in a property's value

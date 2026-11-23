@@ -1093,4 +1093,31 @@ mod tests {
             }
         }
     }
+
+    /// A file holding one line id twice (found by fuzzing a join; no
+    /// build writes one) has the later line's made anew, so a join
+    /// places each line once and keeps both edits.
+    #[test]
+    fn a_line_id_held_twice_is_made_anew() {
+        let json = r#"{"current":{},"line_id":"9e3779b97f4a7c15",
+            "versions":[
+                {"id":"9e3779b97f4a7c15","line":{"current":{"light":{"exposure":0.5}}}},
+                {"id":"3c6ef372fe94f82a","line":{"current":{"light":{"exposure":0.7}},
+                    "line_id":"9e3779b97f4a7c15"}}]}"#;
+        let mut s = Sidecar::from_json(json, &Edit::default()).unwrap();
+        s.fill_ids();
+        let ids: std::collections::HashSet<&str> = std::iter::once(&s.line)
+            .chain(s.versions.iter().map(|v| &v.line))
+            .map(|l| l.line_id.as_str())
+            .collect();
+        assert_eq!(ids.len(), 3, "{ids:?}");
+        let again = reread(&s);
+        for joined in [sync::join(&s, &again), sync::join(&again, &s)] {
+            assert_eq!(joined.versions.len(), 2);
+            for (id, exposure) in [("9e3779b97f4a7c15", 0.5), ("3c6ef372fe94f82a", 0.7)] {
+                let line = joined.line(Some(id)).unwrap();
+                assert_eq!(line.current().light.exposure, exposure);
+            }
+        }
+    }
 }

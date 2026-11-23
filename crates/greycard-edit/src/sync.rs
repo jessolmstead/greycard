@@ -1648,9 +1648,17 @@ impl Sidecar {
         if self.line.recorded && self.line.line_id.is_empty() {
             self.line.line_id = line_id_of_root(&self.line);
         }
+        let mut held: HashSet<String> = HashSet::new();
+        held.insert(self.line.line_id.clone());
         for v in &mut self.versions {
             if v.line.recorded && v.line.line_id.is_empty() {
                 v.line.line_id = v.id.clone();
+            }
+            // A line id a file holds twice (no build writes one; found by
+            // fuzzing) is made anew for the later line, as a join makes a
+            // version's id anew: a join places each line once, by its id.
+            while !v.line.line_id.is_empty() && !held.insert(v.line.line_id.clone()) {
+                v.line.line_id = id_of(&v.line.line_id, "", Some("line"))[..16].to_string();
             }
         }
     }
