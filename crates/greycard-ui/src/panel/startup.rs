@@ -920,6 +920,7 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
         if let Some(path) = &library_path {
             st.views.collections =
                 crate::collections::Store::load(crate::collections::Store::dir_beside(path));
+            st.views.collections.recent = remembered.recent_collections.clone();
             crate::panel::collections::show(&st, &app);
             // The stacks, in their folder among the collections.
             st.views.stacks = crate::stacks::Store::load(greycard_library::stacks::dir_in(
@@ -2542,6 +2543,7 @@ fn merged(
                 export_preset: _,
             },
         recent_folders,
+        recent_collections,
         start_folder,
         start_view,
         filter_bar,
@@ -2611,6 +2613,7 @@ fn merged(
     } = kept;
     settings.shared.last_file = last_file;
     settings.recent_folders = recent_folders;
+    settings.recent_collections = recent_collections;
     settings.start_folder = start_folder;
     settings.start_view = start_view;
     settings.filter_bar = filter_bar;
@@ -2859,6 +2862,7 @@ pub(crate) fn remember(app: &App) -> settings::Settings {
         preset_folds: Vec::new(),
         // Written as each folder opens.
         recent_folders: Vec::new(),
+        recent_collections: Vec::new(),
         // Written as the Settings sheet's rows are chosen.
         start_folder: String::new(),
         start_view: settings::START_VIEWS[0].into(),

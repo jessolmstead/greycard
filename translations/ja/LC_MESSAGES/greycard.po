@@ -1763,11 +1763,23 @@ msgstr[0] "{n}枚の撮影日時をずらす..."
 msgid "Shift capture time..."
 msgstr "撮影日時をずらす..."
 
-#: crates/greycard-slint/ui/panel/frame-menu.slint:291
+#: crates/greycard-slint/ui/panel/frame-menu.slint:291 crates/greycard-slint/ui/panel/collection-picker-sheet.slint:40
 msgid "Add to collection"
 msgstr "コレクションに追加"
 
 #: crates/greycard-slint/ui/panel/frame-menu.slint:298
+msgid "All collections..."
+msgstr ""
+
+#: crates/greycard-slint/ui/panel/collection-picker-sheet.slint:47 crates/greycard-slint/ui/panel/collection-picker-sheet.slint:48
+msgid "Search collections"
+msgstr ""
+
+#: crates/greycard-slint/ui/panel/collection-picker-sheet.slint:69
+msgid "No matching collections."
+msgstr ""
+
+#: crates/greycard-slint/ui/panel/frame-menu.slint:302 crates/greycard-slint/ui/panel/collection-picker-sheet.slint:83
 msgid "New collection..."
 msgstr "新規コレクション..."
 

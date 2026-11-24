@@ -1,3 +1,5 @@
+import { CollectionChoice } from "../structs.slint";
+
 // The frame menu: what a right-click over a frame in the strip, the
 // grid or the viewport offers, on the whole selection. Slint's own
 // context menu, native where the platform has one (macOS, Windows)
@@ -40,14 +42,12 @@ export component FrameMenu inherits Rectangle {
     in property <int> back-count;
     in property <string> back-to;
     callback move-back();
-    /// The collections filled by hand, by name, for Add to collection;
-    /// the one open in the browser, by name, for Remove from it, empty
-    /// when no collection is open.
-    in property <[string]> collections;
+    /// The collection open in the browser, by name, for Remove from it.
     in property <string> collection-open;
-    /// Added to the collection at that place in `collections`, or to a
-    /// new one for -1.
+    in property <[CollectionChoice]> collection-quick;
+    in property <bool> collection-has-more;
     callback collection-add(int);
+    callback collection-browse();
     callback collection-remove();
     callback copy();
     callback paste();
@@ -289,11 +289,15 @@ export component FrameMenu inherits Rectangle {
             MenuSeparator { }
             Menu {
                 title: @tr("Add to collection");
-                for name[i] in root.collections: MenuItem {
-                    title: name;
-                    activated => { root.collection-add(i); }
+                for choice in root.collection-quick: MenuItem {
+                    title: choice.name;
+                    activated => { root.collection-add(choice.index); }
                 }
-                if root.collections.length > 0: MenuSeparator { }
+                if root.collection-quick.length > 0: MenuSeparator { }
+                if root.collection-has-more: MenuItem {
+                    title: @tr("All collections...");
+                    activated => { root.collection-browse(); }
+                }
                 MenuItem {
                     title: @tr("New collection...");
                     activated => { root.collection-add(-1); }

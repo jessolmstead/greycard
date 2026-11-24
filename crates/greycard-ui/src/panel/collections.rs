@@ -34,7 +34,9 @@ use crate::filter::{Saved, SavedBar};
 use crate::panel::browser::chosen_frames;
 use crate::roots::View;
 use crate::worker::Worker;
-use crate::{App, CollectionChip, Shared, State, tr};
+use crate::{App, CollectionChip, CollectionChoice, Shared, State, tr};
+
+const QUICK_COLLECTIONS: usize = 10;
 
 /// The collections as the window shows them, beside the store's: the
 /// sidebar's rows and the frame menu's names, one model each for the
@@ -43,9 +45,10 @@ use crate::{App, CollectionChip, Shared, State, tr};
 pub(crate) struct Held {
     /// The sidebar's rows, replaced only when they change.
     pub(crate) rows: Rc<VecModel<CollectionChip>>,
-    /// The frame menu's names, replaced only when they change: a model
-    /// made afresh rebuilds the menu's items under a menu that is up.
+    /// Names in the full collection picker, in the store's order.
     pub(crate) names: Rc<VecModel<slint::SharedString>>,
+    /// The destinations in the frame menu, most recently used first.
+    quick: Rc<VecModel<CollectionChoice>>,
     /// The sheet's question while it is up.
     pub(crate) asked: Option<Asked>,
 }
@@ -149,6 +152,27 @@ pub(crate) fn show(st: &State, app: &App) {
         .iter()
         .map(|c| full_name(&c.set, &c.name).into())
         .collect();
+    let mut quick = Vec::new();
+    let recent = store
+        .recent
+        .iter()
+        .filter_map(|id| store.list.iter().position(|c| &c.id == id));
+    for i in recent.chain(0..names.len()) {
+        if !quick.contains(&i) {
+            quick.push(i);
+            if quick.len() == QUICK_COLLECTIONS {
+                break;
+            }
+        }
+    }
+    let choices = quick
+        .into_iter()
+        .map(|i| CollectionChoice {
+            name: names[i].clone(),
+            index: i as i32,
+        })
+        .collect();
+    crate::panel::startup::sync_rows(&held.quick, choices);
     if !held.names.iter().eq(names.iter().cloned()) {
         held.names.set_vec(names);
     }
@@ -393,6 +417,23 @@ fn pairs_of(frames: &[Frame]) -> HashSet<Pair<'_>> {
         .collect()
 }
 
+fn remember_destination(st: &mut State, id: &str) {
+    let remember = |recent: &mut Vec<String>| {
+        recent.retain(|c| c != id);
+        recent.insert(0, id.to_string());
+        recent.truncate(QUICK_COLLECTIONS);
+    };
+    match &st.window.settings_file {
+        // As for recent folders, keep destinations added by another window.
+        Some(path) => {
+            st.views.collections.recent =
+                crate::settings::Settings::change_at(path, |s| remember(&mut s.recent_collections))
+                    .recent_collections;
+        }
+        None => remember(&mut st.views.collections.recent),
+    }
+}
+
 /// The selection's frames into collection `id`: new pictures at its end,
 /// and another copy of a member moving its hint.
 fn add_to(state: &Rc<Shared>, app: &App, worker: &Rc<Worker>, id: &str, frames: &[Frame]) {
@@ -405,6 +446,7 @@ fn add_to(state: &Rc<Shared>, app: &App, worker: &Rc<Worker>, id: &str, frames: 
         let added = c.add(frames);
         st.views.collections.save(id);
         st.views.collections.target = Some(id.to_string());
+        remember_destination(&mut st, id);
         members_changed(&mut st, app);
         app.set_status(
             match (added.added, added.moved) {
@@ -730,6 +772,9 @@ fn sheet_done(state: &Rc<Shared>, app: &App, worker: &Rc<Worker>) {
             st.views.collections.list.push(c);
             st.views.collections.sort();
             st.views.collections.save(&id);
+            if added > 0 {
+                remember_destination(&mut st, &id);
+            }
             st.views.collections.target = Some(id);
             tracing::info!("collection {name} made, {added} frames in it");
             app.set_status(
@@ -916,6 +961,22 @@ pub(crate) fn install(app: &App, state: &Rc<Shared>, worker: &Rc<Worker>) {
     app.set_collection_names(ModelRc::from(
         state.borrow().views.collections_held.names.clone(),
     ));
+    app.set_collection_quick(ModelRc::from(
+        state.borrow().views.collections_held.quick.clone(),
+    ));
+    app.on_search_collections(|names, query| {
+        let query = query.trim().to_lowercase();
+        let matches: Vec<_> = names
+            .iter()
+            .enumerate()
+            .filter(|(_, name)| query.is_empty() || name.to_lowercase().contains(&query))
+            .map(|(index, name)| CollectionChoice {
+                name,
+                index: index as i32,
+            })
+            .collect();
+        ModelRc::from(Rc::new(VecModel::from(matches)))
+    });
     show(&state.borrow(), app);
     {
         let (state, worker, app_weak) = (state.clone(), worker.clone(), app.as_weak());

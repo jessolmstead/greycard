@@ -1776,11 +1776,23 @@ msgstr[1] "Opnametijd van {n} foto's verschuiven..."
 msgid "Shift capture time..."
 msgstr "Opnametijd verschuiven..."
 
-#: crates/greycard-slint/ui/panel/frame-menu.slint:291
+#: crates/greycard-slint/ui/panel/frame-menu.slint:291 crates/greycard-slint/ui/panel/collection-picker-sheet.slint:40
 msgid "Add to collection"
 msgstr "Aan verzameling toevoegen"
 
 #: crates/greycard-slint/ui/panel/frame-menu.slint:298
+msgid "All collections..."
+msgstr ""
+
+#: crates/greycard-slint/ui/panel/collection-picker-sheet.slint:47 crates/greycard-slint/ui/panel/collection-picker-sheet.slint:48
+msgid "Search collections"
+msgstr ""
+
+#: crates/greycard-slint/ui/panel/collection-picker-sheet.slint:69
+msgid "No matching collections."
+msgstr ""
+
+#: crates/greycard-slint/ui/panel/frame-menu.slint:302 crates/greycard-slint/ui/panel/collection-picker-sheet.slint:83
 msgid "New collection..."
 msgstr "Nieuwe verzameling..."
 

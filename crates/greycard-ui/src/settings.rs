@@ -175,6 +175,8 @@ pub struct Settings {
     /// stays until newer ones push it off the end; choosing it says
     /// it is gone rather than taking it out behind the user's back.
     pub recent_folders: Vec<String>,
+    /// Collection destinations, by ID, most recently used first.
+    pub recent_collections: Vec<String>,
     /// The folder a launch with no path opens, as chosen in the
     /// Settings sheet; empty for the last folder, the last file's, which
     /// is what every earlier build opened. Taken as written, with no `~`
@@ -819,6 +821,7 @@ impl Default for Settings {
             preset_favorites: Vec::new(),
             preset_folds: Vec::new(),
             recent_folders: Vec::new(),
+            recent_collections: Vec::new(),
             start_folder: String::new(),
             start_view: START_VIEWS[0].into(),
             filter_bar: true,
@@ -1420,6 +1423,7 @@ mod tests {
                 "/usr/share/applications/gimp.desktop".into(),
             ],
             recent_folders: vec!["/home/x/Pictures/b".into(), "/mnt/gone/a".into()],
+            recent_collections: vec!["collection-b".into(), "collection-a".into()],
             start_folder: "~/Pictures/start".into(),
             start_view: "Library".into(),
             filter_bar: false,
