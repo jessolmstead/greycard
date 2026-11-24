@@ -430,6 +430,10 @@ licenses, never bundled; a `greycard-ai` crate that core never sees.
       regrain drawn again; short of that, the mapped fill as the
       stand-in a pending patch shows while its fill is made again
       (§569)
+- [ ] A fill kept across a change under it, a lens correction among
+      them, so twenty fills are not made again for one slider; what to
+      show where a kept fill no longer matches (discussion 59,
+      2026-11-24)
 - [ ] A fill's regrain where the ring around the hole is full of
       detail: a ridge against sky got heavy, blotchy grain in the
       filled sky at 1024 and at 512, the noise estimate reading the
