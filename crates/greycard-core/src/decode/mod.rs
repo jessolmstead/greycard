@@ -12,6 +12,7 @@ use crate::error::Result;
 use crate::raw::{Orientation, RawFrame};
 
 mod focus;
+mod pef;
 pub mod rawler_backend;
 mod sparse;
 pub mod style;
@@ -681,18 +682,26 @@ mod tests {
             if !super::is_raw_path(&path) {
                 continue;
             }
-            let t = std::time::Instant::now();
-            match super::preview_path(&path) {
-                Ok(Some((img, o))) => println!(
-                    "{}: {}x{} {:?} in {:.0} ms",
-                    path.file_name().unwrap().to_string_lossy(),
-                    img.width(),
-                    img.height(),
-                    o,
-                    t.elapsed().as_secs_f64() * 1000.0
-                ),
-                Ok(None) => println!("{}: no preview", path.display()),
-                Err(e) => println!("{}: {e}", path.display()),
+            // The largest, then the smallest at a grid cell's ask
+            // (128 px, five times over) and a view's.
+            for edge in [None, Some(640), Some(2048)] {
+                let t = std::time::Instant::now();
+                let read = match edge {
+                    None => super::preview_path(&path),
+                    Some(edge) => super::preview_path_at_least(&path, edge),
+                };
+                match read {
+                    Ok(Some((img, o))) => println!(
+                        "{} at {edge:?}: {}x{} {:?} in {:.0} ms",
+                        path.file_name().unwrap().to_string_lossy(),
+                        img.width(),
+                        img.height(),
+                        o,
+                        t.elapsed().as_secs_f64() * 1000.0
+                    ),
+                    Ok(None) => println!("{}: no preview", path.display()),
+                    Err(e) => println!("{}: {e}", path.display()),
+                }
             }
         }
     }

@@ -541,8 +541,9 @@ pub fn preview_path(path: &Path) -> Result<Option<(image::RgbImage, Orientation)
 
 /// [`preview_path`] for a picture to be made `long_edge` on its long
 /// edge or smaller: of a file with several previews, the smallest that
-/// size or past it, else the largest ([`PreviewSize::AtLeast`]). Only
-/// a DNG lists several; every other format's is `preview_path`'s.
+/// size or past it, else the largest ([`PreviewSize::AtLeast`]). A DNG
+/// and a PEF have several to pick from; every other format's is
+/// `preview_path`'s.
 pub fn preview_path_at_least(
     path: &Path,
     long_edge: u32,
@@ -604,6 +605,14 @@ fn preview_source(source: &RawSource, thumbnail: bool, want: PreviewSize) -> Res
     // previews holds up has the thumbnail and not rawler's first.
     let image = if decoder.format_hint() == ::rawler::decoders::FormatHint::DNG {
         dng_preview(decoder.as_ref(), source, want).or_else(|| thumbnail.then(thumb).flatten())
+    } else if decoder.format_hint() == ::rawler::decoders::FormatHint::PEF {
+        // rawler's is the maker note's; the full one is ours to find.
+        let theirs = decoder
+            .preview_image(source, &params)
+            .ok()
+            .flatten()
+            .map(|i| i.to_rgb8());
+        pef_preview(source.buf(), theirs, want).or_else(|| thumbnail.then(thumb).flatten())
     } else {
         match decoder.preview_image(source, &params) {
             Ok(Some(i)) => Some(i.to_rgb8()),
@@ -633,6 +642,72 @@ pub enum PreviewSize {
     /// The smallest whose long edge is this or more, else the largest:
     /// a picture made smaller, which a larger preview only costs.
     AtLeast(u32),
+}
+
+/// A JPEG's bytes decoded, when they begin as a JPEG does and its
+/// header says the size its tags do: the header is read before a pixel
+/// is, so a JPEG of another size costs nothing to pass over. A body
+/// damaged past a sound header is no error here: the decoder fills
+/// what it cannot read with grey.
+fn jpeg_of_size(
+    bytes: &[u8],
+    size: (u32, u32),
+) -> std::result::Result<image::DynamicImage, String> {
+    use image::ImageDecoder;
+    if !bytes.starts_with(&[0xFF, 0xD8]) {
+        return Err("not a JPEG".into());
+    }
+    let header = image::codecs::jpeg::JpegDecoder::new(std::io::Cursor::new(bytes))
+        .map_err(|e| format!("its JPEG: {e}"))?
+        .dimensions();
+    if header != size {
+        return Err(format!("a JPEG of {header:?}"));
+    }
+    image::load_from_memory_with_format(bytes, image::ImageFormat::Jpeg)
+        .map_err(|e| format!("its JPEG: {e}"))
+}
+
+/// A PEF's preview as `want` picks it among the JPEGs its own TIFF
+/// directories hold (`pef::tiff_jpegs`: the full-size one in the
+/// third) and `theirs`, rawler's (the maker note's, 720x480 on a K-1),
+/// by size as a DNG's are ([`preview_order`]). Ours are only those that
+/// fit the raw's sensor and lie as it does (`pef::tiff_jpegs`). One
+/// whose header disagrees with its tags or will not read gives way to
+/// the next, each tried once; one whose header is sound but whose body
+/// is damaged decodes, grey where it is damaged, and is shown, as a
+/// DNG's is. `None` when none is left, and [`preview_source`] takes the
+/// thumbnail then.
+fn pef_preview(
+    bytes: &[u8],
+    theirs: Option<image::RgbImage>,
+    want: PreviewSize,
+) -> Option<image::RgbImage> {
+    let mut ours = super::pef::tiff_jpegs(bytes, MAX_PREVIEW_PIXELS);
+    let mut sizes: Vec<(u32, u32)> = ours.iter().map(|j| (j.width, j.height)).collect();
+    sizes.extend(theirs.as_ref().map(|t| t.dimensions()));
+    for size in preview_order(sizes, want) {
+        if theirs.as_ref().is_some_and(|t| t.dimensions() == size) {
+            log::debug!(
+                "PEF preview {}x{} (the maker note's) for {want:?}",
+                size.0,
+                size.1
+            );
+            return theirs;
+        }
+        let Some(at) = ours.iter().position(|j| (j.width, j.height) == size) else {
+            continue;
+        };
+        let jpeg = ours.swap_remove(at);
+        let bytes = &bytes[jpeg.at as usize..(jpeg.at + jpeg.len) as usize];
+        match jpeg_of_size(bytes, size) {
+            Ok(decoded) => {
+                log::debug!("PEF preview {}x{} for {want:?}", size.0, size.1);
+                return Some(decoded.into_rgb8());
+            }
+            Err(why) => log::debug!("PEF preview {}x{} passed over: {why}", size.0, size.1),
+        }
+    }
+    None
 }
 
 /// The most pixels a DNG preview's tags are believed for: past a
@@ -806,25 +881,13 @@ fn dng_preview_of(
         // JPEG, the old form's code too: one strip, its header the size.
         6 | 7 if offsets.len() == 1 => {
             let bytes = &source.buf()[offsets[0] as usize..(offsets[0] + counts[0]) as usize];
-            if !bytes.starts_with(&[0xFF, 0xD8]) {
-                return Err("not a JPEG".into());
-            }
-            use image::ImageDecoder;
-            let header = image::codecs::jpeg::JpegDecoder::new(std::io::Cursor::new(bytes))
-                .map_err(|e| format!("its JPEG: {e}"))?
-                .dimensions();
-            if header != (w, h) {
-                return Err(format!("a JPEG of {header:?}"));
-            }
-            // Decoded here, from the bytes just checked, with the
-            // `image` crate rawler's own JPEG strip decoder calls (one
-            // version of it in the build), so the pixels are those its
-            // `preview_image` gives, without its copy into 16-bit
-            // samples and back: a 60 MP preview peaks near a third of
-            // the memory. RGB for three samples, grey for one, as
-            // rawler takes them.
-            let decoded = image::load_from_memory_with_format(bytes, image::ImageFormat::Jpeg)
-                .map_err(|e| format!("its JPEG: {e}"))?;
+            // Decoded with the `image` crate rawler's own JPEG strip
+            // decoder calls (one version of it in the build), so the
+            // pixels are those its `preview_image` gives, without its
+            // copy into 16-bit samples and back: a 60 MP preview peaks
+            // near a third of the memory. RGB for three samples, grey
+            // for one, as rawler takes them.
+            let decoded = jpeg_of_size(bytes, (w, h))?;
             return match (decoded, spp) {
                 (image::DynamicImage::ImageRgb8(rgb), 3) => Ok(rgb),
                 (grey @ image::DynamicImage::ImageLuma8(_), 1) => Ok(grey.to_rgb8()),
@@ -2982,6 +3045,57 @@ mod tests {
             .unwrap()
             .unwrap();
         assert_eq!((theirs.width(), theirs.height()), (40, 30));
+    }
+
+    /// Of a PEF's JPEGs, its directories' and rawler's (the maker
+    /// note's, here 72x48), the largest for a picture looked at whole,
+    /// and the smallest at the size or past it for one made smaller: a
+    /// grid's picture under the maker note's size takes it, decoded
+    /// already, and nothing of the full one is decoded.
+    #[test]
+    fn a_pefs_preview_is_picked_by_size() {
+        use super::super::pef::testing::{Spoil, pef_like};
+        use PreviewSize::{AtLeast, Largest};
+        let theirs = || Some(image::RgbImage::new(72, 48));
+        let size = |bytes: &[u8], theirs: Option<image::RgbImage>, want| {
+            pef_preview(bytes, theirs, want).map(|rgb| rgb.dimensions())
+        };
+        let ok = |w, h| (w, h, Spoil::None);
+        for strips in [false, true] {
+            let bytes = pef_like(&[ok(16, 12), ok(400, 300)], strips, false);
+            assert_eq!(size(&bytes, theirs(), Largest), Some((400, 300)));
+            assert_eq!(size(&bytes, theirs(), AtLeast(1)), Some((16, 12)));
+            assert_eq!(size(&bytes, theirs(), AtLeast(17)), Some((72, 48)));
+            assert_eq!(size(&bytes, theirs(), AtLeast(72)), Some((72, 48)));
+            assert_eq!(size(&bytes, theirs(), AtLeast(73)), Some((400, 300)));
+            assert_eq!(size(&bytes, theirs(), AtLeast(4000)), Some((400, 300)));
+            assert_eq!(size(&bytes, None, AtLeast(17)), Some((400, 300)));
+        }
+        // The full one spoiled, each way: the next down, then rawler's.
+        for spoil in [
+            Spoil::Outside,
+            Spoil::Truncated,
+            Spoil::NotJpeg,
+            Spoil::Lying,
+            Spoil::Huge,
+            Spoil::Bomb,
+        ] {
+            let bytes = pef_like(&[ok(16, 12), (400, 300, spoil)], false, false);
+            assert_eq!(size(&bytes, theirs(), Largest), Some((72, 48)), "{spoil:?}");
+            assert_eq!(size(&bytes, None, Largest), Some((16, 12)), "{spoil:?}");
+            let none_good = pef_like(&[(400, 300, spoil)], false, false);
+            assert_eq!(size(&none_good, theirs(), Largest), Some((72, 48)));
+            assert_eq!(size(&none_good, None, Largest), None, "{spoil:?}");
+        }
+        // No TIFF at all: rawler's, else nothing.
+        assert_eq!(size(b"not a tiff", theirs(), Largest), Some((72, 48)));
+        assert_eq!(size(b"", None, AtLeast(10)), None);
+        // Two of one tagged size, the first's header another size: the
+        // first is tried once and the second taken.
+        let twins = pef_like(&[(64, 48, Spoil::Lying), ok(128, 48)], false, false);
+        assert_eq!(size(&twins, None, Largest), Some((128, 48)));
+        let twins = pef_like(&[ok(128, 48), (64, 48, Spoil::Lying)], false, false);
+        assert_eq!(size(&twins, None, Largest), Some((128, 48)));
     }
 
     /// A preview whose strip lies outside the file, is empty or absurdly

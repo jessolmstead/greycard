@@ -443,7 +443,7 @@ fn type_size(typ: u16) -> Option<u64> {
     }
 }
 
-fn u16_of(endian: Endian, b: &[u8]) -> u16 {
+pub(super) fn u16_of(endian: Endian, b: &[u8]) -> u16 {
     let b = [b[0], b[1]];
     match endian {
         Endian::Little => u16::from_le_bytes(b),
@@ -451,7 +451,7 @@ fn u16_of(endian: Endian, b: &[u8]) -> u16 {
     }
 }
 
-fn u32_of(endian: Endian, b: &[u8]) -> u32 {
+pub(super) fn u32_of(endian: Endian, b: &[u8]) -> u32 {
     let b = [b[0], b[1], b[2], b[3]];
     match endian {
         Endian::Little => u32::from_le_bytes(b),
@@ -570,7 +570,7 @@ impl<R: Read + Seek> Tiff<R> {
     }
 
     /// An integer value's first element.
-    fn int(&mut self, f: &Field) -> Option<i64> {
+    pub(super) fn int(&mut self, f: &Field) -> Option<i64> {
         self.ints(f)?.first().copied()
     }
 
