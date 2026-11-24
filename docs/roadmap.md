@@ -1449,10 +1449,12 @@ clears or a tester asks for it.
       needs a develop of its own, the kept Original being the edit's
 - [ ] An export that leaves out the location alone and keeps the rest
       of the metadata (discussion 147)
-- [ ] Open Pentax's .PEF files in the editor and the library: only
-      the command line's `info`, `lenses`, and `develop` read them
-      (issue 197). Pairing, the index, import, and camera styles, as
-      .ORI took (§671)
+- [ ] A PEF's full-size camera JPEG for culling and 1:1: rawler's
+      PEF decoder hands back the maker note's 720x480 preview and
+      passes over the full JPEG in the file's third directory, so a
+      PEF with no JPEG beside it culls soft. Upstream as the ORF's
+      was (§393), or a reader of our own as a DNG's has. Tried on one
+      K-1 file, landscape; no Pentax camera style is read (issue 197)
 - [ ] An export names a lens picked by hand even with the correction
       off, so a stand-in profile's name goes out as the lens; and a
       source's LensMake is kept beside a LensModel we fill, where

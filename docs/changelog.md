@@ -40,6 +40,8 @@ design note behind it.
 
 ### Develop
 
+- Pentax `.PEF` raws open in the editor, the library, and the import, each paired with
+  its camera JPEG (issue 197).
 - Every edit's saturated and bright colors now reach the export's
   limits at their hue, where they were clipped per channel
   ([§735](https://github.com/jessolmstead/greycard/blob/master/docs/notes/735-the-gamut-op-at-the-output.md)).

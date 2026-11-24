@@ -4179,6 +4179,30 @@ pub(crate) mod tests {
         greycard_core::testing::remove_dir_retry(&dir);
     }
 
+    /// A Pentax `.PEF` is indexed as a raw, with its camera's JPEG
+    /// beside it as its companion and not a row of its own.
+    #[test]
+    fn a_pef_is_indexed_as_a_raw_with_its_jpeg() {
+        let dir = scratch("pef");
+        let (pef, jpg) = (dir.join("IMGP0001.PEF"), dir.join("IMGP0001.JPG"));
+        // Not a raw the decoder reads, and a row all the same.
+        std::fs::write(&pef, b"a pentax raw").unwrap();
+        image::RgbImage::from_pixel(4, 3, image::Rgb([90, 120, 150]))
+            .save(&jpg)
+            .unwrap();
+        let mut lib = Library::open_in_memory().unwrap();
+        let report = lib.index_folder(&dir, &mut quiet()).unwrap();
+        assert_eq!(report.seen(), 2, "{report:?}");
+        assert_eq!(names(&lib, "kind:raw"), ["IMGP0001.PEF"]);
+        assert_eq!(names(&lib, ""), ["IMGP0001.PEF"]);
+        assert_eq!(
+            lib.companions_in(std::slice::from_ref(&dir)).unwrap(),
+            [(pef.clone(), vec![jpg.clone()])]
+        );
+        assert!(lib.by_path(&pef).unwrap().is_some());
+        greycard_core::testing::remove_dir_retry(&dir);
+    }
+
     /// The index keeps each file's kind of mosaic, read on the same
     /// decoder as its EXIF: a Bayer DNG, an X-Trans DNG, a picture;
     /// and a row from before the column (schema 10) gets it on the next

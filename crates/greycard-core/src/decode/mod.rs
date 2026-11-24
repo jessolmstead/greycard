@@ -273,11 +273,11 @@ pub fn mosaic_path(path: impl AsRef<Path>) -> Result<Option<crate::raw::Mosaic>>
 /// The extensions taken for a raw the decoder opens. `ori` is an ORF
 /// under another name: the single frame an Olympus or OM System body
 /// saves beside a High Res Shot's `.ORF`, which never takes its stem's
-/// short names or JPEG ([`always_yields`]). The order is the one a
-/// camera JPEG picks its raw by among raws of one stem
-/// (`greycard_library::pairs::raw_rank`).
-pub const RAW_EXTENSIONS: [&str; 9] = [
-    "cr3", "cr2", "dng", "nef", "arw", "raf", "orf", "rw2", "ori",
+/// short names or JPEG ([`always_yields`]). `pef` is Pentax's own
+/// raw. The order is the one a camera JPEG picks its raw by among raws
+/// of one stem (`greycard_library::pairs::raw_rank`).
+pub const RAW_EXTENSIONS: [&str; 10] = [
+    "cr3", "cr2", "dng", "nef", "arw", "raf", "orf", "rw2", "pef", "ori",
 ];
 
 /// Whether a file's name begins with a dot, as a hidden file's does:
@@ -602,6 +602,29 @@ mod tests {
         )));
     }
 
+    /// Pentax's `.PEF` is a raw in any case, and an ordinary one: it
+    /// owns its stem's short names alone and shares them beside a DNG
+    /// of its stem, as a RAF does. Neither its focus point nor its
+    /// camera frame is read, so its name spares it those reads.
+    #[test]
+    fn a_pef_is_a_raw_of_its_own() {
+        use super::{ShortNames, short_names};
+        for name in ["K1.PEF", "k1.pef", "K1.Pef"] {
+            let p = Path::new("/shoot").join(name);
+            assert!(super::is_raw_path(&p), "{name}");
+            assert!(!super::always_yields(&p), "{name}");
+            assert!(!super::may_have_focus_point(&p), "{name}");
+            assert!(!super::may_have_camera_frame(&p), "{name}");
+        }
+        let of = |raw: &str, names: &[&str]| short_names(Path::new(raw), names);
+        assert_eq!(
+            of("K1.PEF", &["K1.PEF", "K1.JPG", "K1.xmp"]),
+            ShortNames::Alone
+        );
+        assert_eq!(of("K1.PEF", &["K1.PEF", "K1.DNG"]), ShortNames::Shared);
+        assert!(!super::is_raw_path(Path::new("/shoot/K1.PEF.xmp")));
+    }
+
     /// A merge of ours is told by its tag with no decode; a camera's
     /// frame and a file that is no TIFF have none.
     #[test]
@@ -655,11 +678,7 @@ mod tests {
         entries.sort_by_key(|e| e.path());
         for e in entries {
             let path = e.path();
-            let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
-            if !matches!(
-                ext.to_ascii_lowercase().as_str(),
-                "cr3" | "cr2" | "dng" | "nef" | "arw" | "raf"
-            ) {
+            if !super::is_raw_path(&path) {
                 continue;
             }
             let t = std::time::Instant::now();

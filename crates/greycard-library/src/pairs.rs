@@ -349,6 +349,37 @@ mod tests {
         assert!(pair_key(b"/s", Path::new("P2.ORF"), "raw").is_some());
     }
 
+    /// A Pentax `.PEF` takes its camera's JPEG as any raw does, in
+    /// either case and before a DNG of its stem, on disk as in a list.
+    #[test]
+    fn a_pef_takes_its_jpeg() {
+        let paired = pair(paths(&["/s/IMGP1.JPG", "/s/IMGP1.PEF"]), false);
+        assert_eq!(paired.frames, paths(&["/s/IMGP1.PEF"]));
+        assert_eq!(
+            paired.companions,
+            vec![(PathBuf::from("/s/IMGP1.PEF"), paths(&["/s/IMGP1.JPG"]))]
+        );
+        let lower = pair(paths(&["/s/imgp2.jpg", "/s/imgp2.pef"]), false);
+        assert_eq!(lower.frames, paths(&["/s/imgp2.pef"]));
+        // A DNG made from it is passed over, as beside any camera raw.
+        let dng = pairs_in(&paths(&["/s/K.DNG", "/s/K.JPG", "/s/K.PEF"]));
+        assert_eq!(dng, vec![(2, 1)]);
+        let key = pair_key(b"/s", Path::new("IMGP1.PEF"), "raw");
+        assert_eq!(key.as_deref(), Some(&b"/s\0imgp1"[..]));
+        assert_eq!(pair_key(b"/s", Path::new("imgp1.JPG"), "jpeg"), key);
+
+        let dir = crate::index::tests::scratch("pairs-pef");
+        for name in ["P.PEF", "P.JPG", "P.PEF.gcd", "P.xmp"] {
+            std::fs::write(dir.join(name), b"x").unwrap();
+        }
+        assert_eq!(
+            companions_on_disk(&dir.join("P.PEF")),
+            vec![dir.join("P.JPG")]
+        );
+        assert_eq!(raw_on_disk(&dir.join("P.JPG")), Some(dir.join("P.PEF")));
+        greycard_core::testing::remove_dir_retry(&dir);
+    }
+
     #[test]
     fn only_raws_and_jpegs_have_a_stem_to_pair_by() {
         assert_eq!(

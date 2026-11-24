@@ -23,7 +23,7 @@ for /f "tokens=2,*" %%A in ('reg query "%classes%\.gcd" /ve 2^>nul ^| findstr /r
 )
 reg delete "%classes%\.gcd\OpenWithProgids" /v "greycard.gcd" /f >nul 2>&1
 
-for %%E in (.cr3 .cr2 .dng .nef .arw .raf .orf .rw2 .ori) do (
+for %%E in (.cr3 .cr2 .dng .nef .arw .raf .orf .rw2 .pef .ori) do (
     reg delete "%classes%\%%E\OpenWithProgids" /v "greycard.photo" /f >nul 2>&1
 )
 

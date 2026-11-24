@@ -65,7 +65,7 @@ rem the browser's, crates/greycard-ui/src/files.rs.
 reg add "%classes%\greycard.photo" /ve /d "greycard photo" /f >nul
 reg add "%classes%\greycard.photo\DefaultIcon" /ve /d "\"%app%\",0" /f >nul
 reg add "%classes%\greycard.photo\shell\open\command" /ve /d "\"%app%\" \"%%1\"" /f >nul
-for %%E in (.cr3 .cr2 .dng .nef .arw .raf .orf .rw2 .ori) do (
+for %%E in (.cr3 .cr2 .dng .nef .arw .raf .orf .rw2 .pef .ori) do (
     reg add "%classes%\%%E\OpenWithProgids" /v "greycard.photo" /t REG_NONE /f >nul
     echo   %%E ^(offered^)
 )

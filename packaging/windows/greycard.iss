@@ -177,6 +177,7 @@ Root: HKCU; Subkey: "Software\Classes\.arw\OpenWithProgids"; ValueType: string; 
 Root: HKCU; Subkey: "Software\Classes\.raf\OpenWithProgids"; ValueType: string; ValueName: "greycard.photo"; ValueData: ""; Flags: uninsdeletevalue uninsdeletekeyifempty
 Root: HKCU; Subkey: "Software\Classes\.orf\OpenWithProgids"; ValueType: string; ValueName: "greycard.photo"; ValueData: ""; Flags: uninsdeletevalue uninsdeletekeyifempty
 Root: HKCU; Subkey: "Software\Classes\.rw2\OpenWithProgids"; ValueType: string; ValueName: "greycard.photo"; ValueData: ""; Flags: uninsdeletevalue uninsdeletekeyifempty
+Root: HKCU; Subkey: "Software\Classes\.pef\OpenWithProgids"; ValueType: string; ValueName: "greycard.photo"; ValueData: ""; Flags: uninsdeletevalue uninsdeletekeyifempty
 Root: HKCU; Subkey: "Software\Classes\.ori\OpenWithProgids"; ValueType: string; ValueName: "greycard.photo"; ValueData: ""; Flags: uninsdeletevalue uninsdeletekeyifempty
 
 [Run]

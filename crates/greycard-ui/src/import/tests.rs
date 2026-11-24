@@ -189,6 +189,53 @@ fn a_high_res_shot_and_its_single_frame_are_two_frames() {
     greycard_render::testing::remove_dir_retry(&root);
 }
 
+/// A Pentax card: each `.PEF` is a frame that takes its JPEG and its
+/// XMP, and the import copies all three.
+#[test]
+fn a_pentax_raw_is_a_frame_and_imports_with_its_companions() {
+    let root = dir("scan-pef");
+    let card = root.join("card/DCIM/100_0101");
+    for name in [
+        "IMGP0001.PEF",
+        "IMGP0001.JPG",
+        "IMGP0001.xmp",
+        "imgp0002.pef",
+    ] {
+        write(&card.join(name), name.as_bytes());
+    }
+    let o = options(&root.join("card/DCIM"), &root.join("photos"));
+    let s = scan(&o.source).unwrap();
+    let at = |name: &str| card.join(name);
+    assert_eq!(
+        s.items,
+        vec![
+            Item {
+                file: at("IMGP0001.PEF"),
+                companions: vec![at("IMGP0001.JPG"), at("IMGP0001.xmp")],
+            },
+            Item {
+                file: at("imgp0002.pef"),
+                companions: vec![],
+            },
+        ]
+    );
+    assert!(s.left.is_empty(), "{:?}", s.left);
+    let r = go(&o);
+    assert_eq!(r.error, None);
+    assert_eq!((r.frames, r.files), (2, 4));
+    for name in [
+        "IMGP0001.PEF",
+        "IMGP0001.JPG",
+        "IMGP0001.xmp",
+        "imgp0002.pef",
+    ] {
+        let got = std::fs::read(root.join("photos").join(name)).unwrap();
+        assert_eq!(got, name.as_bytes(), "{name}");
+    }
+    no_temporaries(&root);
+    greycard_render::testing::remove_dir_retry(&root);
+}
+
 /// Every way an XMP is named finds its frame: the stem's raw for
 /// `X.xmp`, the raw it names whole in any case, the raw of a
 /// camera JPEG for darktable's `IMG.JPG.xmp`, a lone JPEG for its
