@@ -89,13 +89,12 @@ attribution in each file.
 
 **RapidRAW.** A Rust and React editor with AI masks and a good-looking
 interface, built for a quick, pleasing picture. greycard differs in
-four ways. It edits in linear Rec.2020, not sRGB, so the saturated
-color cameras catch (flowers, sunsets, stage lights) isn't squeezed
-in before the first edit. It aims for accuracy, true to the scene,
-rather than a look. Like RapidRAW it is tested by hand, but also by
-about 5,000 automated tests on every push. And its interface is
-native, built on Linux first; RapidRAW's is a web page in Tauri,
-which on Linux runs in WebKitGTK, its weakest platform.
+three ways. It aims for accuracy, true to the scene, rather than a
+look. (Both edit in wide-gamut Rec.2020, RapidRAW since its 1.7.1.)
+Like RapidRAW it is tested by hand, but also by about 5,000 automated
+tests on every push. And its interface is native, built on Linux
+first; RapidRAW's is a web page in Tauri, which on Linux runs in
+WebKitGTK, its weakest platform.
 
 **Others.** digiKam is a library without a developer. Photo Mechanic
 and FastRawViewer are cullers. ON1 and Luminar sell looks. ART is a
