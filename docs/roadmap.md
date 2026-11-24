@@ -1679,6 +1679,11 @@ clears or a tester asks for it.
 - [ ] A large generative fill beside film grain: scaled into the
       1024 window and back, it comes out softer than the scan around
       it (discussion 59, 2026-11-23)
+- [ ] A pair of other kinds as one frame, as a raw and its JPEG are:
+      a scanner's TIFF and JPEG of one name (pixls, 2026-11-24)
+- [ ] A saturation that darkens a color as it deepens it, as
+      darktable's does, beside ours, which moves chroma alone; it
+      wants a name (pixls, 2026-11-24)
 - [ ] A favorite: a shortcut in the left pane to a folder inside a
       root, where adding it as a root is refused (discussion 59,
       2026-11-15)
