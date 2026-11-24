@@ -1332,7 +1332,8 @@ clears or a tester asks for it.
 - [ ] Edit in, the rest of it (§499, §577): a raw-first tool (PureRAW,
       Photo AI) given the raw and its DNG offered in place; the edited
       TIFF's watch kept while the file is listed rather than an hour.
-      Try the Mac and Windows launches on the machines first
+      Try the Mac and Windows launches on the machines first.
+      Asked for again with DxO PureRAW as the case (issue 208)
 - [ ] A plugin protocol, after 1.0 and only on demand: an executable
       given a rendered file or a mask over JSON on stdin and stdout, a
       process boundary rather than in-process code, so a plugin's
