@@ -97,6 +97,10 @@ the reasoning lives in `docs/notes.md`.
 - [ ] Texture alone differs by 1.9e-4 between the device and the CPU
       on one monochrome file: the CPU's running sums against the
       shader's window sums, most likely (§668)
+- [ ] Monochrome sensors supported whole: the color tools out of the
+      way on a monochrome file, a greyscale export with a grey
+      profile, the DNG's bad-pixel and vignette opcodes on one plane;
+      a fork's pieces welcome as pull requests (discussion 207)
 - [ ] A monochrome frame, untested: the camera match, and HDR,
       panorama, and focus merges (§668)
 - [ ] Dehaze alone still collapses the capture sharpen's threshold
