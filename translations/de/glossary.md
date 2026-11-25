@@ -1,7 +1,8 @@
 # German (de) glossary for greycard's window
 
-This is the glossary of a draft translation that no native speaker has
-read yet. Corrections to it and to the catalog are welcome.
+This is the glossary of a draft translation. A native speaker has
+corrected some of its terms; corrections to it and to the catalog are
+welcome.
 
 Source of the terms: the German Lightroom Classic (LrC) first, Capture
 One (C1) and darktable (dt) where LrC has none or they differ.
@@ -63,7 +64,7 @@ One (C1) and darktable (dt) where LrC has none or they differ.
 | Temperature / Tint (WB) | Temperatur / Tönung | LrC |
 | As shot | Wie Aufnahme | LrC |
 | Daylight, Cloudy, Shade, Tungsten, Fluorescent, Flash | Tageslicht, Bewölkt, Schatten, Kunstlicht, Leuchtstoff, Blitz | LrC ("Leuchtstoffröhre" shortened) |
-| TINT (the section that lays a color over) | Tönung | the same word as WB tint; alt. "FARBTON" |
+| TINT (the section that lays a color over) | TÖNUNG | the same word as WB tint; alt. "FARBTON" |
 | Tone curve / Curves | Tonkurve / Kurven | LrC "Gradationskurve" |
 | Lights / Darks (parametric) | Helle Töne / Dunkle Töne | LrC "Helle Farbtöne" shortened |
 | Point / Parametric | Punkt / Parametrisch | LrC |
@@ -84,7 +85,7 @@ One (C1) and darktable (dt) where LrC has none or they differ.
 | Chromatic aberration | Chromatische Aberration | LrC |
 | Defringe | Rand entfernen | LrC |
 | Distortion / Vignetting | Verzeichnung / Vignettierung | LrC |
-| Crop | Zuschneiden | LrC and Photoshop; alt. "Freistellen" (C1, dt) |
+| Crop | Zuschneiden | C1 and dt; LrC "Freistellen" |
 | Aspect | Format | LrC's crop menu; "Seitenverhältnis" too long |
 | Rotate / Turn | Drehen | LrC |
 | Flip | Spiegeln | LrC |
@@ -100,10 +101,10 @@ One (C1) and darktable (dt) where LrC has none or they differ.
 | Subject / Sky / Background / People | Motiv / Himmel / Hintergrund / Personen | LrC |
 | Color range / Luminance range | Farbbereich / Luminanzbereich | LrC |
 | Retouch | Retusche | standard |
-| Heal / Clone / Fill | Reparieren / Klonen / Füllen | LrC removal modes; alt. "Kopierstempel" |
+| Heal / Clone / Fill | Reparieren / Klonen / Füllen | LrC removal modes; "Klonen" native reader's choice, LrC "Kopierstempel"/"Kopieren" |
 | Look | Look | photographers' word; C1 "Stil", LrC "Profil" mean other things here |
 | Camera profile | Kameraprofil | LrC |
-| Preset | Preset | LrC; alt. "Preset" (C1 German) |
+| Preset | Preset | native reader's choice; LrC "Vorgabe" |
 | Reset (the shared button word) | Reset | "Zurücksetzen" clipped in the Look section's button; LrC says "Zurücksetzen" |
 | Save... (preset and filter buttons) | Sichern... | "Speichern..." clipped in the presets pane; collides with Back up's "Sichern" |
 | Import... (menu and presets pane) | Import... | "Importieren..." clipped in the presets pane |

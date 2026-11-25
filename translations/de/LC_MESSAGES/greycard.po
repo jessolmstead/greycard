@@ -1,9 +1,9 @@
 # German translation of greycard's window. A draft.
 # This file is distributed under the same license as greycard (GPL-3.0-or-later).
-# Glossary: Develop → Entwickeln; Cull → Sichten; Crop → Freistellen.
+# Glossary: Develop → Entwickeln; Cull → Sichten; Crop → Zuschneiden.
 # Highlights → Lichter; Shadows → Tiefen; Clarity → Klarheit.
 # Texture → Struktur; Dehaze → Dunst entfernen; Denoise → Entrauschen.
-# Look → Look; Preset → Vorgabe; Sidecar → Filialdatei; Label → Farbmarke.
+# Look → Look; Preset → Preset; Sidecar → Filialdatei; Label → Farbmarke.
 #
 msgid ""
 msgstr ""
@@ -124,7 +124,7 @@ msgstr "Bedienfeld-Register"
 #. The Loupe's mode buttons at the top of the develop panel
 #: crates/greycard-slint/ui/app.slint:4211
 msgid "Crop"
-msgstr "Freistellen"
+msgstr "Zuschneiden"
 
 #. The Loupe's mode buttons at the top of the develop panel
 #: crates/greycard-slint/ui/app.slint:4211
@@ -714,7 +714,7 @@ msgstr "Betrag"
 
 #: crates/greycard-slint/ui/panel/crop.slint:74
 msgid "CROP"
-msgstr "FREISTELLEN"
+msgstr "ZUSCHNEIDEN"
 
 #. Crop section: the button that leaves the crop
 #: crates/greycard-slint/ui/panel/crop.slint:83
@@ -1095,7 +1095,7 @@ msgstr[1] "{} und {n} weitere, jedes mit seiner eigenen Bearbeitung"
 
 #: crates/greycard-slint/ui/panel/deliver.slint:287
 msgid "Preset"
-msgstr "Vorgabe"
+msgstr "Preset"
 
 #. Export sheet: after a preset's name once its settings were changed
 #: crates/greycard-slint/ui/panel/deliver.slint:297
@@ -2494,7 +2494,7 @@ msgstr "Beide behalten"
 
 #: crates/greycard-slint/ui/panel/preset-sheet.slint:55
 msgid "Save preset"
-msgstr "Vorgabe speichern"
+msgstr "Preset speichern"
 
 #: crates/greycard-slint/ui/panel/preset-sheet.slint:69
 msgid "Checked: only what differs from the defaults."
@@ -2534,11 +2534,11 @@ msgstr "Gruppenname"
 
 #: crates/greycard-slint/ui/panel/presets.slint:89
 msgid "PRESETS"
-msgstr "VORGABEN"
+msgstr "PRESETS"
 
 #: crates/greycard-slint/ui/panel/presets.slint:305
 msgid "Save the edit or import a Lightroom preset."
-msgstr "Bearbeitung speichern oder eine Lightroom-Vorgabe importieren."
+msgstr "Bearbeitung speichern oder ein Lightroom-Preset importieren."
 
 #: crates/greycard-slint/ui/panel/presets.slint:318
 msgid "Remove {} from the list?"
@@ -2595,7 +2595,7 @@ msgstr "Reparieren"
 
 #: crates/greycard-slint/ui/panel/retouch.slint:62
 msgid "Clone"
-msgstr "Kopieren"
+msgstr "Klonen"
 
 #: crates/greycard-slint/ui/panel/retouch.slint:68
 msgid "Fill"
@@ -3019,22 +3019,22 @@ msgstr "Zuletzt verwendet"
 #: crates/greycard-slint/ui/panel/settings-sheet.slint:1004
 msgid "An uncropped frame's crop opens at the aspect last picked."
 msgstr ""
-"Das Freistellen eines unbeschnittenen Bildes beginnt im zuletzt gewählten "
+"Das Zuschneiden eines unbeschnittenen Bildes beginnt im zuletzt gewählten "
 "Format."
 
 #: crates/greycard-slint/ui/panel/settings-sheet.slint:1006
 msgid "An uncropped frame's crop opens free, any shape."
 msgstr ""
-"Das Freistellen eines unbeschnittenen Bildes beginnt frei, in jeder Form."
+"Das Zuschneiden eines unbeschnittenen Bildes beginnt frei, in jeder Form."
 
 #: crates/greycard-slint/ui/panel/settings-sheet.slint:1007
 msgid "An uncropped frame's crop opens at the frame's own shape."
 msgstr ""
-"Das Freistellen eines unbeschnittenen Bildes beginnt in der Form des Bildes."
+"Das Zuschneiden eines unbeschnittenen Bildes beginnt in der Form des Bildes."
 
 #: crates/greycard-slint/ui/panel/settings-sheet.slint:1057
 msgid "Restores removed built-in presets."
-msgstr "Stellt entfernte eingebaute Vorgaben wieder her."
+msgstr "Stellt entfernte eingebaute Presets wieder her."
 
 #: crates/greycard-slint/ui/panel/settings-sheet.slint:1064
 msgid "EXPORT"
@@ -3121,7 +3121,7 @@ msgid ""
 "Crop and retouch never copy; camera profiles only to the same camera. A part "
 "copied alone leaves the rest of its section as each frame has it."
 msgstr ""
-"Freistellen und Retusche werden nie kopiert, Kameraprofile nur zur selben "
+"Zuschneiden und Retusche werden nie kopiert, Kameraprofile nur zur selben "
 "Kamera. Ein allein kopierter Teil lässt den Rest seines Abschnitts in jedem "
 "Bild, wie er ist."
 
@@ -3633,10 +3633,10 @@ msgid ""
 msgid_plural ""
 ", the preset's camera profile left off {n} frames (made for another camera)"
 msgstr[0] ""
-", das Kameraprofil der Vorgabe bei {n} Bild ausgelassen (für eine andere "
+", das Kameraprofil des Presets bei {n} Bild ausgelassen (für eine andere "
 "Kamera gemacht)"
 msgstr[1] ""
-", das Kameraprofil der Vorgabe bei {n} Bildern ausgelassen (für eine andere "
+", das Kameraprofil des Presets bei {n} Bildern ausgelassen (für eine andere "
 "Kamera gemacht)"
 
 #: crates/greycard-ui/src/import.rs:550
@@ -3940,7 +3940,7 @@ msgstr "Die gewählten Bilder mit dem geöffneten synchronisieren"
 
 #: crates/greycard-ui/src/keys.rs:381
 msgid "Crop, and Done"
-msgstr "Freistellen, und Fertig"
+msgstr "Zuschneiden, und Fertig"
 
 #: crates/greycard-ui/src/keys.rs:385
 msgid "White balance from a neutral patch: the pipette"
@@ -3974,12 +3974,12 @@ msgstr "Die Maske zeigen"
 #. Keys sheet: O in crop mode, the next composition guide
 #: crates/greycard-ui/src/keys.rs:423
 msgid "In the crop, the next guide over it"
-msgstr "Beim Freistellen die nächste Hilfslinie darüber"
+msgstr "Beim Zuschneiden die nächste Hilfslinie darüber"
 
 #. Keys sheet: Shift+O in crop mode
 #: crates/greycard-ui/src/keys.rs:429
 msgid "In the crop, turn the golden spiral or the triangles"
-msgstr "Beim Freistellen die goldene Spirale oder die Dreiecke drehen"
+msgstr "Beim Zuschneiden die goldene Spirale oder die Dreiecke drehen"
 
 #: crates/greycard-ui/src/keys.rs:434
 msgid "Show the frame as it was, and back"
@@ -4038,7 +4038,7 @@ msgid ""
 "Close a sheet, put a tool down, leave the crop, let go of a set, or go back "
 "to one frame"
 msgstr ""
-"Ein Fenster schließen, ein Werkzeug ablegen, das Freistellen verlassen, eine "
+"Ein Fenster schließen, ein Werkzeug ablegen, das Zuschneiden verlassen, eine "
 "Gruppe loslassen oder zu einem Bild zurückkehren"
 
 #. Keys sheet: two keys that do the same
@@ -5084,11 +5084,11 @@ msgstr ""
 
 #: crates/greycard-ui/src/panel/assets.rs:407
 msgid "No configuration directory to keep presets in."
-msgstr "Kein Konfigurationsordner für Vorgaben."
+msgstr "Kein Konfigurationsordner für Presets."
 
 #: crates/greycard-ui/src/panel/assets.rs:410
 msgid "Every default preset is in the list."
-msgstr "Jede Standardvorgabe ist in der Liste."
+msgstr "Jedes Standard-Preset ist in der Liste."
 
 #: crates/greycard-ui/src/panel/assets.rs:411
 msgid "{name} is not in the list."
@@ -5102,7 +5102,7 @@ msgstr "{names} und {last} sind nicht in der Liste."
 #: crates/greycard-ui/src/panel/preset_list.rs:264
 #: crates/greycard-ui/src/panel/preset_list.rs:291
 msgid "no configuration directory to keep presets in"
-msgstr "kein Konfigurationsordner für Vorgaben"
+msgstr "kein Konfigurationsordner für Presets"
 
 #: crates/greycard-ui/src/panel/assets.rs:508
 msgid "{file} could not be read: {why}."
@@ -5110,7 +5110,7 @@ msgstr "{file} war nicht lesbar: {why}."
 
 #: crates/greycard-ui/src/panel/assets.rs:511
 msgid "{file} is not a preset: {why}."
-msgstr "{file} ist keine Vorgabe: {why}."
+msgstr "{file} ist kein Preset: {why}."
 
 #: crates/greycard-ui/src/panel/assets.rs:513
 msgid "{file} is {why}."
@@ -5123,7 +5123,7 @@ msgstr "{file} wurde nicht importiert: {why}."
 #: crates/greycard-ui/src/panel/assets.rs:516
 msgid "{file} was not imported: there is a preset called \"{name}\" already."
 msgstr ""
-"{file} wurde nicht importiert: es gibt schon eine Vorgabe namens \"{name}\"."
+"{file} wurde nicht importiert: es gibt schon ein Preset namens \"{name}\"."
 
 #: crates/greycard-ui/src/panel/assets.rs:521
 msgid "{file} could not be written into the list: {why}."
@@ -5147,19 +5147,19 @@ msgstr "Nicht importiert"
 
 #: crates/greycard-ui/src/panel/assets.rs:574
 msgid "No presets imported"
-msgstr "Keine Vorgaben importiert"
+msgstr "Keine Presets importiert"
 
 #: crates/greycard-ui/src/panel/assets.rs:575
 msgid "Imported {n} preset"
 msgid_plural "Imported {n} presets"
-msgstr[0] "{n} Vorgabe importiert"
-msgstr[1] "{n} Vorgaben importiert"
+msgstr[0] "{n} Preset importiert"
+msgstr[1] "{n} Presets importiert"
 
 #: crates/greycard-ui/src/panel/assets.rs:577
 msgid "Imported {done} of {n} preset"
 msgid_plural "Imported {done} of {n} presets"
-msgstr[0] "{done} von {n} Vorgabe importiert"
-msgstr[1] "{done} von {n} Vorgaben importiert"
+msgstr[0] "{done} von {n} Preset importiert"
+msgstr[1] "{done} von {n} Presets importiert"
 
 #: crates/greycard-ui/src/panel/assets.rs:583
 msgid ""
@@ -5279,12 +5279,12 @@ msgstr "ohne die Profile wird das Objektiv nur von Hand korrigiert"
 
 #: crates/greycard-ui/src/panel/assets.rs:2197
 msgid "a preset needs a name"
-msgstr "eine Vorgabe braucht einen Namen"
+msgstr "ein Preset braucht einen Namen"
 
 #: crates/greycard-ui/src/panel/assets.rs:2202
 #: crates/greycard-ui/src/panel/assets.rs:2229
 msgid "choose what the preset carries"
-msgstr "wählen Sie, was die Vorgabe enthält"
+msgstr "wählen Sie, was das Preset enthält"
 
 #: crates/greycard-ui/src/panel/assets.rs:2237
 msgid "saved {name} ({carried}) to {path}"
@@ -5313,7 +5313,7 @@ msgstr "beim Entfernen von {name}: {why}"
 
 #: crates/greycard-ui/src/panel/assets.rs:2329
 msgid "every default preset is in the list"
-msgstr "jede Standardvorgabe ist in der Liste"
+msgstr "jedes Standard-Preset ist in der Liste"
 
 #: crates/greycard-ui/src/panel/assets.rs:2333
 msgid "restored {names}"
@@ -5321,7 +5321,7 @@ msgstr "{names} wiederhergestellt"
 
 #: crates/greycard-ui/src/panel/assets.rs:2337
 msgid "restoring the default presets: {why}"
-msgstr "beim Wiederherstellen der Standardvorgaben: {why}"
+msgstr "beim Wiederherstellen der Standard-Presets: {why}"
 
 #: crates/greycard-ui/src/panel/assets.rs:2340
 msgid "no configuration directory to restore into"
@@ -5329,16 +5329,16 @@ msgstr "kein Konfigurationsordner zum Wiederherstellen"
 
 #: crates/greycard-ui/src/panel/assets.rs:2354
 msgid "choosing presets to import..."
-msgstr "Vorgaben zum Import werden gewählt..."
+msgstr "Presets zum Import werden gewählt..."
 
 #: crates/greycard-ui/src/panel/assets.rs:2358
 msgid "Import presets"
-msgstr "Vorgaben importieren"
+msgstr "Presets importieren"
 
 #. The file chooser's filter name for preset files
 #: crates/greycard-ui/src/panel/assets.rs:2362
 msgid "Presets"
-msgstr "Vorgaben"
+msgstr "Presets"
 
 #: crates/greycard-ui/src/panel/assets.rs:2385
 #: crates/greycard-ui/src/panel/lightroom.rs:662
@@ -6244,7 +6244,7 @@ msgstr "Export hält nach dem aktuellen Bild an..."
 
 #: crates/greycard-ui/src/panel/deliver.rs:2494
 msgid "export preset {name}"
-msgstr "Exportvorgabe {name}"
+msgstr "Export-Preset {name}"
 
 #: crates/greycard-ui/src/panel/deliver.rs:2511
 msgid "{none} is the picker's; choose another name"
@@ -6252,11 +6252,11 @@ msgstr "{none} gehört der Auswahl; wählen Sie einen anderen Namen"
 
 #: crates/greycard-ui/src/panel/deliver.rs:2523
 msgid "export preset {name} saved"
-msgstr "Exportvorgabe {name} gespeichert"
+msgstr "Export-Preset {name} gespeichert"
 
 #: crates/greycard-ui/src/panel/deliver.rs:2548
 msgid "export preset {name} deleted"
-msgstr "Exportvorgabe {name} gelöscht"
+msgstr "Export-Preset {name} gelöscht"
 
 #. The frame on screen with a panel that is not its own (its
 #. root offline, its sidecar not read): nothing to export, and
@@ -6437,7 +6437,7 @@ msgstr ""
 
 #: crates/greycard-ui/src/panel/history.rs:833
 msgid " with the export preset {name}"
-msgstr " mit der Exportvorgabe {name}"
+msgstr " mit dem Export-Preset {name}"
 
 #: crates/greycard-ui/src/panel/history.rs:837
 msgid ""
@@ -6945,8 +6945,8 @@ msgstr[1] "{n} Bilder"
 #: crates/greycard-ui/src/rows.rs:432
 msgid "{n} preset"
 msgid_plural "{n} presets"
-msgstr[0] "{n} Vorgabe"
-msgstr[1] "{n} Vorgaben"
+msgstr[0] "{n} Preset"
+msgstr[1] "{n} Presets"
 
 #: crates/greycard-ui/src/panel/look_rename.rs:309
 msgid "No picture {place} names it."
@@ -6969,8 +6969,8 @@ msgstr[1] ""
 #: crates/greycard-ui/src/panel/look_rename.rs:333
 msgid "{n} preset names it and will name the new one."
 msgid_plural "{n} presets name it and will name the new one."
-msgstr[0] "{n} Vorgabe nennt ihn und wird den neuen nennen."
-msgstr[1] "{n} Vorgaben nennen ihn und werden den neuen nennen."
+msgstr[0] "{n} Preset nennt ihn und wird den neuen nennen."
+msgstr[1] "{n} Presets nennen ihn und werden den neuen nennen."
 
 #: crates/greycard-ui/src/panel/look_rename.rs:346
 msgid "{} {place}"
@@ -7856,7 +7856,7 @@ msgstr "Temperatur {t} Mired ({here}{} K bei 3000 K, {} K bei 6500 K)"
 
 #: crates/greycard-ui/src/panel/sync.rs:1281
 msgid ": the preset is not applied"
-msgstr ": die Vorgabe wird nicht angewendet"
+msgstr ": das Preset wird nicht angewendet"
 
 #: crates/greycard-ui/src/panel/sync.rs:1335
 #: crates/greycard-ui/src/panel/sync.rs:1373
@@ -8658,7 +8658,7 @@ msgstr "das Zurücksetzen"
 
 #: crates/greycard-ui/src/rows.rs:409
 msgid "the preset"
-msgstr "die Vorgabe"
+msgstr "das Preset"
 
 #: crates/greycard-ui/src/rows.rs:410
 msgid "the paste"
@@ -8828,8 +8828,8 @@ msgstr[1] "das Zurücksetzen wurde nicht auf sie angewendet"
 #: crates/greycard-ui/src/rows.rs:477
 msgid "the preset was not applied to it"
 msgid_plural "the preset was not applied to them"
-msgstr[0] "die Vorgabe wurde nicht darauf angewendet"
-msgstr[1] "die Vorgabe wurde nicht auf sie angewendet"
+msgstr[0] "das Preset wurde nicht darauf angewendet"
+msgstr[1] "das Preset wurde nicht auf sie angewendet"
 
 #: crates/greycard-ui/src/rows.rs:480
 msgid "the paste was not applied to it"
