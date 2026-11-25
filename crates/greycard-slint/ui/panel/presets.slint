@@ -10,7 +10,7 @@
 // a preset's row makes it a favorite, and a right-click on the row
 // moves it into a group or out; one on a group's header renames it.
 
-import { Theme } from "../theme.slint";
+import { Theme, MenuFit } from "../theme.slint";
 import { Tips, TipArea, Section, PanelButton, ScrollPane } from "../controls.slint";
 import { PresetRow } from "../structs.slint";
 
@@ -120,10 +120,14 @@ export component PresetsSection inherits Section {
                 }
                 if !root.menu-header: Menu {
                     title: PresetWords.move-to-group;
-                    for g[gi] in root.groups: MenuItem {
-                        title: g;
+                    // Beside the separator and New group..., which
+                    // reaches a group past what the window holds: its
+                    // sheet takes an existing group's name, case aside,
+                    // as that group.
+                    for gi in min(root.groups.length, MenuFit.rows(2)): MenuItem {
+                        title: root.groups[gi];
                         checkable: true;
-                        checked: g == root.menu-group;
+                        checked: root.groups[gi] == root.menu-group;
                         activated => { root.moved(root.menu-index, gi); }
                     }
                     if root.groups.length > 0: MenuSeparator { }

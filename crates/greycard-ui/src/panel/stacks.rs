@@ -1078,7 +1078,7 @@ mod tests {
         // The bar counts the frames shown: x3, behind the top, is not.
         assert_eq!(app.get_filter_total(), 4);
         // Add to collection takes the top's frame, not the stack's.
-        app.invoke_collection_menu_add(-1);
+        app.invoke_collection_menu_new();
         assert!(matches!(
             &state.borrow().views.collections_held.asked,
             Some(crate::panel::collections::Asked::New { add }) if add.len() == 1

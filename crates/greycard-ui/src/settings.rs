@@ -175,7 +175,12 @@ pub struct Settings {
     /// stays until newer ones push it off the end; choosing it says
     /// it is gone rather than taking it out behind the user's back.
     pub recent_folders: Vec<String>,
-    /// Collection destinations, by ID, most recently used first.
+    /// The collections added to last, by id, the latest first, as a
+    /// build before they moved beside the library's collections
+    /// (`collections::Store::carry_recent`) kept them here. Read, to
+    /// carry them over once, and kept as read until they are: empty,
+    /// as every build writes it from then on, it is left out.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
     pub recent_collections: Vec<String>,
     /// The folder a launch with no path opens, as chosen in the
     /// Settings sheet; empty for the last folder, the last file's, which
@@ -2105,6 +2110,27 @@ mod tests {
         assert_eq!(read.lightbox_across, 4);
         let read: Settings = serde_json::from_str(r#"{"lightbox_across": 6}"#).unwrap();
         assert_eq!(read.lightbox_across, 6);
+    }
+
+    /// A file that keeps the collections added to last, as a build
+    /// before they moved beside the library did, reads them, to carry
+    /// them over, and writes them back until they are; once carried
+    /// (emptied) the field is left out.
+    #[test]
+    fn a_settings_file_s_recent_collections_are_kept_until_carried() {
+        let mut read: Settings =
+            serde_json::from_str(r#"{"recent_collections": ["b", "a"], "range_sample": 41}"#)
+                .unwrap();
+        assert_eq!(read.recent_collections, ["b", "a"]);
+        assert_eq!(read.range_sample, 41);
+        let written = serde_json::to_string(&read).unwrap();
+        assert!(
+            written.contains(r#""recent_collections":["b","a"]"#),
+            "{written}"
+        );
+        read.recent_collections.clear();
+        let written = serde_json::to_string(&read).unwrap();
+        assert!(!written.contains("recent_collections"), "{written}");
     }
 
     #[test]

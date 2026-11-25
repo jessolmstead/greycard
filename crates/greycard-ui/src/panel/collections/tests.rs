@@ -1,6 +1,6 @@
 use super::*;
 use crate::roots::{land_sent, open_view};
-use crate::testing::{click, state_for, window};
+use crate::testing::{click, folder, state_for, window};
 use greycard_library::fixture::{A7, R5, R6, write_frame};
 
 struct Setup {
@@ -160,10 +160,16 @@ fn open_collection_submenu(app: &App) {
         .mock_single_click(PointerEventButton::Left);
 }
 
+/// Collections named Collection 001 on, made a second apart in that
+/// order, in the store (not yet on disk), and shown; the last one's id.
 fn numbered_collections(s: &Setup, count: usize) -> String {
     let mut st = s.state.borrow_mut();
     st.views.collections.list = (1..=count)
-        .map(|i| Collection::new(&format!("Collection {i:03}")))
+        .map(|i| {
+            let mut c = Collection::new(&format!("Collection {i:03}"));
+            c.made = 1_700_000_000 + i as u64;
+            c
+        })
         .collect();
     show(&st, &s.app);
     st.views.collections.list.last().unwrap().id.clone()
@@ -184,16 +190,10 @@ fn ten_collections_fit_in_the_submenu_and_a_pick_moves_to_the_front() {
     let s = setup("short-picker");
     let app = &s.app;
     let last = numbered_collections(&s, 10);
-    let settings = s.dir.join("settings.json");
-    let earlier = {
-        let mut st = s.state.borrow_mut();
-        st.window.settings_file = Some(settings.clone());
-        st.views.collections.list[3].id.clone()
-    };
+    let folder = s.dir.join(crate::collections::DIR);
+    let earlier = s.state.borrow().views.collections.list[3].id.clone();
     // Another window used a collection after this window opened.
-    crate::settings::Settings::change_at(&settings, |s| {
-        s.recent_collections.push(earlier.clone());
-    });
+    greycard_library::collections::added_to(&folder, &earlier).unwrap();
     open_collection_submenu(app);
     assert!(collection_menu_entry(app, "All collections...").is_none());
     assert!(collection_menu_entry(app, "New collection...").is_some());
@@ -207,11 +207,12 @@ fn ten_collections_fit_in_the_submenu_and_a_pick_moves_to_the_front() {
         .get_collection_quick()
         .iter()
         .take(2)
-        .map(|choice| choice.index)
+        .map(|choice| choice.id.to_string())
         .collect();
-    assert_eq!(order, [9, 3]);
+    assert_eq!(order, [last.clone(), earlier.clone()]);
+    // Kept beside the library's collections, not in the settings.
     assert_eq!(
-        crate::settings::Settings::load_from(&settings).recent_collections,
+        greycard_library::collections::read_recent(&folder),
         [last, earlier]
     );
     teardown(s);
@@ -289,7 +290,7 @@ fn the_menu_and_the_sidebar_make_fill_and_open_a_collection() {
     let x = row_of(&state.borrow(), &s.files[0]);
     app.invoke_select(x);
     state.borrow_mut().views.picked = vec![1, 3];
-    app.invoke_collection_menu_add(-1);
+    app.invoke_collection_menu_new();
     assert!(app.get_collection_sheet_open());
     assert_eq!(app.get_collection_sheet_note(), "2 frames go into it");
     app.set_collection_sheet_name("Clients/Cover picks".into());
@@ -310,9 +311,9 @@ fn the_menu_and_the_sidebar_make_fill_and_open_a_collection() {
     // copy of x too, and not y.
     assert_eq!(marks(app), [true, true, false, true]);
     let in_menu: Vec<String> = app
-        .get_collection_names()
+        .get_collection_quick()
         .iter()
-        .map(|n| n.to_string())
+        .map(|c| c.name.to_string())
         .collect();
     assert_eq!(in_menu, ["Clients/Cover picks"]);
     assert_eq!(app.get_collection_open(), "");
@@ -360,7 +361,7 @@ fn the_menu_and_the_sidebar_make_fill_and_open_a_collection() {
     // The selects' x through the menu: already in, its hint moved.
     let copy = row_of(&state.borrow(), &s.copy);
     app.invoke_select(copy);
-    app.invoke_collection_menu_add(0);
+    app.invoke_collection_menu_add(app.get_collection_quick().row_data(0).unwrap());
     assert_eq!(
         app.get_status(),
         "already in Clients/Cover picks; shown from this copy now"
@@ -1084,7 +1085,7 @@ fn a_version_in_a_collection_is_its_own_tile_and_mark() {
     // Warm alone into a new collection, from the menu.
     let row = row_of_frame(&state.borrow(), &s.files[0], Some(&warm));
     app.invoke_select(row);
-    app.invoke_collection_menu_add(-1);
+    app.invoke_collection_menu_new();
     app.set_collection_sheet_name("Warm ones".into());
     app.invoke_collection_sheet_done();
     let id = state.borrow().views.collections.list[0].id.clone();
@@ -1393,4 +1394,705 @@ fn a_rewritten_file_s_version_is_not_forgotten_by_a_copy() {
     assert_eq!(app.get_status(), "Warm: 1 frame; nothing to forget");
     assert_eq!(file_of(&s, &id)["refs"].as_array().unwrap().len(), 1);
     teardown(s);
+}
+
+/// Collections named Shoot 0000 on, made a second apart in that order,
+/// in the store (not yet on disk), and shown; their ids.
+fn shoots(state: &Rc<Shared>, app: &App, n: usize) -> Vec<String> {
+    let mut st = state.borrow_mut();
+    let ids = (0..n)
+        .map(|i| {
+            let mut c = Collection::new(&format!("Shoot {i:04}"));
+            c.made = 1_700_000_000 + i as u64;
+            let id = c.id.clone();
+            st.views.collections.list.push(c);
+            id
+        })
+        .collect();
+    st.views.collections.sort();
+    show(&st, app);
+    ids
+}
+
+/// The names Add to collection lists, in its order.
+fn menu_names(app: &App) -> Vec<String> {
+    app.get_collection_quick()
+        .iter()
+        .map(|c| c.name.to_string())
+        .collect()
+}
+
+/// Add to collection names those added to last first, then the newest
+/// made, ten at most, the sidebar's order between those made in the
+/// same second; an id deleted since, or named twice, passed over.
+#[test]
+fn the_menu_names_those_added_to_last_then_the_newest() {
+    let list = |made: &[u64]| -> Vec<Collection> {
+        made.iter()
+            .enumerate()
+            .map(|(i, &m)| {
+                let mut c = Collection::new(&format!("C{i:04}"));
+                c.made = m;
+                c
+            })
+            .collect()
+    };
+    let rising = |n: u64| list(&(0..n).collect::<Vec<_>>());
+    assert_eq!(menu_places(&[], &[]), (vec![], false));
+    let one = rising(1);
+    assert_eq!(
+        menu_places(&one, &["elsewhere".to_string()]),
+        (vec![0], false)
+    );
+    // Ten: every one, the one added to last first, then the newest.
+    let ten = rising(10);
+    assert_eq!(
+        menu_places(&ten, std::slice::from_ref(&ten[2].id)),
+        (vec![2, 9, 8, 7, 6, 5, 4, 3, 1, 0], false)
+    );
+    // Eleven: the newest ten, the newest first.
+    let eleven = rising(11);
+    assert_eq!(menu_places(&eleven, &[]), ((1..11).rev().collect(), true));
+    let recent = [
+        eleven[3].id.clone(),
+        "deleted".to_string(),
+        eleven[3].id.clone(),
+        eleven[7].id.clone(),
+    ];
+    assert_eq!(
+        menu_places(&eleven, &recent),
+        (vec![3, 7, 10, 9, 8, 6, 5, 4, 2, 1], true)
+    );
+    // Made in the same second, as an import makes them: the sidebar's
+    // first ten.
+    assert_eq!(
+        menu_places(&list(&[5; 400]), &[]),
+        ((0..10).collect(), true)
+    );
+    // Five thousand, twelve of them added to last: ten named.
+    let many = rising(5000);
+    let recent: Vec<String> = (0..12).map(|i| many[i * 100].id.clone()).collect();
+    assert_eq!(
+        menu_places(&many, &recent),
+        ((0..10).map(|i| i * 100).collect(), true)
+    );
+}
+
+/// All collections...'s sheet put up, as its menu item puts it up.
+fn open_picker(app: &App) {
+    app.set_collection_picker_open(true);
+    crate::testing::settle(app);
+}
+
+/// The sheet's rows as it has made them, top first: each one's name,
+/// whether it is lit, and whether it is wholly in the list's view.
+fn picker_rows(app: &App) -> Vec<(String, bool, bool)> {
+    use i_slint_backend_testing::ElementHandle;
+    crate::testing::settle(app);
+    let pane = ElementHandle::find_by_element_id(app, "CollectionPickerSheet::scroll")
+        .next()
+        .unwrap();
+    let (top, foot) = (
+        pane.absolute_position().y,
+        pane.absolute_position().y + pane.size().height,
+    );
+    let mut rows: Vec<_> = crate::testing::all_by_id(app, "CollectionPickerSheet::row");
+    rows.sort_by(|a, b| a.absolute_position().y.total_cmp(&b.absolute_position().y));
+    rows.iter()
+        .map(|r| {
+            let (y, h) = (r.absolute_position().y, r.size().height);
+            (
+                r.accessible_label().unwrap().to_string(),
+                r.accessible_item_selected().unwrap(),
+                y >= top - 0.5 && y + h <= foot + 0.5,
+            )
+        })
+        .collect()
+}
+
+/// The lit row's name, and whether it is in view.
+fn lit(app: &App) -> Option<(String, bool)> {
+    picker_rows(app)
+        .into_iter()
+        .find(|(_, lit, _)| *lit)
+        .map(|(name, _, seen)| (name, seen))
+}
+
+/// The sheet over five thousand collections lists them from one model
+/// that Rust narrows at each key, where a fresh model at each key and a
+/// button a collection were ten seconds to open in a debug build; the
+/// rows in view are the list's, in order.
+#[test]
+fn the_picker_narrows_one_held_list() {
+    let s = setup("picker-rows");
+    let (app, state) = (&s.app, &s.state);
+    shoots(state, app, 5000);
+    open_picker(app);
+    let found = app.get_collection_found();
+    assert_eq!(found.row_count(), 5000);
+    // The testing backend's search passes over what the pane clips, so
+    // the rows it finds are those in view, each at its own place.
+    let rows = picker_rows(app);
+    assert!(rows.len() > 5 && rows.len() < 20, "{} rows", rows.len());
+    assert_eq!(rows[0].0, "Shoot 0000");
+    crate::testing::type_text(app, "shoot 49");
+    assert_eq!(found.row_count(), 100, "the same model, narrowed");
+    let rows = picker_rows(app);
+    assert!(rows.len() > 5 && rows.len() < 20, "{} rows", rows.len());
+    let names: Vec<String> = (0..rows.len())
+        .map(|i| format!("Shoot {:04}", 4900 + i))
+        .collect();
+    assert_eq!(rows.into_iter().map(|r| r.0).collect::<Vec<_>>(), names);
+    teardown(s);
+}
+
+/// The keys in the sheet: the first match lit as it opens and at each
+/// key typed; Down and Up move the light, which the list keeps in
+/// view; Return takes the row lit; Tab reaches the buttons and no row,
+/// and a word typed from a button goes to the field.
+#[test]
+fn the_picker_s_keys_move_the_light_and_return_takes_it() {
+    use crate::testing::{press, type_text};
+    use slint::platform::Key;
+    let s = setup("picker-keys");
+    let (app, state) = (&s.app, &s.state);
+    let ids = shoots(state, app, 40);
+    let x = row_of(&state.borrow(), &s.files[0]);
+    app.invoke_select(x);
+    open_picker(app);
+    assert_eq!(lit(app), Some(("Shoot 0000".into(), true)));
+    press(app, Key::DownArrow);
+    press(app, Key::DownArrow);
+    press(app, Key::UpArrow);
+    assert_eq!(lit(app), Some(("Shoot 0001".into(), true)));
+    // Up past the top stays there.
+    press(app, Key::UpArrow);
+    press(app, Key::UpArrow);
+    assert_eq!(lit(app), Some(("Shoot 0000".into(), true)));
+    // Down past the view: the list follows.
+    for _ in 0..30 {
+        press(app, Key::DownArrow);
+    }
+    assert_eq!(lit(app), Some(("Shoot 0030".into(), true)));
+    for _ in 0..30 {
+        press(app, Key::DownArrow);
+    }
+    assert_eq!(lit(app), Some(("Shoot 0039".into(), true)));
+    press(app, Key::PageUp);
+    let (up, seen) = lit(app).unwrap();
+    assert!(seen && up.as_str() < "Shoot 0039", "{up}");
+    // A key typed lights the first match again.
+    type_text(app, "003");
+    assert_eq!(lit(app), Some(("Shoot 0003".into(), true)));
+    press(app, Key::DownArrow);
+    press(app, Key::Return);
+    assert!(!app.get_collection_picker_open());
+    assert_eq!(app.get_status(), "1 frame added to Shoot 0030");
+    assert_eq!(hints(&s, &ids[30]), ["shoot/x.tif"]);
+
+    // Tab from the field: past the rows to the buttons, and a word
+    // typed there is the field's.
+    open_picker(app);
+    press(app, Key::Tab);
+    type_text(app, "0007");
+    assert_eq!(app.get_collection_found().row_count(), 1);
+    assert_eq!(lit(app), Some(("Shoot 0007".into(), true)));
+    press(app, Key::Tab);
+    press(app, Key::Tab);
+    type_text(app, "x");
+    assert_eq!(app.get_collection_found().row_count(), 0);
+    assert!(app.get_collection_picker_open());
+    teardown(s);
+}
+
+/// Typed after Tab, on a button: a hyphen, a digit, a character of a
+/// script with no case, and Backspace all reach the field.
+#[test]
+fn every_text_key_typed_on_a_button_goes_to_the_field() {
+    use crate::testing::{press, type_text};
+    use slint::platform::Key;
+    let s = setup("picker-text-keys");
+    let (app, state) = (&s.app, &s.state);
+    {
+        let mut st = state.borrow_mut();
+        for name in ["Wed-2", "Wed-3", "Wedge", "日本-1"] {
+            st.views.collections.list.push(Collection::new(name));
+        }
+        st.views.collections.sort();
+        show(&st, app);
+    }
+    let found = || -> Vec<String> {
+        app.get_collection_found()
+            .iter()
+            .map(|c| c.name.to_string())
+            .collect()
+    };
+    open_picker(app);
+    press(app, Key::Tab);
+    type_text(app, "wed-2");
+    assert_eq!(found(), ["Wed-2"]);
+    press(app, Key::Backspace);
+    assert_eq!(found(), ["Wed-2", "Wed-3"]);
+    // Backspace from the button, and a script with no case.
+    press(app, Key::Tab);
+    for _ in 0..4 {
+        press(app, Key::Backspace);
+    }
+    assert_eq!(found().len(), 4);
+    press(app, Key::Tab);
+    type_text(app, "日");
+    assert_eq!(found(), ["日本-1"]);
+    assert!(app.get_collection_picker_open());
+    teardown(s);
+}
+
+/// Escape closes the sheet and adds nothing; words that match nothing
+/// say so, and Return then takes nothing and leaves the sheet up.
+#[test]
+fn the_picker_closes_on_escape_and_takes_nothing_with_no_match() {
+    use crate::testing::{press, type_text};
+    use i_slint_backend_testing::ElementHandle;
+    use slint::platform::Key;
+    let s = setup("picker-none");
+    let (app, state) = (&s.app, &s.state);
+    shoots(state, app, 12);
+    let x = row_of(&state.borrow(), &s.files[0]);
+    app.invoke_select(x);
+    open_picker(app);
+    press(app, Key::Escape);
+    assert!(!app.get_collection_picker_open());
+    open_picker(app);
+    type_text(app, "zz");
+    assert_eq!(app.get_collection_found().row_count(), 0);
+    assert!(picker_rows(app).is_empty());
+    assert!(
+        ElementHandle::find_by_element_id(app, "CollectionPickerSheet::none")
+            .next()
+            .is_some()
+    );
+    let status = app.get_status();
+    press(app, Key::Return);
+    assert!(app.get_collection_picker_open());
+    assert_eq!(app.get_status(), status);
+    press(app, Key::Escape);
+    assert!(!app.get_collection_picker_open());
+    let st = state.borrow();
+    assert!(st.views.collections.list.iter().all(|c| c.refs.is_empty()));
+    drop(st);
+    teardown(s);
+}
+
+/// New collection... on the sheet: the sheet goes, the name is asked
+/// for, and the selection goes into the collection made.
+#[test]
+fn new_collection_on_the_picker_asks_a_name_and_fills_it() {
+    use i_slint_backend_testing::ElementHandle;
+    let s = setup("picker-new");
+    let (app, state) = (&s.app, &s.state);
+    shoots(state, app, 12);
+    let x = row_of(&state.borrow(), &s.files[0]);
+    app.invoke_select(x);
+    open_picker(app);
+    ElementHandle::find_by_element_id(app, "CollectionPickerSheet::new-collection")
+        .next()
+        .unwrap()
+        .invoke_accessible_default_action();
+    crate::testing::settle(app);
+    assert!(!app.get_collection_picker_open());
+    assert!(app.get_collection_sheet_open());
+    assert_eq!(app.get_collection_sheet_note(), "1 frame go into it");
+    app.set_collection_sheet_name("Fresh".into());
+    app.invoke_collection_sheet_done();
+    let id = {
+        let st = state.borrow();
+        let c = st.views.collections.list.iter().find(|c| c.name == "Fresh");
+        c.unwrap().id.clone()
+    };
+    assert_eq!(hints(&s, &id), ["shoot/x.tif"]);
+    assert_eq!(menu_names(app)[0], "Fresh");
+    teardown(s);
+}
+
+/// The sheet adds to the collection by its id: one deleted while the
+/// sheet was up is said, by its name, and nothing is added; with one
+/// above it deleted, the row lit still goes to its own.
+#[test]
+fn the_picker_adds_by_id_and_says_a_collection_gone() {
+    use crate::testing::{press, type_text};
+    use slint::platform::Key;
+    let s = setup("picker-gone");
+    let (app, state) = (&s.app, &s.state);
+    let ids = shoots(state, app, 25);
+    let x = row_of(&state.borrow(), &s.files[0]);
+    app.invoke_select(x);
+    open_picker(app);
+    type_text(app, "0012");
+    assert!(state.borrow_mut().views.collections.delete(&ids[12]));
+    press(app, Key::Return);
+    assert!(!app.get_collection_picker_open());
+    assert_eq!(app.get_status(), "Shoot 0012 is no longer in the list");
+    {
+        let st = state.borrow();
+        assert!(st.views.collections.list.iter().all(|c| c.refs.is_empty()));
+    }
+    open_picker(app);
+    press(app, Key::DownArrow);
+    press(app, Key::DownArrow);
+    assert_eq!(lit(app).unwrap().0, "Shoot 0002");
+    {
+        let mut st = state.borrow_mut();
+        assert!(st.views.collections.delete(&ids[0]));
+        show(&st, app);
+    }
+    press(app, Key::Return);
+    assert_eq!(app.get_status(), "1 frame added to Shoot 0002");
+    assert_eq!(hints(&s, &ids[2]), ["shoot/x.tif"]);
+    // From the submenu, the collection deleted (as another window
+    // deletes it) and the window's lists made again while it was up:
+    // still said by the name the menu offered.
+    let offered = app.get_collection_quick().row_data(1).unwrap();
+    {
+        let mut st = state.borrow_mut();
+        assert!(st.views.collections.delete(&offered.id));
+        show(&st, app);
+    }
+    assert!(
+        app.get_collection_quick()
+            .iter()
+            .all(|c| c.id != offered.id)
+    );
+    // Nor in the sheet's list, last narrowed to nothing.
+    app.invoke_collection_search("zz".into());
+    app.invoke_collection_menu_add(offered.clone());
+    assert_eq!(
+        app.get_status(),
+        format!("{} is no longer in the list", offered.name)
+    );
+    teardown(s);
+}
+
+/// Past ten, Add to collection names the newest made, the newest
+/// first; one added to from the sheet then heads them, and is kept in
+/// the library's own `recent.txt`, which a second library does not
+/// share and a reload of the folder (a Lightroom import's) keeps.
+#[test]
+fn the_ones_added_to_last_head_the_menu_and_stay_with_the_library() {
+    use crate::testing::{press, type_text};
+    use slint::platform::Key;
+    let s = setup("picker-recent");
+    let (app, state) = (&s.app, &s.state);
+    let ids = shoots(state, app, 25);
+    let newest: Vec<String> = (15..25).rev().map(|i| format!("Shoot {i:04}")).collect();
+    assert_eq!(menu_names(app), newest);
+    assert!(app.get_collection_has_more());
+    let x = row_of(&state.borrow(), &s.files[0]);
+    app.invoke_select(x);
+    open_picker(app);
+    type_text(app, "0007");
+    press(app, Key::Return);
+    assert_eq!(app.get_status(), "1 frame added to Shoot 0007");
+    let named = menu_names(app);
+    assert_eq!(named.len(), 10);
+    assert_eq!(named[..3], ["Shoot 0007", "Shoot 0024", "Shoot 0023"]);
+    let folder = s.dir.join(crate::collections::DIR);
+    assert_eq!(
+        greycard_library::collections::read_recent(&folder),
+        [ids[7].clone()]
+    );
+    let reloaded = crate::collections::Store::load(folder.clone());
+    assert_eq!(reloaded.recent, [ids[7].clone()]);
+    let other = s.dir.join("other").join(crate::collections::DIR);
+    assert!(crate::collections::Store::load(other).recent.is_empty());
+    teardown(s);
+}
+
+/// A settings file an earlier build kept the list in: carried into the
+/// library's folder once, when the folder has no list yet, and taken
+/// out of the settings, so a library opened next does not take it; a
+/// folder that has its own keeps it.
+#[test]
+fn the_settings_list_is_carried_to_the_library_once() {
+    use greycard_library::collections::{added_to, read_recent};
+    let app = window(0);
+    let (state, _worker) = state_for(&app, Vec::new());
+    let dir = crate::testing::scratch_dir("coll-carry");
+    std::fs::create_dir_all(&dir).unwrap();
+    let file = dir.join("settings.json");
+    let old = r#"{"recent_collections": ["b", "a"], "range_sample": 41}"#;
+    std::fs::write(&file, old).unwrap();
+    let (one, two, three) = (dir.join("one"), dir.join("two"), dir.join("three"));
+    added_to(&three, "own").unwrap();
+    let start = |library: &Path| {
+        let kept = crate::settings::Settings::load_from(&file).recent_collections;
+        let mut st = state.borrow_mut();
+        st.window.settings_file = Some(file.clone());
+        st.views.collections = crate::collections::Store::load(library.to_path_buf());
+        carry_recent(&mut st, &kept);
+        st.views.collections.recent.clone()
+    };
+    // A folder that will not take the file (here a file where the
+    // folder would be, as a share not mounted or a read-only folder
+    // refuses it): the settings keep the list for the next start.
+    let blocked = dir.join("blocked");
+    std::fs::write(&blocked, "").unwrap();
+    assert!(start(&blocked).is_empty());
+    // And through a write of another setting before then.
+    crate::settings::Settings::change_at(&file, |s| s.range_sample = 7);
+    assert_eq!(
+        crate::settings::Settings::load_from(&file).recent_collections,
+        ["b", "a"]
+    );
+    // A folder with a list of its own keeps it, and the settings' list
+    // is dropped.
+    assert_eq!(start(&three), ["own"]);
+    assert!(
+        crate::settings::Settings::load_from(&file)
+            .recent_collections
+            .is_empty()
+    );
+    std::fs::write(&file, old).unwrap();
+    assert_eq!(start(&one), ["b", "a"]);
+    assert_eq!(read_recent(&one), ["b", "a"]);
+    let text = std::fs::read_to_string(&file).unwrap();
+    assert!(!text.contains("recent_collections"), "{text}");
+    assert_eq!(crate::settings::Settings::load_from(&file).range_sample, 41);
+    assert!(start(&two).is_empty());
+    assert!(read_recent(&two).is_empty());
+    drop(app);
+    crate::testing::remove_dir_retry(&dir);
+}
+
+/// The frame menu's submenu `title` (as the window shows it) opened
+/// over the strip's first frame, `then` run once the menu is up (for
+/// what Rust sets as it opens): how many of its entries start with
+/// `prefix` (the list's), how many are each of `others` (catalog
+/// msgids), and the foot of the lowest of those in the popup; the
+/// menus closed again.
+fn submenu(
+    app: &App,
+    title: &str,
+    prefix: &str,
+    others: &[&str],
+    then: &dyn Fn(&App),
+) -> (usize, Vec<usize>, f32) {
+    use slint::platform::Key;
+    // As `--menu` opens it; a click at the strip's cell misses a
+    // strip pushed past the foot of a window under the layout's least.
+    app.set_menu_at(0);
+    crate::testing::settle(app);
+    assert!(app.get_menu_up());
+    then(app);
+    crate::testing::settle(app);
+    crate::testing::open_submenu(app, title);
+    let others: Vec<String> = others.iter().map(|o| crate::i18n::text(o)).collect();
+    let mine: Vec<_> = crate::testing::menu_entries(app)
+        .into_iter()
+        .filter(|e| {
+            e.accessible_label()
+                .is_some_and(|l| l.starts_with(prefix) || others.contains(&l.to_string()))
+        })
+        .collect();
+    let named = crate::testing::menu_entries_starting(app, prefix);
+    let counts = others
+        .iter()
+        .map(|o| {
+            mine.iter()
+                .filter(|e| e.accessible_label().as_deref() == Some(o.as_str()))
+                .count()
+        })
+        .collect();
+    let foot = mine
+        .iter()
+        .map(|e| e.absolute_position().y + e.size().height)
+        .fold(0.0, f32::max);
+    crate::testing::press(app, Key::Escape);
+    crate::testing::press(app, Key::Escape);
+    assert!(!app.get_menu_up());
+    // Seen let go, so the next ask is a change.
+    app.set_menu_at(-1);
+    crate::testing::settle(app);
+    (named, counts, foot)
+}
+
+/// Below its lowest entry a fluent menu has its frame's margin (5 px)
+/// and its shadow's blur (16 px), all drawn into the shadow's texture:
+/// what must fit in the window for the texture to stay under the
+/// device's limit, which the window's own surface is held to.
+const BELOW_THE_LOWEST: f32 = 5.0 + 16.0;
+
+/// The frame menu's lists, opened as a hand opens them, over 400
+/// names each, in a tall window and in one shorter than the layout's
+/// least: Add to collection names ten, or what the window holds, with
+/// All collections... and New collection...; Edit in, which Rust does
+/// not cut, as many apps as the window holds (`MenuFit`). Each
+/// submenu, its frame and its shadow inside the window: 400 rows were
+/// 12,883 px.
+#[test]
+fn the_frame_menus_lists_fit_the_window() {
+    let app = window(3);
+    let (state, _worker) = state_for(&app, folder(3));
+    app.invoke_select(0);
+    app.set_busy(false);
+    shoots(&state, &app, 400);
+    // Apps on the disk, as the menu offers only those: this test's own
+    // binary under 400 names.
+    let exe = std::env::current_exe().unwrap();
+    state.borrow_mut().work.edit_in.apps = (0..400)
+        .map(|i| (exe.clone(), format!("App {i:03}")))
+        .collect();
+    let title = |msgid: &str| crate::i18n::text(msgid);
+    for height in [950.0, 420.0] {
+        app.window()
+            .set_size(slint::LogicalSize::new(1500.0, height));
+        crate::testing::settle(&app);
+        let fit = app.global::<crate::MenuFit>();
+        assert_eq!(fit.get_window_height(), height);
+        let (named, others, foot) = submenu(
+            &app,
+            &title("Add to collection"),
+            "Shoot ",
+            &["All collections...", "New collection..."],
+            &|_| {},
+        );
+        assert_eq!(
+            (named, others),
+            (10.min(fit.invoke_rows(3) as usize), vec![1, 1]),
+            "{height}"
+        );
+        assert!(
+            foot + BELOW_THE_LOWEST <= height,
+            "Add to collection: {foot} in {height}"
+        );
+        let (named, _, foot) = submenu(&app, &title("Edit in"), "App ", &[], &|_| {});
+        assert_eq!(named, fit.invoke_rows(0) as usize, "{height}");
+        assert!(named < 400);
+        assert!(
+            foot + BELOW_THE_LOWEST <= height,
+            "Edit in: {foot} in {height}"
+        );
+    }
+}
+
+/// Ten collections, all of them named while the window holds them; in
+/// a window too short for ten, those it holds, and All collections...
+/// for the rest though the library has no more than ten.
+#[test]
+fn all_collections_shows_when_the_window_cuts_ten_or_fewer() {
+    let app = window(3);
+    let (state, _worker) = state_for(&app, folder(3));
+    app.invoke_select(0);
+    app.set_busy(false);
+    shoots(&state, &app, 10);
+    assert!(!app.get_collection_has_more());
+    let title = crate::i18n::text("Add to collection");
+    let others = &["All collections...", "New collection..."];
+    app.window()
+        .set_size(slint::LogicalSize::new(1500.0, 950.0));
+    crate::testing::settle(&app);
+    let (named, counts, _) = submenu(&app, &title, "Shoot ", others, &|_| {});
+    assert_eq!((named, counts), (10, vec![0, 1]));
+    app.window()
+        .set_size(slint::LogicalSize::new(1500.0, 420.0));
+    crate::testing::settle(&app);
+    // 13 rows of 32 px, two kept, three the submenu's own.
+    assert_eq!(app.global::<crate::MenuFit>().invoke_rows(3), 8);
+    let (named, counts, foot) = submenu(&app, &title, "Shoot ", others, &|_| {});
+    assert_eq!((named, counts), (8, vec![1, 1]));
+    assert!(foot + BELOW_THE_LOWEST <= 420.0, "{foot}");
+}
+
+/// Every menu fed from a list, over 400 and 5,000 names at three times
+/// scale: the frame menu's Add to collection, Edit in, and Back up to,
+/// the grid header's archive button and its rejects menu, and the
+/// recent folders. Each names no more than the window holds, so its
+/// surface stays under the device's texture limit; 400 names at this
+/// scale were a surface of 38,000 px. (The presets' Move to group is
+/// `preset_list`'s.)
+#[test]
+fn no_list_fed_menu_passes_the_texture_limit() {
+    use crate::testing::{TEXTURE_LIMIT, menu_entries_starting, menu_surface, press, settle};
+    use i_slint_backend_testing::ElementHandle;
+    use slint::platform::{Key, WindowEvent};
+    let names = |prefix: &str, n: usize| -> ModelRc<slint::SharedString> {
+        let list: Vec<slint::SharedString> =
+            (0..n).map(|i| format!("{prefix}{i:04}").into()).collect();
+        ModelRc::new(VecModel::from(list))
+    };
+    for n in [400, 5000] {
+        let s = setup(&format!("surface-{n}"));
+        let (app, state) = (&s.app, &s.state);
+        app.window()
+            .dispatch_event(WindowEvent::ScaleFactorChanged { scale_factor: 3.0 });
+        settle(app);
+        shoots(state, app, n);
+        let exe = std::env::current_exe().unwrap();
+        state.borrow_mut().work.edit_in.apps = (0..n)
+            .map(|i| (exe.clone(), format!("App {i:04}")))
+            .collect();
+        app.invoke_select(0);
+        app.set_busy(false);
+        let fits = |what: &str, named: usize, own: usize| {
+            let surface = menu_surface(app, named, own);
+            assert!(named > 0, "{what}: none named");
+            assert!(surface <= TEXTURE_LIMIT, "{what} over {n}: {surface} px");
+        };
+        let title = |msgid: &str| crate::i18n::text(msgid);
+        let (named, ..) = submenu(app, &title("Add to collection"), "Shoot ", &[], &|_| {});
+        fits("Add to collection", named, 3);
+        let (named, ..) = submenu(app, &title("Edit in"), "App ", &[], &|_| {});
+        fits("Edit in", named, 0);
+        // As though the selection could go to n archives: what Rust
+        // sets as the menu opens, set by the test in its place.
+        {
+            let app_weak = app.as_weak();
+            let choices = names("Archive ", n);
+            app.on_frame_menu_asked(move |_| {
+                let app = app_weak.upgrade().unwrap();
+                app.set_archive_verb("Back up".into());
+                app.set_archive_choices(choices.clone());
+            });
+        }
+        let (named, ..) = submenu(app, "Back up to", "Archive ", &[], &|_| {});
+        fits("Back up to", named, 0);
+
+        // The grid header's buttons.
+        app.set_archive_header("Back up".into());
+        app.set_archive_header_choices(names("Header ", n));
+        app.set_archive_rejects_choices(names("Rejects ", n));
+        settle(app);
+        for (button, prefix, own) in [
+            ("GridSheet::archive-button", "Header ", 0),
+            ("GridSheet::rejects-button", "Rejects ", 5),
+        ] {
+            ElementHandle::find_by_element_id(app, button)
+                .next()
+                .unwrap_or_else(|| panic!("{button}"))
+                .invoke_accessible_default_action();
+            settle(app);
+            fits(button, menu_entries_starting(app, prefix), own);
+            press(app, Key::Escape);
+            settle(app);
+        }
+
+        // The recent folders, under the folder's name.
+        let folders: Vec<crate::RecentFolder> = (0..n)
+            .map(|i| crate::RecentFolder {
+                title: format!("Folder {i:04}").into(),
+                path: format!("/nowhere/{i}").into(),
+                open: false,
+            })
+            .collect();
+        app.set_grid_open(false);
+        app.set_open_folder_name("Here".into());
+        app.set_recent_folders(ModelRc::new(VecModel::from(folders)));
+        settle(app);
+        ElementHandle::find_by_element_type_name(app, "FolderName")
+            .next()
+            .unwrap()
+            .invoke_accessible_default_action();
+        settle(app);
+        fits("Recent folders", menu_entries_starting(app, "Folder "), 2);
+        press(app, Key::Escape);
+        teardown(s);
+    }
 }

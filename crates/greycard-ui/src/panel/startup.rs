@@ -936,7 +936,7 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
         if let Some(path) = &library_path {
             st.views.collections =
                 crate::collections::Store::load(crate::collections::Store::dir_beside(path));
-            st.views.collections.recent = remembered.recent_collections.clone();
+            crate::panel::collections::carry_recent(&mut st, &remembered.recent_collections);
             crate::panel::collections::show(&st, &app);
             // The stacks, in their folder among the collections.
             st.views.stacks = crate::stacks::Store::load(greycard_library::stacks::dir_in(

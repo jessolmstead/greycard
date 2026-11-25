@@ -4,7 +4,7 @@
 // the window, as the frame menu is; the names say where they were
 // clicked and the window opens it there.
 
-import { Theme } from "../theme.slint";
+import { Theme, MenuFit } from "../theme.slint";
 import { RecentFolder } from "../structs.slint";
 
 // The name: the folder's own, the root it is under after it, and a
@@ -138,11 +138,12 @@ export component RecentMenu inherits Rectangle {
                 title: @tr("No folders yet");
                 enabled: false;
             }
-            for f in root.folders: MenuItem {
-                title: f.title;
+            // Beside the heading and its separator.
+            for i in min(root.folders.length, MenuFit.rows(2)): MenuItem {
+                title: root.folders[i].title;
                 checkable: true;
-                checked: f.open;
-                activated => { root.chosen(f.path); }
+                checked: root.folders[i].open;
+                activated => { root.chosen(root.folders[i].path); }
             }
         }
     }

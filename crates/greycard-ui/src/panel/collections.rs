@@ -21,6 +21,13 @@
 //! added to or made this session; with neither it asks for a new one.
 //! Like Lightroom's quick collection key it takes the selection out
 //! when every frame of it is in already.
+//!
+//! Add to collection names [`MENU_NAMED`] at most: those added to
+//! last, kept beside the library's collections (`recent.txt`), then
+//! the newest. All collections... puts up a sheet with every one, one
+//! held list narrowed as its field is typed into; a pick goes by id. A
+//! menu of hundreds was no use to read, and taller than the device's
+//! texture limit it ended the editor (`MenuFit` in the window's theme).
 
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -36,19 +43,26 @@ use crate::roots::View;
 use crate::worker::Worker;
 use crate::{App, CollectionChip, CollectionChoice, Shared, State, tr};
 
-const QUICK_COLLECTIONS: usize = 10;
+/// How many collections Add to collection names; All collections...
+/// reaches the rest.
+pub(crate) const MENU_NAMED: usize = greycard_library::collections::RECENT;
 
 /// The collections as the window shows them, beside the store's: the
-/// sidebar's rows and the frame menu's names, one model each for the
-/// session, and the sheet's question while it is up.
+/// sidebar's rows, the frame menu's few, and All collections...'s
+/// list, one model each for the session, and the sheet's question
+/// while it is up.
 #[derive(Default)]
 pub(crate) struct Held {
     /// The sidebar's rows, replaced only when they change.
     pub(crate) rows: Rc<VecModel<CollectionChip>>,
-    /// Names in the full collection picker, in the store's order.
-    pub(crate) names: Rc<VecModel<slint::SharedString>>,
-    /// The destinations in the frame menu, most recently used first.
+    /// The few the frame menu names, replaced only when they change: a
+    /// model made afresh rebuilds the menu's items under a menu that is
+    /// up.
     quick: Rc<VecModel<CollectionChoice>>,
+    /// All collections...'s list, narrowed to what is typed in its
+    /// field ([`search`]); one model, refilled at each key, whose rows
+    /// the sheet makes only as they come into view.
+    found: Rc<VecModel<CollectionChoice>>,
     /// The sheet's question while it is up.
     pub(crate) asked: Option<Asked>,
 }
@@ -90,6 +104,77 @@ pub(crate) fn name_of(st: &State, id: &str) -> String {
         full_name(&s.set, &s.name)
     } else {
         String::new()
+    }
+}
+
+/// The collections Add to collection names, at most [`MENU_NAMED`], by
+/// their places in `list`, and whether the library has more: those
+/// added to last first (`recent`, by id, the latest first; an id no
+/// collection has passed over), then the newest made, in the sidebar's
+/// order among those made in the same second (a Lightroom import's).
+pub(crate) fn menu_places(list: &[Collection], recent: &[String]) -> (Vec<usize>, bool) {
+    let at: HashMap<&str, usize> = list
+        .iter()
+        .enumerate()
+        .map(|(i, c)| (c.id.as_str(), i))
+        .collect();
+    let mut places: Vec<usize> = Vec::with_capacity(MENU_NAMED.min(list.len()));
+    for i in recent.iter().filter_map(|id| at.get(id.as_str())) {
+        if places.len() < MENU_NAMED && !places.contains(i) {
+            places.push(*i);
+        }
+    }
+    let mut rest: Vec<usize> = (0..list.len()).filter(|i| !places.contains(i)).collect();
+    // Stable, so the sidebar's order stands between equal times.
+    rest.sort_by_key(|&i| std::cmp::Reverse(list[i].made));
+    let room = MENU_NAMED.saturating_sub(places.len());
+    places.extend(rest.into_iter().take(room));
+    (places, list.len() > MENU_NAMED)
+}
+
+fn choice_of(c: &Collection) -> CollectionChoice {
+    CollectionChoice {
+        name: full_name(&c.set, &c.name).into(),
+        id: c.id.as_str().into(),
+    }
+}
+
+/// All collections...'s list narrowed to those whose name (sets and
+/// all) holds `typed`, case aside, in the sidebar's order: refilled in
+/// the one held model.
+fn search(st: &State, typed: &str) {
+    let typed = typed.trim().to_lowercase();
+    let found: Vec<CollectionChoice> = st
+        .views
+        .collections
+        .list
+        .iter()
+        .filter(|c| typed.is_empty() || full_name(&c.set, &c.name).to_lowercase().contains(&typed))
+        .map(choice_of)
+        .collect();
+    st.views.collections_held.found.set_vec(found);
+}
+
+/// The collections added to last as the settings kept them before they
+/// moved beside the library, `kept`: carried into this library's
+/// folder when it has no list of its own yet. Taken out of the settings
+/// file once carried, or when the folder has its own, so a library
+/// opened later does not take them too; kept there when the folder
+/// would not take them, for the next start.
+pub(crate) fn carry_recent(st: &mut State, kept: &[String]) {
+    use crate::collections::Carried;
+    if kept.is_empty() {
+        return;
+    }
+    match st.views.collections.carry_recent(kept) {
+        Carried::Done => {
+            tracing::info!("collections: the ones added to last carried over from the settings")
+        }
+        Carried::HadOwn => {}
+        Carried::Not => return,
+    }
+    if let Some(path) = &st.window.settings_file {
+        crate::settings::Settings::change_at(path, |s| s.recent_collections.clear());
     }
 }
 
@@ -147,35 +232,13 @@ pub(crate) fn show(st: &State, app: &App) {
     // leave the list empty for a frame, and all under it jumps.
     let held = &st.views.collections_held;
     crate::panel::startup::sync_rows(&held.rows, chips);
-    let names: Vec<slint::SharedString> = store
-        .list
-        .iter()
-        .map(|c| full_name(&c.set, &c.name).into())
-        .collect();
-    let mut quick = Vec::new();
-    let recent = store
-        .recent
-        .iter()
-        .filter_map(|id| store.list.iter().position(|c| &c.id == id));
-    for i in recent.chain(0..names.len()) {
-        if !quick.contains(&i) {
-            quick.push(i);
-            if quick.len() == QUICK_COLLECTIONS {
-                break;
-            }
-        }
-    }
-    let choices = quick
+    let (places, more) = menu_places(&store.list, &store.recent);
+    let quick = places
         .into_iter()
-        .map(|i| CollectionChoice {
-            name: names[i].clone(),
-            index: i as i32,
-        })
+        .map(|i| choice_of(&store.list[i]))
         .collect();
-    crate::panel::startup::sync_rows(&held.quick, choices);
-    if !held.names.iter().eq(names.iter().cloned()) {
-        held.names.set_vec(names);
-    }
+    crate::panel::startup::sync_rows(&held.quick, quick);
+    app.set_collection_has_more(more);
     app.set_collection_open(open.map(|id| name_of(st, id)).unwrap_or_default().into());
     app.set_collection_reorder(open.is_some() && hand);
 }
@@ -417,23 +480,6 @@ fn pairs_of(frames: &[Frame]) -> HashSet<Pair<'_>> {
         .collect()
 }
 
-fn remember_destination(st: &mut State, id: &str) {
-    let remember = |recent: &mut Vec<String>| {
-        recent.retain(|c| c != id);
-        recent.insert(0, id.to_string());
-        recent.truncate(QUICK_COLLECTIONS);
-    };
-    match &st.window.settings_file {
-        // As for recent folders, keep destinations added by another window.
-        Some(path) => {
-            st.views.collections.recent =
-                crate::settings::Settings::change_at(path, |s| remember(&mut s.recent_collections))
-                    .recent_collections;
-        }
-        None => remember(&mut st.views.collections.recent),
-    }
-}
-
 /// The selection's frames into collection `id`: new pictures at its end,
 /// and another copy of a member moving its hint.
 fn add_to(state: &Rc<Shared>, app: &App, worker: &Rc<Worker>, id: &str, frames: &[Frame]) {
@@ -446,7 +492,7 @@ fn add_to(state: &Rc<Shared>, app: &App, worker: &Rc<Worker>, id: &str, frames: 
         let added = c.add(frames);
         st.views.collections.save(id);
         st.views.collections.target = Some(id.to_string());
-        remember_destination(&mut st, id);
+        st.views.collections.added_to(id);
         members_changed(&mut st, app);
         app.set_status(
             match (added.added, added.moved) {
@@ -773,7 +819,7 @@ fn sheet_done(state: &Rc<Shared>, app: &App, worker: &Rc<Worker>) {
             st.views.collections.sort();
             st.views.collections.save(&id);
             if added > 0 {
-                remember_destination(&mut st, &id);
+                st.views.collections.added_to(&id);
             }
             st.views.collections.target = Some(id);
             tracing::info!("collection {name} made, {added} frames in it");
@@ -958,25 +1004,17 @@ pub(crate) fn install(app: &App, state: &Rc<Shared>, worker: &Rc<Worker>) {
     app.set_collections(ModelRc::from(
         state.borrow().views.collections_held.rows.clone(),
     ));
-    app.set_collection_names(ModelRc::from(
-        state.borrow().views.collections_held.names.clone(),
-    ));
     app.set_collection_quick(ModelRc::from(
         state.borrow().views.collections_held.quick.clone(),
     ));
-    app.on_search_collections(|names, query| {
-        let query = query.trim().to_lowercase();
-        let matches: Vec<_> = names
-            .iter()
-            .enumerate()
-            .filter(|(_, name)| query.is_empty() || name.to_lowercase().contains(&query))
-            .map(|(index, name)| CollectionChoice {
-                name,
-                index: index as i32,
-            })
-            .collect();
-        ModelRc::from(Rc::new(VecModel::from(matches)))
-    });
+    app.set_collection_found(ModelRc::from(
+        state.borrow().views.collections_held.found.clone(),
+    ));
+    {
+        let state = state.clone();
+        app.on_collection_search(move |typed| search(&state.borrow(), &typed));
+    }
+    app.on_key_typed_into(|text, key| crate::keys::typed_into(&text, &key).into());
     show(&state.borrow(), app);
     {
         let (state, worker, app_weak) = (state.clone(), worker.clone(), app.as_weak());
@@ -1062,23 +1100,34 @@ pub(crate) fn install(app: &App, state: &Rc<Shared>, worker: &Rc<Worker>) {
     }
     {
         let (state, worker, app_weak) = (state.clone(), worker.clone(), app.as_weak());
-        app.on_collection_menu_add(move |at| {
+        app.on_collection_menu_add(move |choice| {
             let Some(app) = app_weak.upgrade() else {
                 return;
             };
-            let (id, frames) = {
+            let CollectionChoice { name, id } = choice;
+            let frames = {
                 let st = state.borrow();
-                let frames = frames_of(&st, &chosen_frames(&st));
-                let id = usize::try_from(at)
-                    .ok()
-                    .and_then(|i| st.views.collections.list.get(i))
-                    .map(|c| c.id.clone());
-                (id, frames)
+                // Deleted since the menu or the sheet named it: said,
+                // by the name it was offered under, and nothing added.
+                if st.views.collections.collection(&id).is_none() {
+                    tracing::warn!("collection {name} ({id}): gone before the frames went in");
+                    app.set_status(tr!("{} is no longer in the list", name).into());
+                    return;
+                }
+                frames_of(&st, &chosen_frames(&st))
             };
-            match id {
-                Some(id) => add_to(&state, &app, &worker, &id, &frames),
-                None => ask(&mut state.borrow_mut(), &app, Asked::New { add: frames }),
-            }
+            add_to(&state, &app, &worker, &id, &frames);
+        });
+    }
+    {
+        let (state, app_weak) = (state.clone(), app.as_weak());
+        app.on_collection_menu_new(move || {
+            let Some(app) = app_weak.upgrade() else {
+                return;
+            };
+            let mut st = state.borrow_mut();
+            let add = frames_of(&st, &chosen_frames(&st));
+            ask(&mut st, &app, Asked::New { add });
         });
     }
     {

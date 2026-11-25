@@ -769,4 +769,84 @@ mod tests {
         );
         crate::testing::remove_dir_retry(&d);
     }
+
+    /// Move to group lists the groups the window holds (`MenuFit`); a
+    /// group past them is still reached through New group..., whose
+    /// sheet takes an existing group's name, case aside, as that group
+    /// rather than making another.
+    #[test]
+    fn new_group_with_an_existing_name_joins_that_group() {
+        let app = crate::testing::window(1);
+        let (state, _worker) = crate::testing::retouch_state(&app);
+        let d = crate::testing::scratch_dir("preset-existing-group");
+        std::fs::create_dir_all(&d).unwrap();
+        let store = Store::at(d.join("presets"));
+        // More groups than a window of rows, as an import brings them.
+        for i in 0..60 {
+            save_in(
+                &store,
+                Some(&format!("Group {i:02}")),
+                &format!("In {i:02}"),
+            );
+        }
+        save_in(&store, None, "Loose");
+        state.borrow_mut().develop.preset_store = Some(store.clone());
+        refresh_presets(&mut state.borrow_mut(), &app);
+        assert_eq!(app.get_preset_groups().row_count(), 60);
+        let loose = state
+            .borrow()
+            .develop
+            .presets
+            .iter()
+            .position(|e| e.preset.name == "Loose")
+            .unwrap();
+        app.invoke_preset_moved(loose as i32, -1);
+        assert!(app.get_preset_group_sheet_open());
+        app.set_preset_group_sheet_name("group 59".into());
+        app.invoke_preset_group_sheet_done();
+        assert!(!app.get_preset_group_sheet_open());
+        assert!(store.dir().join("Group 59").join("loose.gcp").is_file());
+        assert_eq!(app.get_preset_groups().row_count(), 60, "no group made");
+        crate::testing::remove_dir_retry(&d);
+    }
+
+    /// A preset's Move to group over 400 and 5,000 groups at three
+    /// times scale names no more than the window holds, so its surface
+    /// stays under the device's texture limit.
+    #[test]
+    fn move_to_group_stays_under_the_texture_limit() {
+        use crate::testing::{TEXTURE_LIMIT, menu_entries_starting, menu_surface, settle};
+        use slint::platform::{PointerEventButton, WindowEvent};
+        let app = crate::testing::window(1);
+        let (state, _worker) = crate::testing::retouch_state(&app);
+        let d = crate::testing::scratch_dir("preset-group-surface");
+        std::fs::create_dir_all(&d).unwrap();
+        let store = Store::at(d.join("presets"));
+        save_in(&store, None, "Loose");
+        state.borrow_mut().develop.preset_store = Some(store.clone());
+        refresh_presets(&mut state.borrow_mut(), &app);
+        app.window()
+            .dispatch_event(WindowEvent::ScaleFactorChanged { scale_factor: 3.0 });
+        for n in [400, 5000] {
+            let groups: Vec<slint::SharedString> =
+                (0..n).map(|i| format!("Group {i:04}").into()).collect();
+            app.set_preset_groups(ModelRc::new(VecModel::from(groups)));
+            settle(&app);
+            let row = crate::testing::all_by_id(&app, "PresetsSection::preset-row")
+                .into_iter()
+                .find(|r| r.accessible_label().as_deref() == Some("Loose"))
+                .expect("the preset's row");
+            row.mock_single_click(PointerEventButton::Right);
+            settle(&app);
+            crate::testing::open_submenu(&app, &crate::i18n::text("Move to group"));
+            let named = menu_entries_starting(&app, "Group ");
+            let surface = menu_surface(&app, named, 2);
+            assert!(named > 0 && named < 400, "{named}");
+            assert!(surface <= TEXTURE_LIMIT, "over {n}: {surface} px");
+            crate::testing::press(&app, slint::platform::Key::Escape);
+            crate::testing::press(&app, slint::platform::Key::Escape);
+            settle(&app);
+        }
+        crate::testing::remove_dir_retry(&d);
+    }
 }

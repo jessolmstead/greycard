@@ -1000,3 +1000,37 @@ fn forget_missing_drops_a_version_only_when_its_sidecar_reads_without_it() {
     assert_eq!(left, [b, d]);
     greycard_render::testing::remove_dir_retry(&dir);
 }
+
+/// The collections added to last are the folder's `recent.txt`, read
+/// afresh before each write, so two windows' adds are both kept, and
+/// another library's folder keeps its own; a blank line and an id named
+/// twice passed over, ten at most. An id no collection has is kept, for
+/// the menu to pass over; the folder's reader takes the file for no
+/// collection.
+#[test]
+fn the_ones_added_to_last_are_kept_beside_the_collections() {
+    use greycard_library::collections::{RECENT_FILE, read_recent};
+    let root = scratch("recent");
+    let (dir, elsewhere) = (root.join(DIR), root.join("other").join(DIR));
+    std::fs::create_dir_all(&dir).unwrap();
+    let (mut one, mut two) = (Store::load(dir.clone()), Store::load(dir.clone()));
+    one.added_to("a");
+    two.added_to("b");
+    one.added_to("c");
+    assert_eq!(one.recent, ["c", "b", "a"]);
+    assert_eq!(Store::load(dir.clone()).recent, ["c", "b", "a"]);
+    let mut other = Store::load(elsewhere.clone());
+    other.added_to("x");
+    assert_eq!(Store::load(elsewhere).recent, ["x"]);
+    assert_eq!(Store::load(dir.clone()).recent, ["c", "b", "a"]);
+    std::fs::write(dir.join(RECENT_FILE), "gone\n\n y \ngone\n").unwrap();
+    assert_eq!(read_recent(&dir), ["gone", "y"]);
+    for i in 0..12 {
+        one.added_to(&i.to_string());
+    }
+    let back = Store::load(dir.clone());
+    assert_eq!(back.recent.len(), 10);
+    assert_eq!(back.recent[0], "11");
+    assert!(back.list.is_empty() && back.smart.is_empty());
+    greycard_render::testing::remove_dir_retry(&root);
+}

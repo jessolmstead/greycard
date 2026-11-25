@@ -2,7 +2,7 @@
 // with the filter, and the cells riding on one scrolled offset, under
 // a row of tiles for the folders in the folder open.
 
-import { Theme } from "../theme.slint";
+import { Theme, MenuFit } from "../theme.slint";
 import { Thumb, ThumbCell, FilterChip, FacetRow, FacetRange, FolderTile, SortMenu, GridHead, GridPlace } from "../structs.slint";
 import { ButtonKeys, NameTip, PanelButton, ScrollBand, SizeSlider, ThumbBadges, ThumbMarks, ThumbStack, ThumbTag, TipArea } from "../controls.slint";
 import { FilterBar, HeaderRanges, SortButton } from "filter.slint";
@@ -534,8 +534,10 @@ export component GridSheet inherits Rectangle {
                             height: 0px;
                             enabled: false;
                             Menu {
-                                for name[i] in root.archive-choices: MenuItem {
-                                    title: name;
+                                // Past what the window holds, as the
+                                // frame menu's archives are: not offered.
+                                for i in min(root.archive-choices.length, MenuFit.rows(0)): MenuItem {
+                                    title: root.archive-choices[i];
                                     activated => { root.archive-pressed(i); }
                                 }
                             }
@@ -587,8 +589,10 @@ export component GridSheet inherits Rectangle {
                                     activated => { root.delete-asked("rejects"); }
                                 }
                                 if root.archive-rejects-choices.length > 0: MenuSeparator { }
-                                for choice[i] in root.archive-rejects-choices: MenuItem {
-                                    title: choice;
+                                // Beside the menu's five rows above; past
+                                // them, as the archive button's are.
+                                for i in min(root.archive-rejects-choices.length, MenuFit.rows(5)): MenuItem {
+                                    title: root.archive-rejects-choices[i];
                                     activated => { root.archive-rejects-asked(i); }
                                 }
                             }

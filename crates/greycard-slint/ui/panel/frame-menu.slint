@@ -1,4 +1,5 @@
 import { CollectionChoice } from "../structs.slint";
+import { MenuFit } from "../theme.slint";
 
 // The frame menu: what a right-click over a frame in the strip, the
 // grid or the viewport offers, on the whole selection. Slint's own
@@ -7,6 +8,8 @@ import { CollectionChoice } from "../structs.slint";
 // for the window, not one per cell: the surfaces say where the click
 // was, in the window's coordinates, and `open` puts it there. Every
 // item goes through the code its key does; this file only names them.
+// A submenu fed from a list shows as many of it as the window holds
+// (`MenuFit`).
 
 export component FrameMenu inherits Rectangle {
     /// How many frames the menu acts on, the current one among them.
@@ -44,9 +47,15 @@ export component FrameMenu inherits Rectangle {
     callback move-back();
     /// The collection open in the browser, by name, for Remove from it.
     in property <string> collection-open;
+    /// Add to collection's few: those added to last, then the newest
+    /// (`panel::collections`); and whether the library has more than
+    /// them, which All collections... reaches.
     in property <[CollectionChoice]> collection-quick;
     in property <bool> collection-has-more;
-    callback collection-add(int);
+    /// Added to a collection: its id, and the name the menu offered.
+    callback collection-add(CollectionChoice);
+    /// New collection...
+    callback collection-new();
     callback collection-browse();
     callback collection-remove();
     callback copy();
@@ -289,18 +298,21 @@ export component FrameMenu inherits Rectangle {
             MenuSeparator { }
             Menu {
                 title: @tr("Add to collection");
-                for choice in root.collection-quick: MenuItem {
-                    title: choice.name;
-                    activated => { root.collection-add(choice.index); }
+                // Beside the separator, All collections... and New
+                // collection...: a window too short for the few cuts
+                // them, and All collections... reaches the rest.
+                for i in min(root.collection-quick.length, MenuFit.rows(3)): MenuItem {
+                    title: root.collection-quick[i].name;
+                    activated => { root.collection-add(root.collection-quick[i]); }
                 }
                 if root.collection-quick.length > 0: MenuSeparator { }
-                if root.collection-has-more: MenuItem {
+                if root.collection-has-more || root.collection-quick.length > MenuFit.rows(3): MenuItem {
                     title: @tr("All collections...");
                     activated => { root.collection-browse(); }
                 }
                 MenuItem {
                     title: @tr("New collection...");
-                    activated => { root.collection-add(-1); }
+                    activated => { root.collection-new(); }
                 }
             }
             if root.collection-open != "": MenuItem {
@@ -330,8 +342,13 @@ export component FrameMenu inherits Rectangle {
             }
             if root.edit-in-apps.length > 1: Menu {
                 title: @tr("Edit in");
-                for name[i] in root.edit-in-apps: MenuItem {
-                    title: name;
+                // Past what the window holds an app is not offered here;
+                // it stays on the Settings sheet's list, and comes back
+                // as others are taken off. More apps than a window's
+                // height of rows (some 20 and more) is not a list we
+                // expect anyone to keep.
+                for i in min(root.edit-in-apps.length, MenuFit.rows(0)): MenuItem {
+                    title: root.edit-in-apps[i];
                     enabled: root.can-export;
                     activated => { root.edit-in(i); }
                 }
@@ -350,8 +367,12 @@ export component FrameMenu inherits Rectangle {
             if root.archive-verb != "" && root.archive-choices.length > 1: Menu {
                 // Frame menu: {} is Back up or Bring back, over a list of archives
                 title: @tr("{} to", root.archive-verb);
-                for name[i] in root.archive-choices: MenuItem {
-                    title: name + "...";
+                // Past what the window holds an archive (or a local
+                // root) is not offered, and nothing else backs the
+                // selection up to it. Some 20 and more archives is not
+                // a library we expect; a crash was the other way.
+                for i in min(root.archive-choices.length, MenuFit.rows(0)): MenuItem {
+                    title: root.archive-choices[i] + "...";
                     activated => { root.archive(i); }
                 }
             }

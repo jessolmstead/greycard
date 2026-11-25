@@ -226,6 +226,12 @@ design note behind it.
   colors in the grid, the filmstrip, and the culling loupe (issue 209).
 - With one section open at a time, a new mask no longer leaves MASK
   and LIGHT open together (issue 211).
+- Add to collection no longer crashes with hundreds of collections:
+  the menu names the ten used last, and **All collections...** opens
+  a list to search (issue 203, a tester's pull request;
+  [§738](https://github.com/jessolmstead/greycard/blob/master/docs/notes/738-bound-the-add-to-collection-menu.md)).
+- No other menu fed by a list can grow past the window and crash:
+  Edit in, the archives, a preset's Move to group, and recent folders.
 - A DNG with a linearization table, such as some DxO PureRAW files,
   no longer develops six stops dark and magenta.
 - A camera DNG that lists a tiny thumbnail first, a Leica M11's, shows

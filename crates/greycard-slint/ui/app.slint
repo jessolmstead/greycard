@@ -6,9 +6,10 @@
 // bound to the properties and callbacks below that it uses.
 
 import { Palette } from "std-widgets.slint";
-import { Theme, ScrollBars, LabelColumn } from "theme.slint";
-// The theme's name and the label column are read on the Rust side's tests.
-export { Theme, ScrollBars, LabelColumn } from "theme.slint";
+import { Theme, ScrollBars, LabelColumn, MenuFit } from "theme.slint";
+// The theme's name, the label column, and the menus' fit are read on
+// the Rust side's tests.
+export { Theme, ScrollBars, LabelColumn, MenuFit } from "theme.slint";
 import { Tips, EdgeArrow, PanelButton, Segmented, Typing, SliderKeys, ButtonKeys, Folds, ScrollPane, DragEdge, HeldKeys, SectionStack, SectionSlot, SectionDrag } from "controls.slint";
 // The typed numbers are read on the Rust side (`entry.rs`).
 export { Typing, TypedNumber, SliderKeys, ButtonKeys } from "controls.slint";
@@ -914,16 +915,26 @@ export component App inherits Window {
     callback collection-forget-missing(string);
     pure callback collection-forgettable(string) -> int;
     callback collection-new();
-    /// The frame menu's Add to collection, by its place in
-    /// `collection-names` (-1 for a new one), and Remove from the one
-    /// open; B adds the selection to the collection open, or the last
-    /// one added to, or takes it out when it is all in it already.
-    in property <[string]> collection-names: [];
+    /// The frame menu's Add to collection: a collection by its id (and the
+    /// name it was offered under, to say it gone by), one
+    /// of the few the menu names (`collection-quick`, and whether the
+    /// library has more) or one from All collections...'s sheet; New
+    /// collection...; and Remove from the one open. B adds the
+    /// selection to the collection open, or the last one added to, or
+    /// takes it out when it is all in it already.
     in property <string> collection-open: "";
     in property <[CollectionChoice]> collection-quick;
-    property <bool> collection-picker-open;
-    pure callback search-collections([string], string) -> [CollectionChoice];
-    callback collection-menu-add(int);
+    in property <bool> collection-has-more: false;
+    callback collection-menu-add(CollectionChoice);
+    callback collection-menu-new();
+    /// All collections...'s sheet, and the collections it lists, which
+    /// Rust narrows to what is typed (`collection-search`).
+    in-out property <bool> collection-picker-open;
+    in property <[CollectionChoice]> collection-found;
+    callback collection-search(string);
+    /// A search field's text after a key typed while a button beside
+    /// it has the keys (`keys::typed_into`).
+    pure callback key-typed-into(string, string) -> string;
     callback collection-menu-remove();
     callback collection-key();
     /// The grid shows a collection in its own order: a drag moves a
@@ -3115,17 +3126,22 @@ export component App inherits Window {
     }
     // Let the submenu close before changing its recent items or opening a sheet.
     collection-menu-delay := Timer {
-        property <int> index;
-        property <bool> browse;
+        // The collection picked from the menu, by its id and the name
+        // it was offered under; an empty id for All collections...,
+        // or for New collection... with `fresh`.
+        property <CollectionChoice> choice;
+        property <bool> fresh;
         interval: 1ms;
         running: false;
         triggered => {
             self.running = false;
             keys.focus();
-            if (self.browse) {
+            if (self.fresh) {
+                root.collection-menu-new();
+            } else if (self.choice.id == "") {
                 root.collection-picker-open = true;
             } else {
-                root.collection-menu-add(self.index);
+                root.collection-menu-add(self.choice);
             }
         }
     }
@@ -3160,6 +3176,8 @@ export component App inherits Window {
         root.right-most = max(334px, root.width / 3);
         root.strip-photo-most = max(root.strip-photo-default,
             root.height / 3 - root.strip-pad - root.strip-cell-rest - root.strip-foot);
+        // And the rows a menu fed from a list shows.
+        MenuFit.window-height = root.height;
     }
     init => {
         root.ceilings();
@@ -6830,10 +6848,17 @@ export component App inherits Window {
 
     if root.collection-picker-open: CollectionPickerSheet {
         open <=> root.collection-picker-open;
-        choices: root.search-collections(root.collection-names, self.query);
-        picked(i) => {
-            root.collection-menu-add(i);
+        choices: root.collection-found;
+        searched(text) => { root.collection-search(text); }
+        typed-into(text, key) => { return root.key-typed-into(text, key); }
+        picked(choice) => {
             root.collection-picker-open = false;
+            root.collection-menu-add(choice);
+        }
+        // The collection sheet asks the name, and takes the focus.
+        make-new => {
+            root.collection-picker-open = false;
+            root.collection-menu-new();
         }
     }
 
@@ -7141,14 +7166,20 @@ export component App inherits Window {
         move-back => { root.move-back-asked(); root.menu-done(); }
         collection-open: root.collection-open;
         collection-quick: root.collection-quick;
-        collection-has-more: root.collection-names.length > root.collection-quick.length;
-        collection-add(i) => {
-            collection-menu-delay.index = i;
-            collection-menu-delay.browse = false;
+        collection-has-more: root.collection-has-more;
+        collection-add(choice) => {
+            collection-menu-delay.choice = choice;
+            collection-menu-delay.fresh = false;
+            collection-menu-delay.running = true;
+        }
+        collection-new => {
+            collection-menu-delay.choice = { name: "", id: "" };
+            collection-menu-delay.fresh = true;
             collection-menu-delay.running = true;
         }
         collection-browse => {
-            collection-menu-delay.browse = true;
+            collection-menu-delay.choice = { name: "", id: "" };
+            collection-menu-delay.fresh = false;
             collection-menu-delay.running = true;
         }
         collection-remove => { root.collection-menu-remove(); root.menu-done(); }

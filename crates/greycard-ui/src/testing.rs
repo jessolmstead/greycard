@@ -603,6 +603,47 @@ pub(crate) fn menu_entries(app: &App) -> Vec<i_slint_backend_testing::ElementHan
     found
 }
 
+/// The device's texture limit, in physical pixels, that a menu's
+/// surface (its shadow's texture, the whole menu's size) must stay
+/// under: 16,384 on the cards issue 203 was seen on.
+pub(crate) const TEXTURE_LIMIT: f32 = 16_384.0;
+
+/// The submenu `title` (as the window shows it) of the menu up, opened
+/// by the keys as a hand can: Down to it, over the separators, which
+/// have no title, and Right into it. The testing backend places a
+/// menu's entries in the popup's own coordinates, where a pointer
+/// would miss them.
+pub(crate) fn open_submenu(app: &App, title: &str) {
+    use slint::platform::Key;
+    let downs = menu_entries(app)
+        .iter()
+        .position(|e| e.accessible_label().as_deref() == Some(title))
+        .unwrap_or_else(|| panic!("no {title:?} in the menu"))
+        + 1;
+    for _ in 0..downs {
+        press(app, Key::DownArrow);
+    }
+    press(app, Key::RightArrow);
+}
+
+/// How many entries of the menus up have a title starting `prefix`:
+/// a list's, whose names the test made.
+pub(crate) fn menu_entries_starting(app: &App, prefix: &str) -> usize {
+    menu_entries(app)
+        .iter()
+        .filter(|e| e.accessible_label().is_some_and(|l| l.starts_with(prefix)))
+        .count()
+}
+
+/// The height of a menu of `named` names from a list and `own` rows of
+/// its own, in physical pixels at the window's scale: its rows, fluent's
+/// (`MenuFit.row`), and two more for its frame's margins and its
+/// shadow, all of which go into the shadow's texture.
+pub(crate) fn menu_surface(app: &App, named: usize, own: usize) -> f32 {
+    let row = app.global::<crate::MenuFit>().get_row();
+    (named + own + 2) as f32 * row * app.window().scale_factor()
+}
+
 /// How many entries of the menus up have the catalog's `msgid` as
 /// their title, in the window's language.
 pub(crate) fn count_menu_entries(app: &App, msgid: &str) -> usize {

@@ -1323,7 +1323,15 @@ mod tests {
         );
         let report = report.map_err(|e| e.to_string());
         let keys = keys_of(&report);
+        // A collection added to before: kept through the store read
+        // again, as it is kept beside the collections.
+        {
+            let mut st = state.borrow_mut();
+            st.views.collections.dir = Some(crate::collections::Store::dir_beside(&library));
+            st.views.collections.added_to("added-to-before");
+        }
         wrote(&state, &app, report, keys);
+        assert_eq!(state.borrow().views.collections.recent, ["added-to-before"]);
         assert!(app.get_lr_open());
         assert_eq!(app.get_lr_step(), 2);
         assert!(!app.get_lr_running());

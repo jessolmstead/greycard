@@ -379,10 +379,11 @@ export struct CollectionChip {
     order: string,
 }
 
-/// A collection's name and its index in the full list.
+/// A collection offered by Add to collection: its name, sets and all,
+/// and its id, which a pick hands back.
 export struct CollectionChoice {
     name: string,
-    index: int,
+    id: string,
 }
 
 /// One of the library's roots, as the grid's left pane lists it: the

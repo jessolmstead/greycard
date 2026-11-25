@@ -932,6 +932,25 @@ fn private(c: char) -> bool {
     ('\u{E000}'..='\u{F8FF}').contains(&c)
 }
 
+/// A search field's `text` after `key`, typed while a button beside it
+/// has the keys (a sheet's, reached by Tab): any text but Space, which
+/// presses the button, with Backspace taking off the last character;
+/// a named key (Return, Tab, the arrows, F1) leaves it as it was.
+pub(crate) fn typed_into(text: &str, key: &str) -> String {
+    if key == SharedString::from(Key::Backspace).as_str() {
+        let mut out = text.to_string();
+        out.pop();
+        return out;
+    }
+    let is_text =
+        !key.is_empty() && key != " " && key.chars().all(|c| !c.is_control() && !private(c));
+    if is_text {
+        format!("{text}{key}")
+    } else {
+        text.to_string()
+    }
+}
+
 /// A key's name, and whether a chord says Shift on it: a named key, a
 /// space, or a letter does; any other character carries its Shift
 /// already.

@@ -81,6 +81,28 @@ export global LabelColumn {
         clamp(least + panel-width - 320px, least, most));
 }
 
+// How many of a list's names a menu shows. Slint's menus (1.19)
+// neither scroll nor stop at the window's edge, and femtovg draws a
+// menu's shadow into a texture the whole menu's size: a menu of
+// hundreds of names asked the device for a texture taller than its
+// limit, and the window ended. A menu fed from a list shows as many
+// as the window's height holds beside the menu's own rows, so its
+// shadow's texture is no taller than the window, whose own surface the
+// device already holds under that limit. The window sets
+// `window-height` as it changes.
+export global MenuFit {
+    in-out property <length> window-height: 800px;
+    /// A row of the style's menus, fluent's; a separator (9 px) is
+    /// counted as one.
+    out property <length> row: 32px;
+    /// The names a menu shows beside `others` rows of its own: two
+    /// rows' room kept for the frame's margins and its shadow, and one
+    /// name at the least.
+    public pure function rows(others: int) -> int {
+        return max(1, floor(root.window-height / root.row) - 2 - others);
+    }
+}
+
 export global Theme {
     /// The palette by name: "Charcoal", "Grey", or "Light"; any other
     /// reads as Charcoal. Set from the Settings sheet's Theme row.

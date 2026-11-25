@@ -58,6 +58,19 @@ pub use greycard_library::collections::{
     hint_of, read_collection, split_name,
 };
 
+/// What [`Store::carry_recent`] did with the settings' list.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Carried {
+    /// Written into the folder's file.
+    Done,
+    /// Left alone: the folder has a list of its own.
+    HadOwn,
+    /// Not carried, and the settings should keep it: nothing to carry,
+    /// no folder, or a folder that would not take the file (a share
+    /// not mounted, a folder read-only).
+    Not,
+}
+
 /// The collections as the editor holds them: the folder they are kept
 /// in, each one, and what the window marks with them.
 #[derive(Default)]
@@ -70,7 +83,8 @@ pub struct Store {
     /// The collection B adds to outside a collection's own view: the
     /// last one added to from the menu or made.
     pub target: Option<String>,
-    /// The most recent destinations for Add to collection.
+    /// The collections added to last, by id, the latest first: the
+    /// folder's `recent.txt` (`greycard_library::collections::RECENT_FILE`).
     pub recent: Vec<String>,
     /// The index's rows whose hash is a member of any collection, each
     /// with the versions of it that are: a cell is marked when its own
@@ -126,6 +140,7 @@ impl Store {
             list: folder.list,
             smart: folder.smart,
             stamps: folder.stamps,
+            recent: greycard_library::collections::read_recent(&dir),
             ..Store::default()
         };
         store.sort();
@@ -143,6 +158,49 @@ impl Store {
         let key = |set: &str, name: &str| (set.to_lowercase(), name.to_lowercase());
         self.list.sort_by_key(|c| key(&c.set, &c.name));
         self.smart.sort_by_key(|s| key(&s.set, &s.name));
+    }
+
+    /// Collection `id` added to or made: first among [`Store::recent`],
+    /// and in the folder's file, read afresh so another window's are
+    /// kept. A file that will not write is said in the log; the session
+    /// keeps the order.
+    pub fn added_to(&mut self, id: &str) {
+        use greycard_library::collections::{added_to, push_recent};
+        match self.dir.as_deref().map(|dir| added_to(dir, id)) {
+            Some(Ok(list)) => self.recent = list,
+            Some(Err(e)) => {
+                tracing::warn!("collections: the ones added to last not kept: {e}");
+                push_recent(&mut self.recent, id);
+            }
+            None => push_recent(&mut self.recent, id),
+        }
+    }
+
+    /// The list the settings kept before it moved here (`recent`,
+    /// their `recent_collections`), carried into the folder's file when
+    /// the folder has none yet: once, since the file is there from then
+    /// on.
+    pub fn carry_recent(&mut self, recent: &[String]) -> Carried {
+        use greycard_library::collections::{RECENT_FILE, read_recent, write_recent};
+        let Some(dir) = self.dir.as_deref() else {
+            return Carried::Not;
+        };
+        if dir.join(RECENT_FILE).exists() {
+            return Carried::HadOwn;
+        }
+        if recent.is_empty() {
+            return Carried::Not;
+        }
+        match write_recent(dir, recent) {
+            Ok(()) => {
+                self.recent = read_recent(dir);
+                Carried::Done
+            }
+            Err(e) => {
+                tracing::warn!("collections: the ones added to last not carried over: {e}");
+                Carried::Not
+            }
+        }
     }
 
     pub fn collection(&self, id: &str) -> Option<&Collection> {

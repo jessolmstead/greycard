@@ -488,7 +488,10 @@ pub(crate) fn write_atomic(path: &Path, text: &str) -> std::io::Result<()> {
         std::fs::create_dir_all(dir)?;
     }
     let n = COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-    let part = path.with_extension(format!("json.{}-{n}.part", std::process::id()));
+    // Named from the file's whole name, so `recent.txt`'s is
+    // `recent.txt.<pid>-<n>.part` and a `.json` file's is as it was.
+    let name = path.file_name().unwrap_or_default().to_string_lossy();
+    let part = path.with_file_name(format!("{name}.{}-{n}.part", std::process::id()));
     // On the disk before it takes the old one's name: a crash before
     // the filesystem flushes could otherwise keep the rename and lose
     // the data, an empty file in place of the one there was. The part
@@ -583,6 +586,71 @@ pub fn read_folder(dir: &Path, up_to: u32) -> Folder {
         }
     }
     folder
+}
+
+/// The file in the folder that keeps the collections added to last, by
+/// id, one a line, the latest first: those the editor's Add to
+/// collection names first. A library's own, beside its collections, so
+/// two libraries keep two lists and a reload of the folder (a Lightroom
+/// import's) keeps it. Its name has neither end a collection's file
+/// has, so [`read_folder`] passes it over.
+pub const RECENT_FILE: &str = "recent.txt";
+
+/// How many ids [`RECENT_FILE`] keeps.
+pub const RECENT: usize = 10;
+
+/// The ids in the folder's [`RECENT_FILE`], at most [`RECENT`]; none
+/// when there is no file or it will not read. An id no collection has
+/// (one deleted since) is kept: a reader passes it over.
+pub fn read_recent(dir: &Path) -> Vec<String> {
+    use std::io::Read;
+    // The file is ours and small; a damaged one is read no further
+    // than this, and no further than the ids wanted.
+    const MOST: u64 = 64 * 1024;
+    let Ok(file) = std::fs::File::open(dir.join(RECENT_FILE)) else {
+        return Vec::new();
+    };
+    let mut bytes = Vec::new();
+    if file.take(MOST).read_to_end(&mut bytes).is_err() {
+        return Vec::new();
+    }
+    let text = String::from_utf8_lossy(&bytes);
+    let mut list: Vec<String> = Vec::new();
+    for id in text.lines().map(str::trim).filter(|l| !l.is_empty()) {
+        if list.len() == RECENT {
+            break;
+        }
+        if !list.iter().any(|i| i == id) {
+            list.push(id.to_string());
+        }
+    }
+    list
+}
+
+/// `id` put first in `list`, taken from wherever it was further down,
+/// and the list cut to [`RECENT`].
+pub fn push_recent(list: &mut Vec<String>, id: &str) {
+    list.retain(|i| i != id);
+    list.insert(0, id.to_string());
+    list.truncate(RECENT);
+}
+
+/// `list` as the folder's [`RECENT_FILE`], at most [`RECENT`] of it,
+/// through a part file; the folder made if it is not there yet.
+pub fn write_recent(dir: &Path, list: &[String]) -> std::io::Result<()> {
+    std::fs::create_dir_all(dir)?;
+    let kept = &list[..list.len().min(RECENT)];
+    write_atomic(&dir.join(RECENT_FILE), &format!("{}\n", kept.join("\n")))
+}
+
+/// Collection `id` added to: first in the folder's [`RECENT_FILE`],
+/// read afresh just before so another window's adds are kept; the list
+/// as written.
+pub fn added_to(dir: &Path, id: &str) -> std::io::Result<Vec<String>> {
+    let mut list = read_recent(dir);
+    push_recent(&mut list, id);
+    write_recent(dir, &list)?;
+    Ok(list)
 }
 
 /// The folder for a library at `library`: beside it.
