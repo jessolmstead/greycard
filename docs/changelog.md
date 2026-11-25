@@ -60,6 +60,8 @@ design note behind it.
   ([§744](https://github.com/jessolmstead/greycard/blob/master/docs/notes/744-a-monochrome-dngs-bad-pixels.md)).
 - A focus stack of many frames is aligned better toward its corners; a frame takes about a third of a second longer
   ([§746](https://github.com/jessolmstead/greycard/blob/master/docs/notes/746-the-stacks-placing-blind-to-blur.md)).
+- A focus stack no longer rings a blown highlight with contours and a dark halo
+  ([§747](https://github.com/jessolmstead/greycard/blob/master/docs/notes/747-a-blown-speculars-spill-held-down.md)).
 - A focus stack can be made again with its frames denoised, from the
   Noise section or `greycard merge again --denoise`, and its file
   carries a noise profile.

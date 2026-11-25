@@ -35,7 +35,8 @@
 //! own. The file keeps a recipe, so it is made again (`merge::again`)
 //! as a bracket and a panorama are: each frame blended where the
 //! recipe put it ([`stack::stack_camera_placed`]), nothing fitted, each
-//! read the short way first as well when the stack's prior speaks.
+//! read the short way first as well when the placing pass's words on
+//! the frames (the stack's prior and its spill) are heard.
 //!
 //! No frame is held: each is read when the core's merge asks for it, so
 //! a stack's memory is one frame's working set whatever the count
@@ -106,6 +107,13 @@ pub struct Options {
     /// over the clip kept under headroom; off only for a stack made
     /// again whose recipe says they were clipped.
     pub reconstruct: bool,
+    /// Whether a frame's weights are held down where it spills a
+    /// blown highlight's light (the core's `stack::Options::spill`):
+    /// none for a stack made again whose recipe predates it, made again
+    /// without, as it was made. For a stack made again, whether its
+    /// first merge heard a placed frame at its clip; with none heard,
+    /// a stack too short for the prior is read once.
+    pub spill: Option<bool>,
 }
 
 impl Default for Options {
@@ -123,6 +131,7 @@ impl Default for Options {
             ca: CaFits::Once,
             placed: None,
             reconstruct: true,
+            spill: Some(true),
         }
     }
 }
@@ -297,11 +306,12 @@ struct Walks {
 /// walked again to be blended, and nothing of it is kept between but
 /// its tags. Each first read is said to `progress` as a frame, then the
 /// placing, then each blend. With the places given (`options.placed`)
-/// only the blends are read and said, unless the stack's prior speaks
-/// (a selectivity above 0 and eight frames or more placed): then the
-/// frames used are read the short way first, said as frames and the
-/// placing, to gather its evidence again. A developed picture is refused: it is past
-/// the white balance and the matrix. So is a stack the machine's
+/// only the blends are read and said, unless the placing pass's words
+/// are heard (a selectivity above 0: the spill at any count, the prior
+/// from eight frames placed): then the frames used are read the short
+/// way first, said as frames and the placing, to gather them again. A
+/// developed picture is refused: it is past the white balance and the
+/// matrix. So is a stack the machine's
 /// available memory will not hold ([`room`]), read off the first
 /// frame's size before any other frame is decoded.
 pub fn frames(
@@ -508,10 +518,14 @@ pub fn frames(
         reference: options.reference,
         selectivity: options.selectivity,
         max_residual: options.max_residual,
+        spill: options.spill.is_some(),
         ..Default::default()
     };
+    let clipped = options.spill.unwrap_or(false);
     let (mut merged, report) = match (&options.placed, known) {
-        (Some(placed), Some(r)) => stack::stack_camera_placed(r, placed, read, said, &core)?,
+        (Some(placed), Some(r)) => {
+            stack::stack_camera_placed(r, placed, clipped, read, said, &core)?
+        }
         _ => stack::stack_camera_from(of, read, said, &core)?,
     };
     let merging = started.elapsed().as_secs_f64() - developing;
@@ -593,6 +607,7 @@ pub fn frames(
                 placed,
                 uncompressed: options.uncompressed,
                 reconstructed: options.reconstruct,
+                spill: options.spill.map(|_| report.clipped),
             }),
         }),
     };
@@ -1217,6 +1232,59 @@ mod tests {
         greycard_core::testing::remove_dir_retry(&dir);
     }
 
+    /// A stack written before the spill was held has no `spill=` in its
+    /// recipe, and is made again without it: the file it was, to the
+    /// sample, where the spill holds frames of one made now.
+    #[test]
+    fn a_stack_from_before_the_spill_is_made_again_without_it() {
+        let dir = scratch("unspilled");
+        let (w, h, n) = (160usize, 120usize, 5usize);
+        let files: Vec<PathBuf> = (0..n)
+            .map(|k| {
+                let p = dir.join(format!("IMG_{k}.dng"));
+                let light = specular_scene(k, n, (w, h), 8.0, 6.0);
+                let mosaic = mosaic_of(w, h, 1.0, Noise::ASSUMED, 300 + k as u64, light);
+                write_raw(&p, mosaic, w, h, (1, 100), "Stack");
+                p
+            })
+            .collect();
+        let made = |spill: Option<bool>, placed, name: &str| {
+            stacked(
+                &files,
+                &Options {
+                    reference: Reference::Index(2),
+                    uncompressed: true,
+                    spill,
+                    placed,
+                    out: Some(dir.join(name)),
+                    ..Options::default()
+                },
+            )
+        };
+        let (old, now) = (
+            made(None, None, "old.dng"),
+            made(Some(true), None, "now.dng"),
+        );
+        let tag = |p: &Path| greycard_core::decode::merge_tag_path(p).unwrap().unwrap();
+        let stack = |p: &Path| match tag(p).recipe.unwrap().geometry {
+            Geometry::Stack(s) => s,
+            _ => panic!("a stack"),
+        };
+        let (was, is) = (stack(&old.out), stack(&now.out));
+        assert_eq!((was.spill, is.spill), (None, Some(true)));
+        let samples = |p: &Path| {
+            greycard_core::decode::decode_path(p)
+                .unwrap()
+                .samples
+                .to_f32()
+        };
+        assert!(bits(&samples(&old.out)) != bits(&samples(&now.out)));
+        let again = made(was.spill, Some(was.placed), "again.dng");
+        assert!(bits(&samples(&again.out)) == bits(&samples(&old.out)));
+        assert_eq!(stack(&again.out).spill, None);
+        greycard_core::testing::remove_dir_retry(&dir);
+    }
+
     /// A stack made again from its recipe: nothing placed or fitted,
     /// each frame read once and blended where the recipe put it, so with
     /// no tier the same file to the sample, its samples stored
@@ -1262,11 +1330,12 @@ mod tests {
         .unwrap() else {
             panic!("a stack");
         };
-        let mut want: Vec<Step> = (1..=3)
-            .map(|index| Step::Blending { index, of: 3 })
-            .collect();
+        // The spill gathered again from the short reads, then the blends.
+        let mut want: Vec<Step> = (1..=3).map(|index| Step::Frame { index, of: 3 }).collect();
+        want.push(Step::Placing);
+        want.extend((1..=3).map(|index| Step::Blending { index, of: 3 }));
         want.push(Step::Writing);
-        assert_eq!(heard.into_inner(), want, "only the blends read");
+        assert_eq!(heard.into_inner(), want, "read twice, nothing fitted");
         assert!(again.stack.frames.iter().all(|f| f.fit.is_none()));
         assert_eq!(std::fs::metadata(&report.out).unwrap().len(), size);
         assert_eq!(again.out, report.out);

@@ -2,8 +2,9 @@
 //! 134): every frame held at once by the caller, scored, chained, and
 //! blended from the slice. Kept verbatim: the merge in `super` places
 //! the frames as it does, and blends them as it does where the stack
-//! is too short for the stack's prior (`super::prior`), which it
-//! predates. The bed (`super::bed`) measures the prior against it.
+//! is too short for the stack's prior (`super::prior`) and the spill
+//! (`super::spill`) is off, both of which it predates. The bed
+//! (`super::bed`) measures the prior against it.
 
 use rayon::prelude::*;
 
@@ -318,6 +319,7 @@ pub(super) fn merge(
             frames: reports,
             levels,
             coverage,
+            clipped: false,
         },
     ))
 }

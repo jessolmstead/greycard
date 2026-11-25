@@ -124,6 +124,12 @@ pub struct Stacked {
     /// they were reads without, and is made again clipped, as it was
     /// made.
     pub reconstructed: bool,
+    /// What the merge heard of a bright edge's spill (the core's
+    /// `stack::spill`): whether a placed frame was at its clip, so that
+    /// one made again without is not read for it. None for a stack
+    /// written before the spill was held, which is made again without
+    /// it, as it was made.
+    pub spill: Option<bool>,
 }
 
 /// One frame of a bracket onto its reference.
@@ -446,6 +452,9 @@ impl Recipe {
                 if stacked.reconstructed {
                     fact("highlights", "reconstructed".into());
                 }
+                if let Some(heard) = stacked.spill {
+                    fact("spill", if heard { "heard" } else { "quiet" }.into());
+                }
                 for (k, t) in stacked.placed.iter().enumerate() {
                     match t {
                         Some(t) => fact("shift", format!("{k} {}", join(&t.m))),
@@ -487,6 +496,7 @@ struct Read {
     dropped: Vec<usize>,
     uncompressed: bool,
     reconstructed: bool,
+    spill: Option<bool>,
 }
 
 /// One value a frame, in the frames' order: none unless each of the
@@ -574,6 +584,14 @@ impl Read {
             "highlights" => {
                 self.reconstructed = value == "reconstructed";
                 value == "reconstructed"
+            }
+            "spill" => {
+                self.spill = match value {
+                    "heard" => Some(true),
+                    "quiet" => Some(false),
+                    _ => None,
+                };
+                self.spill.is_some()
             }
             "crop" => numbers::<4, usize>(value, ' ')
                 .map(|[x, y, width, height]| {
@@ -686,6 +704,7 @@ impl Read {
                         .ok_or_else(|| every("shift= or dropped"))?,
                     uncompressed: self.uncompressed,
                     reconstructed: self.reconstructed,
+                    spill: self.spill,
                 })
             }
             k => return Err(format!("merge={k}")),
@@ -1072,12 +1091,28 @@ mod tests {
                     ],
                     uncompressed: true,
                     reconstructed: true,
+                    spill: Some(true),
                 }),
             }),
         };
         assert_eq!(Tag::parse(&tag.to_bytes()), Some(tag.clone()));
         let full = String::from_utf8(tag.to_bytes()).unwrap();
         assert!(full.contains("\nhighlights=reconstructed\n"), "{full}");
+        assert!(full.contains("\nspill=heard\n"), "{full}");
+        // A stack that heard no clip says so; one written before the
+        // spill was held says nothing, and is made again without it.
+        let quiet = full.replace("spill=heard\n", "spill=quiet\n");
+        let spill = |text: &str| match Tag::parse(text.as_bytes())
+            .unwrap()
+            .recipe
+            .unwrap()
+            .geometry
+        {
+            Geometry::Stack(s) => s.spill,
+            _ => panic!("a stack's recipe"),
+        };
+        assert_eq!(spill(&quiet), Some(false));
+        assert_eq!(spill(&full.replace("spill=heard\n", "")), None);
         // A stack written before its highlights were kept reads as
         // clipped, what it was, and its headroom as none.
         let before = full

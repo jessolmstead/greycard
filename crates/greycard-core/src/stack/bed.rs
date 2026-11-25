@@ -255,7 +255,7 @@ impl Shot {
 }
 
 /// A Gaussian blur of a plane, separable, the taps clamped at the edge.
-fn gauss(src: &[f32], w: usize, h: usize, sigma: f64) -> Vec<f32> {
+pub(super) fn gauss(src: &[f32], w: usize, h: usize, sigma: f64) -> Vec<f32> {
     let r = (3.0 * sigma).ceil() as isize;
     let taps: Vec<f32> = (-r..=r)
         .map(|i| (-(i * i) as f64 / (2.0 * sigma * sigma)).exp() as f32)
@@ -611,18 +611,35 @@ mod tests {
             let x1 = edge.bar().1;
             let before = halo(&old(&frames), &truth, x1);
             let after = halo(&new(&frames), &truth, x1);
+            let unspilled = stack::stack(
+                &frames,
+                &Options {
+                    spill: false,
+                    ..Options::default()
+                },
+            )
+            .expect("a stack")
+            .0;
+            let unspilled = halo(&unspilled, &truth, x1);
             // The prior does speak here (the frames are not moved, so
             // the placing pass's blocks are each frame's own).
             let said = gather(&frames).trusted();
             println!(
-                "a depth edge over a {} ground: halo {:+.2}% of the step before, {:+.2}% after; \
-                 the prior has a say in {:.0}% of it",
+                "a depth edge over a {} ground: halo {:+.2}% of the step before, {:+.2}% after \
+                 ({:+.2}% without the spill); the prior has a say in {:.0}% of it",
                 if faint_ground { "faint" } else { "strong" },
                 before * 100.0,
                 after * 100.0,
+                unspilled * 100.0,
                 said * 100.0
             );
             assert!(said > 0.2, "the prior has no say: {said}");
+            assert!(
+                after.abs() <= unspilled.abs() + 0.002,
+                "halo {:.2}% against {:.2}% without the spill",
+                after * 100.0,
+                unspilled * 100.0
+            );
             assert!(
                 after.abs() < 0.05 && after.abs() <= before.abs() + 0.005,
                 "halo {:.2}% against {:.2}% before",
@@ -843,8 +860,18 @@ mod tests {
             .map(|f| {
                 let (w, h) = (f.width, f.height);
                 let lum = stack::luminance_of(&f.data, stack::WORKING_LUMA);
-                let (_, blocks) = stack::measure(&lum, w, h, &Options::default(), true);
-                blocks.expect("gathered")
+                let (_, taken) = stack::measure(
+                    &lum,
+                    w,
+                    h,
+                    &Options::default(),
+                    stack::Listen {
+                        prior: true,
+                        ..Default::default()
+                    },
+                    false,
+                );
+                taken.blocks.expect("gathered")
             })
             .collect()
     }
@@ -861,7 +888,7 @@ mod tests {
     ) -> super::super::prior::Prior {
         let mut gathered = super::super::prior::Gathered::new(w, h);
         for b in blocks {
-            gathered.add(b, &Transform::IDENTITY);
+            gathered.add(b, &Transform::IDENTITY, None);
         }
         gathered.finish()
     }
@@ -1174,8 +1201,26 @@ mod tests {
             let t = std::time::Instant::now();
             let _ = new(&frames);
             let after = t.elapsed().as_secs_f64();
+            let (single, truth) = (
+                deviation(&band(&frames[0]), shot.width, FLAT).max(1e-12),
+                band(&shot.truth()),
+            );
+            let t = std::time::Instant::now();
+            let unspilled = stack::stack(
+                &frames,
+                &Options {
+                    spill: false,
+                    ..Options::default()
+                },
+            )
+            .expect("a stack")
+            .0;
+            let without = t.elapsed().as_secs_f64();
             compare(&shot);
-            println!("  merge {before:.2} s before, {after:.2} s after");
+            line("no spill", &measured(&unspilled, &truth, single));
+            println!(
+                "  merge {before:.2} s before, {after:.2} s after, {without:.2} s without the spill"
+            );
         }
     }
 
@@ -1295,6 +1340,45 @@ mod tests {
             println!(
                 "  blocks picking a frame (distance: frame): {}",
                 picks.join(" ")
+            );
+        }
+        // What the merge keeps of the faint texture in a ring 20 to 48
+        // px from the disc's centre (clear of its own edge's band), with
+        // the spill held down and not, and the frames focused there.
+        let truth = band(&shot.truth());
+        let kept = |merged: &WorkingImage| {
+            let b = band(merged);
+            let (mut mt, mut tt) = (0.0f64, 0.0f64);
+            for y in 0..h {
+                for x in 0..w {
+                    let r = ((x as f64 - cx).powi(2) + (y as f64 - cy).powi(2)).sqrt();
+                    if (20.0..48.0).contains(&r) {
+                        let i = y * w + x;
+                        mt += b[i] as f64 * truth[i] as f64;
+                        tt += (truth[i] as f64).powi(2);
+                    }
+                }
+            }
+            mt / tt
+        };
+        let unspilled = Options {
+            spill: false,
+            ..Options::default()
+        };
+        for (name, frames) in [("no specular", &plain), ("specular over 1", &over)] {
+            let on = stack::stack(frames, &Options::default())
+                .expect("a stack")
+                .0;
+            let off = stack::stack(frames, &unspilled).expect("a stack").0;
+            println!(
+                "{name}: faint texture kept 20 to 48 px out, {:.3} without the spill held, \
+                 {:.3} with; frames {} and {} alone {:.3} and {:.3}",
+                kept(&off),
+                kept(&on),
+                k0 - 1,
+                k0,
+                kept(&frames[k0 - 1]),
+                kept(&frames[k0])
             );
         }
     }

@@ -164,6 +164,21 @@ const NOISY: f32 = 0.1;
 /// The least a multiplier can be.
 const FLOOR: f32 = 0.02;
 
+/// What a frame's blocks are to the raw energy a block's shares are
+/// read against, as the spill (`super::spill`) reads the frames so
+/// far: the frame's own; nothing where it holds another frame's
+/// spilled light (a defocused rim is mid-band energy as plain as a
+/// faint texture in focus, and as its block's peak it handed the block
+/// to the most defocused frames: bed, a blown specular, 24 to 31 px
+/// out). The trust is read from every frame as before: a rim held out of it
+/// too left the block untrusted and averaged, which kept less (20 to
+/// 48 px from the specular, 0.437 of the texture against 0.469).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum Role {
+    Keep,
+    Skip,
+}
+
 /// A frame's Laplacian energy averaged over square blocks: `mean` the
 /// statistic the trust is judged on, `raw` the energy a frame's share
 /// is read from.
@@ -285,18 +300,23 @@ impl Evidence {
         }
     }
 
-    fn add(&mut self, (placed, raw): (Vec<f32>, Vec<f32>)) {
+    fn add(&mut self, (placed, raw): (Vec<f32>, Vec<f32>), roles: Option<&[Role]>) {
+        let role = |b: usize| roles.map_or(Role::Keep, |r| r[b]);
         self.count
             .par_iter_mut()
             .zip(self.peak.par_iter_mut())
             .zip(self.histogram.par_chunks_mut(BINS))
             .zip(self.raw_peak.par_iter_mut())
             .zip(placed.par_iter().zip(raw.par_iter()))
-            .for_each(|((((n, p), h), rp), (&v, &e))| {
+            .enumerate()
+            .for_each(|(b, ((((n, p), h), rp), (&v, &e)))| {
                 if v.is_finite() && v > 0.0 && e.is_finite() {
                     *n += 1;
                     *p = p.max(v);
-                    *rp = rp.max(e);
+                    match role(b) {
+                        Role::Keep => *rp = rp.max(e),
+                        Role::Skip => {}
+                    }
                     let bin = ((v.log2() - LOWEST) / BIN).clamp(0.0, (BINS - 1) as f32) as usize;
                     h[bin] = h[bin].saturating_add(1);
                 }
@@ -400,10 +420,11 @@ impl Gathered {
         }
     }
 
-    /// One frame's blocks, one a level, onto the reference by `onto`.
-    pub fn add(&mut self, frame: &[Blocks], onto: &Transform) {
+    /// One frame's blocks, one a level, onto the reference by `onto`,
+    /// each block's [`Role`] as the spill read it when it was heard.
+    pub fn add(&mut self, frame: &[Blocks], onto: &Transform, roles: Option<&[Role]>) {
         for (e, b) in self.levels.iter_mut().zip(frame) {
-            e.add(b.both(onto));
+            e.add(b.both(onto), roles);
         }
     }
 

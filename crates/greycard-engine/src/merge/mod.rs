@@ -1293,6 +1293,7 @@ pub fn again(
                 ca,
                 uncompressed: stacked.uncompressed,
                 reconstruct: stacked.reconstructed,
+                spill: stacked.spill,
                 placed: Some(stacked.placed),
                 ..focus::Options::default()
             },

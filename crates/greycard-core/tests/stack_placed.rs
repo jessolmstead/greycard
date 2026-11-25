@@ -42,9 +42,13 @@ fn a_stack_placed_where_it_was_is_the_same_to_the_bit() {
         .collect();
     let reads = std::cell::Cell::new(0);
     let mut steps = Vec::new();
+    // Nothing in these frames is at the clip: the first merge heard no
+    // spill, and the stack made again reads each frame once.
+    assert!(!report.clipped);
     let (again, placed_report) = stack::stack_camera_placed(
         2,
         &placed,
+        report.clipped,
         |k| {
             reads.set(reads.get() + 1);
             Ok::<_, Error>(frames[k].clone())
@@ -64,7 +68,38 @@ fn a_stack_placed_where_it_was_is_the_same_to_the_bit() {
     assert_eq!(reads.get(), used, "each frame the merge used read once");
     assert_eq!(steps.first(), Some(&Step::Blending { index: 1, of: used }));
 
-    // A frame left out is not read, and is said dropped.
+    // With the spill off a stack this short gathers nothing either.
+    let unspilled = Options {
+        spill: false,
+        ..options
+    };
+    let (first, _) = stack::stack_camera(&frames, &unspilled).unwrap();
+    reads.set(0);
+    let mut steps = Vec::new();
+    let (again, _) = stack::stack_camera_placed(
+        2,
+        &placed,
+        false,
+        |k| {
+            reads.set(reads.get() + 1);
+            Ok::<_, Error>(frames[k].clone())
+        },
+        |s| steps.push(s),
+        &unspilled,
+    )
+    .unwrap();
+    assert!(
+        first
+            .data
+            .iter()
+            .zip(&again.data)
+            .all(|(a, b)| a.to_bits() == b.to_bits())
+    );
+    assert_eq!(reads.get(), used, "each frame the merge used read once");
+    assert_eq!(steps.first(), Some(&Step::Blending { index: 1, of: used }));
+
+    // A frame left out is not read, and is said dropped; told the first
+    // merge heard a clip, the stack is read for the spill first, twice.
     let mut fewer = placed.clone();
     let out = (0..5).find(|&k| k != 2 && fewer[k].is_some()).unwrap();
     fewer[out] = None;
@@ -72,6 +107,7 @@ fn a_stack_placed_where_it_was_is_the_same_to_the_bit() {
     let (_, r) = stack::stack_camera_placed(
         2,
         &fewer,
+        true,
         |k| {
             reads.set(reads.get() + 1);
             Ok::<_, Error>(frames[k].clone())
@@ -80,13 +116,14 @@ fn a_stack_placed_where_it_was_is_the_same_to_the_bit() {
         &options,
     )
     .unwrap();
-    assert_eq!((reads.get(), r.used()), (used - 1, used - 1));
+    assert_eq!((reads.get(), r.used()), (2 * (used - 1), used - 1));
     // The reference must be placed.
     fewer[2] = None;
     assert!(
         stack::stack_camera_placed(
             2,
             &fewer,
+            true,
             |k| Ok::<_, Error>(frames[k].clone()),
             |_| {},
             &options

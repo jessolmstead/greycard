@@ -129,6 +129,21 @@
 //! below. Stacks of fewer than eight frames, and a selectivity of 0,
 //! merge as they did.
 //!
+//! **A bright edge's spill.** A frame focused away from a blown
+//! highlight holds its blur disc, whose rim is a hard edge in that frame
+//! wherever the disc is clipped, and the weights took it for detail: a
+//! blown specular came out ringed with the defocused frames' rims and a
+//! dark ring between them. Once a placed frame has a clip, the placing
+//! pass also keeps, at quarter size, the darkest frame's level at each
+//! place and the brightest that frame holds within reach; in the blend,
+//! a frame much brighter than the darkest, its excess joined to such a
+//! source and itself at the clip where the darkest is not, is spilling,
+//! and its weights are held down there at every level. Only at the
+//! clip: a glow under it, or a dark object with a bright ground leaking
+//! in, is left as it was. See `spill`. At any count over one; at a
+//! selectivity of 0 neither this nor the prior is heard, and a stack
+//! with no clip merges as it did.
+//!
 //! What was considered and is not here: shrinking each frame's weight
 //! map by a morphological erosion the width of the blur, so that a
 //! frame is never trusted right up to the edge of where it is sharp.
@@ -164,7 +179,8 @@
 //! — the weighted bands, the weights and the unweighted bands the
 //! flat-region fallback needs — and one frame's pyramid at a time,
 //! with the prior's block counts beside them (about 1.6 bytes a pixel,
-//! whatever the count).
+//! whatever the count) and, in a stack with a clip, the spill's six
+//! quarter-size planes (about 1.5 bytes).
 //! Nothing else is held across frames: the luminance planes are taken
 //! and dropped as they are used, three at a time in the chain and one
 //! at a time everywhere else, and the Laplacian pyramid takes the
@@ -186,8 +202,13 @@ mod bed;
 #[cfg(test)]
 mod breathing;
 #[cfg(test)]
+mod halo_bed;
+#[cfg(test)]
 mod in_memory;
 mod prior;
+#[cfg(test)]
+mod scene_bed;
+mod spill;
 
 /// Which frame the others are put onto.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -279,6 +300,12 @@ pub struct Options {
     /// noise divided by the root of the count — rather than a coin
     /// toss between frames.
     pub weight_floor: f32,
+    /// Whether a frame's weights are held down where it holds the
+    /// clipped spill of a blown highlight another frame keeps in place
+    /// (the module's note on a bright edge's spill). On by default;
+    /// heard only above a selectivity of 0. Off, a stack of fewer than
+    /// eight frames merges as it did before it.
+    pub spill: bool,
 }
 
 impl Default for Options {
@@ -299,6 +326,7 @@ impl Default for Options {
             band_radius: 2,
             band_floor: 1e-4,
             weight_floor: 0.01,
+            spill: true,
         }
     }
 }
@@ -392,6 +420,10 @@ pub struct StackReport {
     /// How many frames covered each pixel of the result, row-major.
     /// Never zero: the reference covers all of itself.
     pub coverage: Vec<u16>,
+    /// Whether the placing pass heard a placed frame at its clip, and
+    /// gathered the spill ([`Options::spill`]): what a stack made again
+    /// is told, so that one without is not read for it.
+    pub clipped: bool,
 }
 
 impl StackReport {
@@ -498,18 +530,21 @@ pub fn stack_camera_from<E: From<Error>>(
 /// [`stack_camera_from`] made, to the bit, when the places are the ones
 /// it found. For a stack made again from what it kept.
 ///
-/// Where the stack's prior has a say (a selectivity above 0 and at
-/// least `prior::MIN_FRAMES`, 8, frames placed), its evidence is
-/// gathered again as the placing pass gathered it: each frame the merge
-/// uses read in the chain's order, each read said as [`Step::Reading`]
-/// of the frames used, then [`Step::Placing`], then the blends. Such a
-/// frame is read twice, and its first read should be what the placing
-/// pass read. Otherwise each is read once, to be blended. The report's
+/// Above a selectivity of 0 (with [`Options::spill`] on and `clipped`,
+/// what [`StackReport::clipped`] said of the first merge, or at least
+/// `prior::MIN_FRAMES`, 8, frames placed, where the stack's prior has a
+/// say) what the placing pass gathered is gathered again as it gathered
+/// it: each frame the merge uses read in the chain's order, each read
+/// said as [`Step::Reading`] of the frames used, then
+/// [`Step::Placing`], then the blends. Such a frame is read twice, and
+/// its first read should be what the placing pass read. Otherwise each
+/// is read once, to be blended. The report's
 /// scores and fits are left empty; a frame left out is
 /// [`Dropped::NoFit`].
 pub fn stack_camera_placed<E: From<Error>>(
     reference: usize,
     placed: &[Option<Transform>],
+    clipped: bool,
     mut read: impl FnMut(usize) -> std::result::Result<CameraImage, E>,
     mut step: impl FnMut(Step),
     options: &Options,
@@ -531,32 +566,19 @@ pub fn stack_camera_placed<E: From<Error>>(
         .enumerate()
         .filter_map(|(k, t)| Some((k, (*t)?)))
         .collect();
-    // The prior as the placing pass found it: the same frames in the
-    // same order, the reference and then the chain's, each measured as
-    // read and put by its transform. With fewer placed than a median
-    // wants, [`merge_from`] gathered and threw away, so none is read.
-    let mut prior = None;
-    if options.selectivity > 0.0 && used.len() >= prior::MIN_FRAMES {
-        let mut evidence: Option<prior::Gathered> = None;
-        let order =
-            std::iter::once(reference).chain(chain_orders(n, reference).into_iter().flatten());
-        let order = order.filter_map(|k| Some((k, placed[k]?)));
-        for (i, (k, transform)) in order.enumerate() {
-            step(Step::Reading {
-                index: i + 1,
-                of: used.len(),
-            });
-            let (w, h, frame) = frames.get(k)?;
-            let lum = luminance_of(&frame, CAMERA_LUMA);
-            drop(frame);
-            let (_, blocks) = measure(&lum, w, h, options, true);
-            evidence
-                .get_or_insert_with(|| prior::Gathered::new(w, h))
-                .add(&blocks.unwrap_or_default(), &transform);
-        }
-        prior = found(evidence, used.len());
-        step(Step::Placing);
-    }
+    // What the placing pass heard, as it heard it: the same frames in
+    // the same order, the reference and then the chain's, each measured
+    // as read and put by its transform. Only the placing pass's read
+    // tells a clip, and the blend's may be another picture (a caller's
+    // highlights rebuilt over the clip), so a stack whose first merge
+    // heard none (`clipped`) is not read for the spill.
+    let mut listen = Listen::of(options, used.len());
+    listen.spill &= clipped;
+    let (heard, clipped) = if listen.any() {
+        gather_placed(&mut frames, reference, placed, options, listen, &mut step)?
+    } else {
+        (Heard::default(), false)
+    };
     let mut blend: Option<Blend> = None;
     for (i, &(k, transform)) in used.iter().enumerate() {
         step(Step::Blending {
@@ -566,12 +588,13 @@ pub fn stack_camera_placed<E: From<Error>>(
         let (w, h, frame) = frames.get(k)?;
         blend
             .get_or_insert_with(|| Blend::new(w, h, options))
-            .add_measured(frame, transform, CAMERA_LUMA, options, prior.as_ref());
+            .add_measured(frame, transform, CAMERA_LUMA, options, &heard);
     }
     let blend = blend.expect("the reference is placed");
     let (width, height, levels) = (blend.width, blend.height, blend.sizes.len());
     let (out, coverage) = blend.finish();
     let report = StackReport {
+        clipped,
         width,
         height,
         reference,
@@ -700,27 +723,260 @@ impl<E: From<Error>> Frames<'_, E> {
     }
 }
 
-/// The RMS Laplacian of a luminance plane's log: the score every frame
-/// gets whatever else happens. It is what picks the reference, and
-/// what a caller is shown.
-fn score(lum: &[f32], width: usize, height: usize, options: &Options) -> f32 {
-    measure(lum, width, height, options, false).0
+/// Which of the placing pass's words on the frames a merge gathers: the
+/// prior's ([`prior`]) and the spill's ([`spill`]).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+struct Listen {
+    prior: bool,
+    spill: bool,
 }
 
-/// The frame's score, and its blocks for the stack's prior when
-/// `gather`.
+impl Listen {
+    /// What a merge of `placed` frames under `options` gathers. Neither
+    /// at a selectivity of 0, the plain weighted average that setting
+    /// promises; the prior only in a stack long enough for a median.
+    fn of(options: &Options, placed: usize) -> Self {
+        let selective = options.selectivity > 0.0;
+        Self {
+            prior: selective && placed >= prior::MIN_FRAMES,
+            spill: selective && options.spill && placed >= 2,
+        }
+    }
+
+    fn any(self) -> bool {
+        self.prior || self.spill
+    }
+}
+
+/// What the placing pass took of one frame for the blend.
+#[derive(Default)]
+struct Taken {
+    /// The frame's index in the stack.
+    index: usize,
+    blocks: Option<Vec<prior::Blocks>>,
+    /// Whether the frame is at its own clip anywhere.
+    clips: bool,
+    coarse: Option<spill::Coarse>,
+}
+
+/// The spill's part of the gathering. Only a frame at the clip is held
+/// ([`spill`]), so its planes are gathered only once one is read: until
+/// then the frames are listed, and the first at the clip has those
+/// before it read again, in their order, for the spill alone. What is
+/// gathered is what gathering every frame would gather, whichever frame
+/// clips first: the same frames in the same order, and the prior's
+/// skips the same, since a frame without a clip has none.
+enum Spilling {
+    /// Not listened for.
+    Deaf,
+    /// No frame at the clip yet: those gathered, by index and place.
+    Waiting(Vec<(usize, Transform)>),
+    Heard(spill::Gathered),
+}
+
+/// The placing pass's words, gathered a frame at a time.
+struct Gathering {
+    width: usize,
+    height: usize,
+    prior: Option<prior::Gathered>,
+    spill: Spilling,
+}
+
+impl Gathering {
+    fn new(width: usize, height: usize, listen: Listen) -> Self {
+        Self {
+            width,
+            height,
+            prior: listen.prior.then(|| prior::Gathered::new(width, height)),
+            spill: if listen.spill {
+                Spilling::Waiting(Vec::new())
+            } else {
+                Spilling::Deaf
+            },
+        }
+    }
+
+    /// Whether the spill is being gathered: every frame's planes wanted.
+    fn hearing(&self) -> bool {
+        matches!(self.spill, Spilling::Heard(_))
+    }
+
+    /// A frame at the clip is read: the spill gathered from here on, and
+    /// the frames gathered before it, by index and place, to be read
+    /// again for it ([`Gathering::again`]) before the frame is added.
+    fn wake(&mut self) -> Vec<(usize, Transform)> {
+        match &mut self.spill {
+            Spilling::Waiting(seen) => {
+                let seen = std::mem::take(seen);
+                self.spill = Spilling::Heard(spill::Gathered::new(self.width, self.height));
+                seen
+            }
+            _ => Vec::new(),
+        }
+    }
+
+    /// A frame gathered before the spill woke, read again: the spill's
+    /// part of it, the prior's having been taken (with no skips, since
+    /// a frame without a clip has none).
+    fn again(&mut self, coarse: &spill::Coarse, onto: &Transform) {
+        if let Spilling::Heard(s) = &mut self.spill {
+            let _ = s.add(coarse, onto);
+        }
+    }
+
+    /// Frame `index`, taken, put by `onto`.
+    fn add(&mut self, index: usize, taken: Taken, onto: &Transform) {
+        // The spill first: it says which of the frame's blocks the
+        // prior is to believe.
+        let roles = match (&mut self.spill, &taken.coarse) {
+            (Spilling::Heard(s), Some(d)) => Some(s.add(d, onto)),
+            (Spilling::Waiting(seen), _) => {
+                seen.push((index, *onto));
+                None
+            }
+            _ => None,
+        };
+        if let Some(p) = &mut self.prior {
+            p.add(&taken.blocks.unwrap_or_default(), onto, roles.as_deref());
+        }
+    }
+
+    /// What was heard, once `placed` frames are placed: no spill where
+    /// no frame was at the clip.
+    fn finish(self, placed: usize) -> Heard {
+        Heard {
+            prior: found(self.prior, placed),
+            spill: match self.spill {
+                Spilling::Heard(s) if placed >= 2 => Some(s.finish()),
+                _ => None,
+            },
+        }
+    }
+}
+
+/// The frames placed since a placed frame woke the spill, added: the
+/// frames placed before it read again for the spill first.
+fn settle<E: From<Error>>(
+    frames: &mut Frames<'_, E>,
+    gathering: &std::cell::RefCell<Option<Gathering>>,
+    pending: &std::cell::RefCell<Vec<(Taken, Transform)>>,
+    luma: [f32; 3],
+    options: &Options,
+) -> std::result::Result<(), E> {
+    let pending = pending.take();
+    let mut gathering = gathering.borrow_mut();
+    let Some(g) = gathering.as_mut() else {
+        return Ok(());
+    };
+    for (taken, onto) in pending {
+        if taken.clips {
+            for (j, before) in g.wake() {
+                let (w, h, frame) = frames.get(j)?;
+                let lum = luminance_of(&frame, luma);
+                drop(frame);
+                g.again(&coarse_of(&lum, w, h, options), &before);
+            }
+        }
+        g.add(taken.index, taken, &onto);
+    }
+    Ok(())
+}
+
+/// The placing pass gathered again for frames put by `placed` onto
+/// `reference`: each read in the chain's order, said as
+/// [`Step::Reading`], measured, and added; the first frame at its clip
+/// has those before it read again for the spill, unsaid.
+fn gather_placed<E: From<Error>>(
+    frames: &mut Frames<'_, E>,
+    reference: usize,
+    placed: &[Option<Transform>],
+    options: &Options,
+    listen: Listen,
+    step: &mut dyn FnMut(Step),
+) -> std::result::Result<(Heard, bool), E> {
+    let n = placed.len();
+    let used = placed.iter().filter(|p| p.is_some()).count();
+    let mut gathering: Option<Gathering> = None;
+    let order = std::iter::once(reference).chain(chain_orders(n, reference).into_iter().flatten());
+    let order = order.filter_map(|k| Some((k, placed[k]?)));
+    for (i, (k, transform)) in order.enumerate() {
+        step(Step::Reading {
+            index: i + 1,
+            of: used,
+        });
+        let (w, h, frame) = frames.get(k)?;
+        let lum = luminance_of(&frame, CAMERA_LUMA);
+        drop(frame);
+        let g = gathering.get_or_insert_with(|| Gathering::new(w, h, listen));
+        let (_, taken) = measure(&lum, w, h, options, listen, g.hearing());
+        drop(lum);
+        if taken.clips {
+            for (j, onto) in g.wake() {
+                let (w, h, frame) = frames.get(j)?;
+                let lum = luminance_of(&frame, CAMERA_LUMA);
+                drop(frame);
+                g.again(&coarse_of(&lum, w, h, options), &onto);
+            }
+        }
+        g.add(k, taken, &transform);
+    }
+    step(Step::Placing);
+    let clipped = gathering.as_ref().is_some_and(Gathering::hearing);
+    Ok((
+        gathering.map(|g| g.finish(used)).unwrap_or_default(),
+        clipped,
+    ))
+}
+
+/// What the blend is told of the stack.
+#[derive(Default)]
+struct Heard {
+    prior: Option<prior::Prior>,
+    spill: Option<spill::Spill>,
+}
+
+/// The frame's score (the RMS Laplacian of its log luminance, which
+/// every frame gets whatever else happens: it picks the reference, and
+/// a caller is shown it), and what the placing pass takes of it for
+/// `listen`; the spill's planes only where the frame is at its clip or
+/// `hearing`, the spill being gathered already.
 fn measure(
     lum: &[f32],
     width: usize,
     height: usize,
     options: &Options,
-    gather: bool,
-) -> (f32, Option<Vec<prior::Blocks>>) {
+    listen: Listen,
+    hearing: bool,
+) -> (f32, Taken) {
     let log = register::log_plane(lum, options.register.floor_stops);
     let energy = sharpness::laplacian_energy(&log, width, height);
     let score = (energy.iter().map(|&e| e as f64).sum::<f64>() / energy.len() as f64).sqrt() as f32;
-    let blocks = gather.then(|| prior::blocks(&log, &energy, width, height));
-    (score, blocks)
+    let clips = listen.spill && spill::clips(&log, width, height);
+    let taken = Taken {
+        blocks: listen
+            .prior
+            .then(|| prior::blocks(&log, &energy, width, height)),
+        clips,
+        coarse: (listen.spill && (hearing || clips))
+            .then(|| spill::coarse(&log, &energy, width, height, None, clips)),
+        ..Taken::default()
+    };
+    (score, taken)
+}
+
+/// A frame read again for the spill alone: its coarse planes as
+/// [`measure`] takes them.
+fn coarse_of(lum: &[f32], width: usize, height: usize, options: &Options) -> spill::Coarse {
+    let log = register::log_plane(lum, options.register.floor_stops);
+    let energy = sharpness::laplacian_energy(&log, width, height);
+    spill::coarse(
+        &log,
+        &energy,
+        width,
+        height,
+        None,
+        spill::clips(&log, width, height),
+    )
 }
 
 /// The merge, its frames read rather than held.
@@ -750,9 +1006,14 @@ fn merge_from<E: From<Error>>(
     let mut reads = 0usize;
 
     let sharpest = options.reference == Reference::Sharpest;
-    // The prior's evidence, only where it can be used: above a
-    // selectivity of 0, and in a stack long enough for a median.
-    let gather = options.selectivity > 0.0 && n >= prior::MIN_FRAMES;
+    // What the placing pass gathers; at a selectivity of 0 the merge is
+    // the plain weighted average that setting promises, and nothing is
+    // gathered or used.
+    let gathering: std::cell::RefCell<Option<Gathering>> = std::cell::RefCell::new(None);
+    // The placing pass's words, only where they can be used: above a
+    // selectivity of 0, and the prior in a stack long enough for a
+    // median.
+    let listen = Listen::of(options, n);
     let reference = match options.reference {
         Reference::Middle => n / 2,
         Reference::Index(i) => {
@@ -776,7 +1037,7 @@ fn merge_from<E: From<Error>>(
                 let (w, h, frame) = frames.get(i)?;
                 let lum = luminance_of(&frame, luma);
                 drop(frame);
-                *s = score(&lum, w, h, options);
+                *s = measure(&lum, w, h, options, Listen::default(), false).0;
             }
             sharpness
                 .iter()
@@ -790,10 +1051,27 @@ fn merge_from<E: From<Error>>(
         step(Step::Placing);
     }
 
+    // A placed frame at its clip wakes the spill, and the frames placed
+    // before it are read again for it, which the fit's reads cannot
+    // wait on: it is held here, with any placed after it, until the
+    // next read or the fit's end. Only a placed frame wakes it, as in a
+    // stack made again, which reads only those.
+    let pending: std::cell::RefCell<Vec<(Taken, Transform)>> = std::cell::RefCell::new(Vec::new());
+    let place = |taken: Taken, onto: &Transform| {
+        if let Some(g) = gathering.borrow_mut().as_mut() {
+            let mut pending = pending.borrow_mut();
+            if !pending.is_empty() || (taken.clips && !g.hearing()) {
+                pending.push((taken, *onto));
+            } else {
+                g.add(taken.index, taken, onto);
+            }
+        }
+    };
     // Each frame's luminance as the chain reaches it, scored on the way
     // unless the scoring pass has been.
-    type Measured = (usize, usize, Vec<f32>, Option<Vec<prior::Blocks>>);
+    type Measured = (usize, usize, Vec<f32>, Taken);
     let mut lum_of = |i: usize| -> std::result::Result<Measured, E> {
+        settle(&mut frames, &gathering, &pending, luma, options)?;
         if !sharpest {
             reads += 1;
             step(Step::Reading {
@@ -804,21 +1082,19 @@ fn merge_from<E: From<Error>>(
         let (w, h, frame) = frames.get(i)?;
         let lum = luminance_of(&frame, luma);
         drop(frame);
-        let (s, blocks) = measure(&lum, w, h, options, gather);
+        let hearing = gathering.borrow().as_ref().is_some_and(Gathering::hearing);
+        let (s, mut taken) = measure(&lum, w, h, options, listen, hearing);
+        taken.index = i;
         if !sharpest {
             sharpness[i] = s;
         }
-        Ok((w, h, lum, blocks))
+        Ok((w, h, lum, taken))
     };
-    let (width, height, reference_lum, reference_blocks) = lum_of(reference)?;
-    // At a selectivity of 0 the merge is the plain weighted average
-    // that setting promises, and the prior is neither gathered nor
-    // used.
-    let mut evidence = gather.then(|| prior::Gathered::new(width, height));
-    if let (Some(e), Some(b)) = (&mut evidence, &reference_blocks) {
-        e.add(b, &Transform::IDENTITY);
+    let (width, height, reference_lum, reference_taken) = lum_of(reference)?;
+    if listen.any() {
+        gathering.replace(Some(Gathering::new(width, height, listen)));
+        place(reference_taken, &Transform::IDENTITY);
     }
-    drop(reference_blocks);
     let chain = fit_chain(
         n,
         width,
@@ -826,16 +1102,15 @@ fn merge_from<E: From<Error>>(
         reference,
         &reference_lum,
         options,
-        |i| lum_of(i).map(|(_, _, lum, blocks)| (lum, blocks)),
-        |blocks, onto| {
-            if let (Some(e), Some(b)) = (&mut evidence, &blocks) {
-                e.add(b, onto);
-            }
-        },
+        |i| lum_of(i).map(|(_, _, lum, taken)| (lum, taken)),
+        place,
     )?;
     drop(reference_lum);
+    settle(&mut frames, &gathering, &pending, luma, options)?;
     let placed = chain.dropped.iter().filter(|d| d.is_none()).count();
-    let prior = found(evidence, placed);
+    let gathering = gathering.into_inner();
+    let clipped = gathering.as_ref().is_some_and(Gathering::hearing);
+    let heard = gathering.map(|g| g.finish(placed)).unwrap_or_default();
     if !sharpest {
         step(Step::Placing);
     }
@@ -860,7 +1135,7 @@ fn merge_from<E: From<Error>>(
             of: used,
         });
         let (_, _, frame) = frames.get(report.index)?;
-        blend.add_measured(frame, report.transform, luma, options, prior.as_ref());
+        blend.add_measured(frame, report.transform, luma, options, &heard);
     }
     let levels = blend.sizes.len();
     let (out, coverage) = blend.finish();
@@ -876,6 +1151,7 @@ fn merge_from<E: From<Error>>(
             frames: reports,
             levels,
             coverage,
+            clipped,
         },
     ))
 }
@@ -981,19 +1257,42 @@ impl Blend {
         transform: Transform,
         luma: [f32; 3],
         options: &Options,
-        prior: Option<&prior::Prior>,
+        heard: &Heard,
     ) {
-        let multiplier = prior.map(|p| {
-            let lum = luminance_of(&frame, luma);
-            let (_, blocks) = measure(&lum, self.width, self.height, options, true);
-            p.multiplier(&blocks.unwrap_or_default(), &transform)
+        let (w, h) = (self.width, self.height);
+        // The spill's word only on a frame it can hold: most frames of
+        // most stacks have no clip, and are spared its measuring.
+        let spill = heard.spill.as_ref().filter(|s| {
+            let from = s.held_from();
+            frame
+                .par_chunks(CHANNELS)
+                .any(|px| luma[0] * px[0] + luma[1] * px[1] + luma[2] * px[2] >= from)
         });
+        let (multiplier, damping) = if heard.prior.is_some() || spill.is_some() {
+            let log =
+                register::log_plane(&luminance_of(&frame, luma), options.register.floor_stops);
+            let energy = sharpness::laplacian_energy(&log, w, h);
+            let multiplier = heard
+                .prior
+                .as_ref()
+                .map(|p| p.multiplier(&prior::blocks(&log, &energy, w, h), &transform));
+            // Held under the brightest the placing pass saw, which may
+            // have read the frame clipped where this read rebuilt it.
+            let damping = spill.and_then(|s| {
+                let coarse = spill::coarse(&log, &energy, w, h, Some(s.ceiling()), true);
+                s.multiplier(&coarse, &transform)
+            });
+            (multiplier, damping)
+        } else {
+            (None, None)
+        };
         self.add(
             frame,
             transform,
             luma,
             options,
-            prior.zip(multiplier.as_deref()),
+            heard.prior.as_ref().zip(multiplier.as_deref()),
+            heard.spill.as_ref().zip(damping.as_deref()),
         );
     }
 
@@ -1005,6 +1304,7 @@ impl Blend {
         luma: [f32; 3],
         options: &Options,
         prior: Option<(&prior::Prior, &[f32])>,
+        spill: Option<(&spill::Spill, &[f32])>,
     ) {
         let (width, height) = (self.width, self.height);
         let sizes = &self.sizes;
@@ -1096,6 +1396,11 @@ impl Blend {
                 .take(prior::BANDS)
             {
                 prior.apply(multiplier, level, sizes[k].0, k);
+            }
+        }
+        if let Some((spill, damping)) = spill {
+            for (k, level) in gaussian.iter_mut().enumerate() {
+                spill.apply(damping, level, sizes[k].0, k);
             }
         }
 
@@ -1441,6 +1746,72 @@ pub(crate) fn expand(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The spill gathered late, from the first frame at its clip with
+    /// those before it read again, is the spill gathered from the first
+    /// frame, wherever in the order the clipped frame comes, and so are
+    /// the prior's skips; with no frame at its clip, nothing is heard.
+    #[test]
+    fn the_spill_gathered_late_is_the_spill_gathered_from_the_first() {
+        let scene = halo_bed::Scene::new(halo_bed::Object::Bright, 9);
+        let (w, h) = (scene.width, scene.height);
+        let options = Options::default();
+        let listen = Listen {
+            prior: true,
+            spill: true,
+        };
+        let lums: Vec<Vec<f32>> = scene
+            .frames()
+            .iter()
+            .map(|f| luminance_of(&f.data, WORKING_LUMA))
+            .collect();
+        let gather = |lums: &[Vec<f32>], eager: bool| {
+            let mut g = Gathering::new(w, h, listen);
+            if eager {
+                g.wake();
+            }
+            let mut blocks = Vec::new();
+            for (k, lum) in lums.iter().enumerate() {
+                let (_, taken) = measure(lum, w, h, &options, listen, g.hearing());
+                if taken.clips {
+                    for (j, onto) in g.wake() {
+                        g.again(&coarse_of(&lums[j], w, h, &options), &onto);
+                    }
+                }
+                let only = Listen {
+                    prior: true,
+                    spill: false,
+                };
+                blocks.push(measure(lum, w, h, &options, only, false).1.blocks);
+                g.add(k, taken, &Transform::IDENTITY);
+            }
+            let heard = g.finish(lums.len());
+            let prior = heard.prior.expect("a prior");
+            let multipliers: Vec<Vec<u32>> = blocks
+                .iter()
+                .map(|b| {
+                    let m = prior.multiplier(b.as_deref().expect("blocks"), &Transform::IDENTITY);
+                    m.iter().map(|v| v.to_bits()).collect()
+                })
+                .collect();
+            (heard.spill, multipliers)
+        };
+        let (none, _) = gather(&lums, false);
+        assert!(none.is_none());
+        for late in [0, 4, 8] {
+            // Frame `late` alone clipped, under its disc's level.
+            let mut lums = lums.clone();
+            let top = lums[late].iter().copied().fold(0.0f32, f32::max);
+            for v in &mut lums[late] {
+                *v = v.min(0.7 * top);
+            }
+            let (lazy, lazy_prior) = gather(&lums, false);
+            let (eager, eager_prior) = gather(&lums, true);
+            assert!(lazy.is_some(), "{late}");
+            assert!(lazy == eager, "{late}");
+            assert!(lazy_prior == eager_prior, "{late}");
+        }
+    }
 
     /// A lattice value at `(ix, iy)`, 0 to 1, from the coordinates
     /// alone, so every run sees the same picture.
@@ -2009,22 +2380,32 @@ mod tests {
     fn a_depth_edge_leaves_little_halo() {
         let (width, height) = (400usize, 300);
         let (frames, truth, edge) = depth_edge(width, height, 8.0);
+        // Neither with the spill (`spill`), which takes some of the halo
+        // whatever the pyramid: this is the pyramid's share.
         let flat = Options {
             max_levels: 1,
+            spill: false,
             ..Default::default()
         };
         let (merged, report) = stack(&frames, &flat).expect("a stack with no pyramid");
         assert_eq!(report.used(), 2, "{:#?}", report.frames);
         let without = halo(&merged, &truth, edge);
-        let (merged, report) = stack(&frames, &Options::default()).expect("a stack");
+        let pyramid = Options {
+            spill: false,
+            ..Default::default()
+        };
+        let (merged, report) = stack(&frames, &pyramid).expect("a stack");
         assert_eq!(report.used(), 2, "{:#?}", report.frames);
         let with = halo(&merged, &truth, edge);
+        let (merged, _) = stack(&frames, &Options::default()).expect("a stack");
+        let spilled = halo(&merged, &truth, edge);
         println!(
             "halo beyond the silhouette: {:+.1}% of the step with no pyramid, \
-             {:+.1}% with {} levels",
+             {:+.1}% with {} levels, {:+.1}% with the spill held down too",
             without * 100.0,
             with * 100.0,
-            report.levels
+            report.levels,
+            spilled * 100.0
         );
         assert!(
             without > 0.05,
@@ -2041,6 +2422,12 @@ mod tests {
              pyramid",
             with * 100.0,
             without * 100.0
+        );
+        assert!(
+            spilled.abs() <= with.abs() + 0.002,
+            "the spill held down leaves a halo of {:.1}% of the step, against {:.1}%",
+            spilled * 100.0,
+            with * 100.0
         );
     }
 
@@ -2250,7 +2637,12 @@ mod tests {
         // A frame of another scene: its link fails, and the chain goes
         // on from the last frame that held.
         four[1] = frame_of(width, height, |x, y| texture(x + 913.0, y + 377.0, 0.0));
-        let base = Options::default();
+        // The held merge predates the spill (`spill`), which is off here
+        // so the two can be held to each other.
+        let base = Options {
+            spill: false,
+            ..Options::default()
+        };
         let cases = [
             ("five, middle", &five, base),
             (
@@ -2422,6 +2814,7 @@ mod tests {
         let (again, again_report) = stack_camera_placed(
             3,
             &placed,
+            report.clipped,
             |k| {
                 reads[k] += 1;
                 order.push(k);
@@ -2469,6 +2862,7 @@ mod tests {
         let (again, _) = stack_camera_placed(
             3,
             &placed,
+            report.clipped,
             |k| {
                 reads += 1;
                 Ok::<_, Error>(camera[k].clone())
@@ -2607,6 +3001,63 @@ mod tests {
                     }
                 );
             }
+        }
+    }
+
+    /// Not a check, a measurement of what the spill costs: frames read
+    /// in passes (`stack_camera_from`), each a copy of one held at 24
+    /// megapixels, so the merge's own working set is what grows; with
+    /// `GREYCARD_SPILL=0` the spill is off, and with
+    /// `GREYCARD_SPILL_CLIP=1` every frame has a blown square, so the
+    /// spill is gathered and every frame measured. Run each way in its own
+    /// process for the peak: `GREYCARD_SPILL=1 cargo test --release -p
+    /// greycard-core -- --ignored --nocapture timing_of_the_spill`.
+    #[test]
+    #[ignore = "a timing, not a test"]
+    fn timing_of_the_spill() {
+        let said = std::env::var("GREYCARD_SPILL").unwrap_or_default();
+        let spill = said != "0";
+        let blown = std::env::var("GREYCARD_SPILL_CLIP").is_ok_and(|v| v == "1");
+        let peak_mb = || {
+            std::fs::read_to_string("/proc/self/status")
+                .ok()
+                .and_then(|s| {
+                    s.lines()
+                        .find(|l| l.starts_with("VmHWM:"))
+                        .and_then(|l| l.split_whitespace().nth(1))
+                        .and_then(|k| k.parse::<f64>().ok())
+                })
+                .map_or(f64::NAN, |kb| kb / 1024.0)
+        };
+        let options = Options {
+            spill,
+            ..Options::default()
+        };
+        for n in [5usize, 10] {
+            let (frames, _) = depth_stack(6000, 4000, n);
+            let camera: Vec<CameraImage> = frames
+                .into_iter()
+                .map(|mut f| {
+                    if blown {
+                        for y in 1800..2000 {
+                            let row = &mut f.data[(y * 6000 + 2900) * 3..(y * 6000 + 3100) * 3];
+                            row.fill(4.0);
+                        }
+                    }
+                    CameraImage::from_data(f.width, f.height, f.data).unwrap()
+                })
+                .collect();
+            let held = peak_mb();
+            let start = std::time::Instant::now();
+            let _ = stack_camera_from(n, |k| Ok::<_, Error>(camera[k].clone()), |_| {}, &options)
+                .expect("a stack");
+            println!(
+                "spill {said:?}, blown {blown}: {n} frames of 6000x4000 in passes, {:.2} s; peak {:.0} MB, \
+                 {:.0} MB over the frames held",
+                start.elapsed().as_secs_f64(),
+                peak_mb(),
+                peak_mb() - held
+            );
         }
     }
 }

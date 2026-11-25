@@ -810,10 +810,14 @@ brackets and the panorama to shoot for testing are in
 
 - [ ] Next: the re-merge's rename over an open file tried on Windows
       with §558's retry in `promote` (§541, §543)
-- [ ] A blown specular in a focus stack: the defocused frames' wider
-      disc edges are taken for detail, by the weights and by the
-      prior, ringing it with contours and a ground half as bright
-      (§743)
+- [ ] A focus stack's spill where one or two channels clip, and on
+      X-Trans: the hold wants all three at once, about a fifth of a
+      blown area, and fires on no X-Trans frame; tell the clip a
+      channel at a time (§747)
+- [ ] A focus stack's glow round a bright unclipped object, and the
+      black middle of a dark object on a bright ground: the wider
+      hold harmed crossing hairs and was taken out; its patch and
+      scenes are kept (§747)
 - [ ] A focus stack's highlights tried on real frames at one
       exposure with a blown area (§743)
 - [ ] Clarity on a merge with headroom: its shadow fade reads the
