@@ -29,14 +29,6 @@ the reasoning lives in `docs/notes.md`.
       another placement it removes 0.13's copy. Ratings and turns
       survived every run (2026-11-22). Decide before the cut whether
       such a file should be one 0.12 refuses
-- [ ] An export of a frame nobody developed records a state at
-      schema 10 (§734), after which 0.12 can't read its rating or
-      turn; any 0.13 save does the same to an edit 0.12 made. Keep
-      the export's record on the line without a state, or accept it;
-      before the cut
-- [ ] The library index's step from 17 to 18 changes only data, yet
-      locks 0.12 out (issue 199). Keep `user_version` at 17 with a
-      marker row, or accept it; before the cut
 - [ ] A sidecar of many tiny states costs memory and time past its
       size: 100,000 `{}` history entries (300 KB) take 644 MB and 17 s
       over three reads, since no read caps history. Cap at read, charge

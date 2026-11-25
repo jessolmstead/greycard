@@ -115,6 +115,7 @@ design note behind it.
   ([§734](https://github.com/jessolmstead/greycard/blob/master/docs/notes/734-schema-10-as-built.md)).
 - One holding only a rating, flag, label, or turn they still read,
   and save again in their own form.
+- The library index is newer too: 0.12 can't use one that 0.13 has opened, and leaves it alone (issue 199).
 - A frame only rated, flagged, or turned no longer counts as edited,
   and its sidecar holds no edit
   ([§734](https://github.com/jessolmstead/greycard/blob/master/docs/notes/734-schema-10-as-built.md)).
