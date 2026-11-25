@@ -1,0 +1,90 @@
+// The full list of Add to collection destinations, searchable and
+// scrolled inside the window.
+
+import { LineEdit } from "std-widgets.slint";
+import { Theme } from "../theme.slint";
+import { PanelButton, ScrollPane } from "../controls.slint";
+import { CollectionChoice } from "../structs.slint";
+
+export component CollectionPickerSheet inherits Rectangle {
+    in-out property <bool> open;
+    in property <[CollectionChoice]> choices;
+    out property <string> query: search.text;
+    callback picked(int);
+
+    background: #000000a0;
+    TouchArea { clicked => { root.open = false; } }
+    Rectangle {
+        width: min(480px, root.width - 2 * Theme.space-5);
+        height: min(sheet.preferred-height, root.height - 2 * Theme.space-5);
+        background: Theme.surface;
+        border-radius: Theme.radius-lg;
+        border-width: 1px;
+        border-color: Theme.border;
+        drop-shadow-blur: 32px;
+        drop-shadow-color: #00000099;
+        TouchArea { }
+        FocusScope {
+            focus-on-tab-navigation: false;
+            key-pressed(e) => {
+                if (e.text == Key.Escape) {
+                    root.open = false;
+                    return accept;
+                }
+                return reject;
+            }
+            sheet := VerticalLayout {
+                padding: Theme.space-5;
+                spacing: Theme.space-3;
+                Text {
+                    text: @tr("Add to collection");
+                    font-size: Theme.font-lg;
+                    font-weight: Theme.weight-medium;
+                    color: Theme.text;
+                    wrap: word-wrap;
+                }
+                search := LineEdit {
+                    accessible-label: @tr("Search collections");
+                    placeholder-text: @tr("Search collections");
+                    init => { self.focus(); }
+                    edited(text) => { scroll.content-y = 0px; }
+                    accepted(text) => {
+                        if (root.choices.length == 1) { root.picked(root.choices[0].index); }
+                    }
+                }
+                scroll := ScrollPane {
+                    preferred-height: min(360px, list.preferred-height);
+                    content-height: list.preferred-height;
+                    content-width: self.visible-width;
+                    list := VerticalLayout {
+                        width: scroll.visible-width;
+                        alignment: start;
+                        padding-right: scroll.band-width;
+                        spacing: 2px;
+                        for choice in root.choices: PanelButton {
+                            text: choice.name;
+                            clicked => { root.picked(choice.index); }
+                        }
+                        if root.choices.length == 0: Text {
+                            text: @tr("No matching collections.");
+                            color: Theme.text-secondary;
+                            font-size: Theme.font-sm;
+                        }
+                    }
+                }
+                HorizontalLayout {
+                    spacing: Theme.space-2;
+                    alignment: end;
+                    PanelButton {
+                        text: @tr("Cancel");
+                        clicked => { root.open = false; }
+                    }
+                    PanelButton {
+                        text: @tr("New collection...");
+                        clicked => { root.picked(-1); }
+                    }
+                }
+            }
+        }
+    }
+}

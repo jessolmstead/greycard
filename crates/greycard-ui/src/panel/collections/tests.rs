@@ -140,6 +140,137 @@ fn hints(s: &Setup, id: &str) -> Vec<String> {
         .collect()
 }
 
+fn open_collection_submenu(app: &App) {
+    use crate::testing::{click_with, keyed, settle};
+    use slint::platform::PointerEventButton;
+
+    settle(app);
+    let cell = keyed(app, "GridSheet::cell", 0)
+        .and_then(|c| c.query_descendants().match_id("GridSheet::ct").find_first())
+        .unwrap();
+    let (at, size) = (cell.absolute_position(), cell.size());
+    click_with(
+        app,
+        PointerEventButton::Right,
+        at.x + size.width / 2.0,
+        at.y + size.height / 2.0,
+    );
+    collection_menu_entry(app, "Add to collection")
+        .unwrap()
+        .mock_single_click(PointerEventButton::Left);
+}
+
+fn numbered_collections(s: &Setup, count: usize) -> String {
+    let mut st = s.state.borrow_mut();
+    st.views.collections.list = (1..=count)
+        .map(|i| Collection::new(&format!("Collection {i:03}")))
+        .collect();
+    show(&st, &s.app);
+    st.views.collections.list.last().unwrap().id.clone()
+}
+
+fn collection_menu_entry(app: &App, msgid: &str) -> Option<i_slint_backend_testing::ElementHandle> {
+    let title = crate::i18n::text(msgid);
+    crate::testing::menu_entries(app)
+        .into_iter()
+        .find(|e| e.accessible_label().as_deref() == Some(title.as_str()))
+}
+
+#[test]
+fn ten_collections_fit_in_the_submenu_and_a_pick_moves_to_the_front() {
+    use crate::testing::settle;
+    use slint::platform::PointerEventButton;
+
+    let s = setup("short-picker");
+    let app = &s.app;
+    let last = numbered_collections(&s, 10);
+    let settings = s.dir.join("settings.json");
+    let earlier = {
+        let mut st = s.state.borrow_mut();
+        st.window.settings_file = Some(settings.clone());
+        st.views.collections.list[3].id.clone()
+    };
+    // Another window used a collection after this window opened.
+    crate::settings::Settings::change_at(&settings, |s| {
+        s.recent_collections.push(earlier.clone());
+    });
+    open_collection_submenu(app);
+    assert!(collection_menu_entry(app, "All collections...").is_none());
+    assert!(collection_menu_entry(app, "New collection...").is_some());
+    collection_menu_entry(app, "Collection 010")
+        .unwrap()
+        .mock_single_click(PointerEventButton::Left);
+    settle(app);
+    assert!(!app.invoke_sheet_open());
+    assert_eq!(hints(&s, &last), ["selects/x.tif"]);
+    let order: Vec<_> = app
+        .get_collection_quick()
+        .iter()
+        .take(2)
+        .map(|choice| choice.index)
+        .collect();
+    assert_eq!(order, [9, 3]);
+    assert_eq!(
+        crate::settings::Settings::load_from(&settings).recent_collections,
+        [last, earlier]
+    );
+    teardown(s);
+}
+
+#[test]
+fn the_frame_menu_can_add_to_the_last_of_392_collections() {
+    use crate::testing::{press, settle, type_text};
+    use i_slint_backend_testing::ElementHandle;
+    use slint::platform::{Key, PointerEventButton, WindowEvent};
+
+    let s = setup("long-picker");
+    let app = &s.app;
+    let last = numbered_collections(&s, 392);
+    app.window()
+        .dispatch_event(WindowEvent::ScaleFactorChanged { scale_factor: 1.5 });
+    open_collection_submenu(app);
+    assert_eq!(app.get_collection_quick().row_count(), 10);
+    assert!(collection_menu_entry(app, "Collection 011").is_none());
+    collection_menu_entry(app, "All collections...")
+        .unwrap()
+        .mock_single_click(PointerEventButton::Left);
+    settle(app);
+    assert!(app.invoke_sheet_open());
+    let pane = ElementHandle::find_by_element_id(app, "CollectionPickerSheet::scroll")
+        .next()
+        .unwrap();
+    let (at, size) = (pane.absolute_position(), pane.size());
+    assert!(size.height <= 360.0);
+    assert!(
+        ElementHandle::find_by_accessible_label(app, "Collection 392")
+            .next()
+            .is_none()
+    );
+    app.window().dispatch_event(WindowEvent::PointerScrolled {
+        position: slint::LogicalPosition::new(at.x + 40.0, at.y + 40.0),
+        delta_x: 0.0,
+        delta_y: -30_000.0,
+    });
+    settle(app);
+    assert!(
+        ElementHandle::find_by_accessible_label(app, "Collection 392")
+            .next()
+            .is_some()
+    );
+    type_text(app, "COLLECTION 392");
+    settle(app);
+    assert!(
+        ElementHandle::find_by_accessible_label(app, "Collection 391")
+            .next()
+            .is_none()
+    );
+    press(app, Key::Return);
+    settle(app);
+    assert!(!app.invoke_sheet_open());
+    assert_eq!(hints(&s, &last), ["selects/x.tif"]);
+    teardown(s);
+}
+
 /// The frame menu makes a collection of the set and the sheet names
 /// it; every copy of a member is marked; the sidebar's row opens it
 /// as the grid's list, each picture once, in its own order; B adds

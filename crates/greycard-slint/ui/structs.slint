@@ -379,6 +379,12 @@ export struct CollectionChip {
     order: string,
 }
 
+/// A collection's name and its index in the full list.
+export struct CollectionChoice {
+    name: string,
+    index: int,
+}
+
 /// One of the library's roots, as the grid's left pane lists it: the
 /// folder's name, its path (what a press hands back), how many files
 /// the index holds under it, and whether the browser shows it.

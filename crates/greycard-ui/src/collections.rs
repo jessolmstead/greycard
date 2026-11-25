@@ -70,6 +70,8 @@ pub struct Store {
     /// The collection B adds to outside a collection's own view: the
     /// last one added to from the menu or made.
     pub target: Option<String>,
+    /// The most recent destinations for Add to collection.
+    pub recent: Vec<String>,
     /// The index's rows whose hash is a member of any collection, each
     /// with the versions of it that are: a cell is marked when its own
     /// version is among its row's, so a version in a collection marks
