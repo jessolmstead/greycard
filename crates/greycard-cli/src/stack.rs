@@ -55,11 +55,12 @@ fn stack_format(path: &std::path::Path) -> Result<StackFormat> {
 /// Merge a focus stack and write it beside the sources.
 ///
 /// The frames go through the engine's focus stack ([`focus::frames`]):
-/// the short develop `register` uses, stopped at the demosaic, which
-/// leaves camera-space samples with no white balance and no matrix on
-/// them. That is the space the merge belongs in and the space a linear
-/// DNG stores, so the result is a file every editor treats as it would
-/// the originals.
+/// placed from the short develop `register` uses, and blended as the
+/// editor develops them, stopped at the demosaic, which leaves
+/// camera-space samples with no white balance and no matrix on them.
+/// That is the space the merge belongs in and the space a linear DNG
+/// stores, so the result is a file every editor treats as it would the
+/// originals.
 ///
 /// A DNG is written by the engine's [`focus::stack`], as the window
 /// writes it: under a hidden name and renamed at the end, and never
@@ -105,15 +106,28 @@ pub(crate) fn stack_files(
         ..Default::default()
     };
     let quiet = |_: greycard_engine::merge::Step| {};
+    let edit = greycard_edit::Edit::default();
+    let mut models = greycard_engine::walk::NoModels;
     let out_path = match format {
         StackFormat::Dng => {
-            let r = focus::stack(files, &options, &quiet)?;
+            let r = focus::stack(files, &edit, &options, &mut models, &quiet)?;
             let second = |n: &str| r.seconds.iter().find(|(k, _)| *k == n).map_or(0.0, |s| s.1);
-            print_report(&r.stack, &r.names, second("develop"), second("merge"));
+            print_report(
+                &r.stack,
+                &r.names,
+                second("place") + second("walk"),
+                second("merge"),
+            );
+            for w in &r.warnings {
+                tracing::warn!("{w}");
+            }
             r.out
         }
         StackFormat::Tiff => {
-            let stacked = focus::frames(files, &options, &quiet)?;
+            let stacked = focus::frames(files, &edit, &options, &mut models, &quiet)?;
+            for w in &stacked.warnings {
+                tracing::warn!("{w}");
+            }
             print_report(
                 &stacked.report,
                 &stacked.names,
@@ -467,7 +481,12 @@ mod tests {
             report: report.clone(),
             names: vec!["a".into(), "b".into()],
             developing: 0.0,
+            walking: 0.0,
             merging: 0.0,
+            noise_profile: [1e-5, 1e-8],
+            tag: Default::default(),
+            warnings: Vec::new(),
+            learned_skipped: None,
         };
 
         // The DNG: written, decoded again, developed, and its means

@@ -49,8 +49,8 @@ pub(crate) enum MergeKind {
 
 #[derive(Args)]
 pub(crate) struct AgainArgs {
-    /// The merged file, a .dng `merge hdr` or `merge pano` wrote, with
-    /// its frames beside it
+    /// The merged file, a .dng `merge hdr`, `merge pano`, or `stack`
+    /// wrote, with its frames beside it
     file: PathBuf,
     /// The learned denoiser on each frame: fast, balanced, best, or
     /// none; without it, the recipe's
@@ -182,7 +182,32 @@ fn again(args: AgainArgs) -> Result<u8> {
     Ok(match again {
         merge::Again::Hdr(report) => said_hdr(&report),
         merge::Again::Pano(report) => said_pano(&report),
+        merge::Again::Stack(report) => said_stack(&report),
     })
+}
+
+/// A focus stack made again, its report on the standard output, to its
+/// exit code.
+fn said_stack(report: &merge::focus::Report) -> u8 {
+    println!(
+        "frames        {}, {} used, onto {}",
+        report.names.len(),
+        report.stack.used(),
+        report.names[report.stack.reference]
+    );
+    println!(
+        "noise         S {:.3e}, O {:.3e}",
+        report.noise_profile[0], report.noise_profile[1]
+    );
+    for (name, s) in &report.seconds {
+        println!("time          {name}: {s:.2} s");
+    }
+    let notes = notes(&report.warnings, report.learned_skipped);
+    for w in &notes {
+        println!("note          {w}");
+    }
+    println!("wrote         {}", report.out.display());
+    if notes.is_empty() { 0 } else { 2 }
 }
 
 /// A panorama's report on the standard output, to its exit code.

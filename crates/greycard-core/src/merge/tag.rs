@@ -19,7 +19,7 @@ use crate::register::{Homography, Transform};
 /// What a merge of ours says of itself.
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct Tag {
-    /// The kind of merge: `hdr` or `pano`.
+    /// The kind of merge: `hdr`, `pano`, or `stack`.
     pub kind: String,
     /// The frames' file names, in the order given.
     pub frames: Vec<String>,
@@ -100,6 +100,25 @@ pub enum Geometry {
     Bracket(Vec<Registration>),
     /// A panorama's.
     Pano(Box<Laid>),
+    /// A focus stack's.
+    Stack(Stacked),
+}
+
+/// A focus stack as merged: the core's options it ran with, and where
+/// each frame went.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Stacked {
+    /// How far each band was taken from the frame with the most to say
+    /// in it (the core's `stack::Options::selectivity`).
+    pub selectivity: f32,
+    /// The residual a link was believed under.
+    pub max_residual: f32,
+    /// Each frame's transform onto the reference, in the frames' order;
+    /// none for a frame the merge left out.
+    pub placed: Vec<Option<Transform>>,
+    /// Whether the samples were stored uncompressed rather than as
+    /// lossless JPEG.
+    pub uncompressed: bool,
 }
 
 /// One frame of a bracket onto its reference.
@@ -413,6 +432,19 @@ impl Recipe {
                 let r = &laid.crop;
                 fact("crop", format!("{} {} {} {}", r.x, r.y, r.width, r.height));
             }
+            Geometry::Stack(stacked) => {
+                fact("selectivity", stacked.selectivity.to_string());
+                fact("residual", stacked.max_residual.to_string());
+                if stacked.uncompressed {
+                    fact("samples", "uncompressed".into());
+                }
+                for (k, t) in stacked.placed.iter().enumerate() {
+                    match t {
+                        Some(t) => fact("shift", format!("{k} {}", join(&t.m))),
+                        None => fact("dropped", k.to_string()),
+                    }
+                }
+            }
         }
     }
 }
@@ -442,6 +474,10 @@ struct Read {
     gains: Vec<(usize, [f64; 3])>,
     canvas: Option<Canvas>,
     crop: Option<Rect>,
+    selectivity: Option<f32>,
+    residual: Option<f32>,
+    dropped: Vec<usize>,
+    uncompressed: bool,
 }
 
 /// One value a frame, in the frames' order: none unless each of the
@@ -514,6 +550,17 @@ impl Read {
                     .is_some(),
                     _ => false,
                 }
+            }
+            "selectivity" => numbers::<1, f32>(value, ' ')
+                .map(|[s]| self.selectivity = Some(s))
+                .is_some(),
+            "residual" => numbers::<1, f32>(value, ' ')
+                .map(|[r]| self.residual = Some(r))
+                .is_some(),
+            "dropped" => value.parse().map(|k| self.dropped.push(k)).is_ok(),
+            "samples" => {
+                self.uncompressed = value == "uncompressed";
+                value == "uncompressed"
             }
             "crop" => numbers::<4, usize>(value, ' ')
                 .map(|[x, y, width, height]| {
@@ -599,6 +646,33 @@ impl Read {
                     canvas: self.canvas.ok_or_else(|| one("canvas"))?,
                     crop: self.crop.ok_or_else(|| one("crop"))?,
                 }))
+            }
+            "stack" => {
+                // Each frame placed or left out, once.
+                let mut placed: Vec<Option<Option<Transform>>> = vec![None; n];
+                let mut put = |k: usize, t: Option<Transform>, key: &str| match placed.get_mut(k) {
+                    Some(slot @ None) => {
+                        *slot = Some(t);
+                        Ok(())
+                    }
+                    Some(Some(_)) => Err(format!("{key}={k} a second time")),
+                    None => Err(format!("{key}={k} past the frames")),
+                };
+                for (k, t) in self.shifts {
+                    put(k, Some(t), "shift")?;
+                }
+                for k in self.dropped {
+                    put(k, None, "dropped")?;
+                }
+                Geometry::Stack(Stacked {
+                    selectivity: self.selectivity.ok_or_else(|| one("selectivity"))?,
+                    max_residual: self.residual.ok_or_else(|| one("residual"))?,
+                    placed: placed
+                        .into_iter()
+                        .collect::<Option<Vec<_>>>()
+                        .ok_or_else(|| every("shift= or dropped"))?,
+                    uncompressed: self.uncompressed,
+                })
             }
             k => return Err(format!("merge={k}")),
         };
@@ -948,6 +1022,59 @@ mod tests {
         let no_ca = full.replace("ca=once\n", "");
         let back = Tag::parse(no_ca.as_bytes()).unwrap();
         assert_eq!(back.unread.as_deref(), Some("no ca="));
+    }
+
+    /// A focus stack's recipe reads back to the bit: its options, each
+    /// frame's transform, and the frame it left out. One with a frame
+    /// neither placed nor left out, or with no selectivity, reads
+    /// without it.
+    #[test]
+    fn a_stacks_recipe_round_trips() {
+        let tag = Tag {
+            kind: "stack".into(),
+            frames: vec!["a.CR3".into(), "b.CR3".into(), "c.CR3".into()],
+            reference: 1,
+            denoised: false,
+            headroom_stops: 0.75,
+            lens_corrected: false,
+            heads: vec![Some("0f".repeat(32)), Some("1e".repeat(32)), None],
+            wholes: vec![None, None, None],
+            unread: None,
+            recipe: Some(Recipe {
+                ca: "once".into(),
+                denoise: Some("fast".into()),
+                noise: None,
+                deghost: None,
+                kernel: None,
+                geometry: Geometry::Stack(Stacked {
+                    selectivity: 2.0,
+                    max_residual: 0.6,
+                    placed: vec![
+                        Some(Transform {
+                            m: [1.003_1, -0.000_2, -9.25, 0.000_2, 1.003_1, 1.0 / 3.0],
+                        }),
+                        Some(Transform::IDENTITY),
+                        None,
+                    ],
+                    uncompressed: true,
+                }),
+            }),
+        };
+        assert_eq!(Tag::parse(&tag.to_bytes()), Some(tag.clone()));
+        let full = String::from_utf8(tag.to_bytes()).unwrap();
+        let short = full.replace("dropped=2\n", "");
+        let back = Tag::parse(short.as_bytes()).unwrap();
+        assert_eq!(back.recipe, None);
+        assert_eq!(
+            back.unread.as_deref(),
+            Some("not one shift= or dropped= a frame")
+        );
+        let twice = full.replace("dropped=2\n", "dropped=2\ndropped=2\n");
+        let back = Tag::parse(twice.as_bytes()).unwrap();
+        assert_eq!(back.unread.as_deref(), Some("dropped=2 a second time"));
+        let bare = full.replace("selectivity=2\n", "");
+        let back = Tag::parse(bare.as_bytes()).unwrap();
+        assert_eq!(back.unread.as_deref(), Some("no selectivity="));
     }
 
     /// A rotation kept as its quaternion comes back within rounding,

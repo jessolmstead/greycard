@@ -44,6 +44,13 @@ design note behind it.
 
 - Pentax `.PEF` raws open in the editor, the library, and the import, each paired with
   its camera JPEG (issue 197).
+- A focus stack develops each frame as the editor does, chromatic
+  aberration corrected: finer texture, no color fringes, about 1.8
+  times the time
+  ([§739](https://github.com/jessolmstead/greycard/blob/master/docs/notes/739-the-focus-stack-on-the-full-develop.md)).
+- A focus stack can be made again with its frames denoised, from the
+  Noise section or `greycard merge again --denoise`, and its file
+  carries a noise profile.
 - Every edit's saturated and bright colors now reach the export's
   limits at their hue, where they were clipped per channel
   ([§735](https://github.com/jessolmstead/greycard/blob/master/docs/notes/735-the-gamut-op-at-the-output.md)).

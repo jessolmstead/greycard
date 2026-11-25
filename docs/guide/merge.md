@@ -99,8 +99,10 @@ into one frame that is sharp everywhere.
   `IMG_0001 stack.dng`, numbered when the name is taken, and on top of
   a stack with its frames, as a merge to HDR is. It opens with the
   middle frame's edit, its exposure kept, less the learned denoiser.
-- A focus stack keeps no recipe, so it is not made again from the
-  Noise section: merge its frames again instead.
+- Each frame is developed as the editor develops it, with its
+  chromatic aberration corrected, before the frames are merged.
+- A focus stack keeps its recipe, as a merge to HDR does, so it can be
+  made again from the Noise section with the frames denoised.
 
 From the command line: `greycard stack IMG_0001.CR3 IMG_0002.CR3
 IMG_0003.CR3`, with `--reference` to pick the frame the others are put

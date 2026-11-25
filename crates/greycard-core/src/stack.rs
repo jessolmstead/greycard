@@ -455,6 +455,80 @@ pub fn stack_camera_from<E: From<Error>>(
     Ok((CameraImage::from_data(width, height, data)?, report))
 }
 
+/// [`stack_camera_from`] with every frame's place given rather than
+/// found: `placed[k]` is frame `k`'s transform onto frame `reference`,
+/// none for a frame left out. Nothing is scored or fitted; each frame
+/// the merge uses is read once and blended where it is put, so the
+/// picture is the one [`stack_camera_from`] made, to the bit, when the
+/// places are the ones it found. For a stack made again from what it
+/// kept. The report's scores and fits are left empty; a frame left out
+/// is [`Dropped::NoFit`].
+pub fn stack_camera_placed<E: From<Error>>(
+    reference: usize,
+    placed: &[Option<Transform>],
+    mut read: impl FnMut(usize) -> std::result::Result<CameraImage, E>,
+    mut step: impl FnMut(Step),
+    options: &Options,
+) -> std::result::Result<(CameraImage, StackReport), E> {
+    let n = placed.len();
+    if placed.get(reference).is_none_or(Option::is_none) {
+        return Err(Error::Unsupported(format!(
+            "frame {reference} is no placed frame of a stack of {n}"
+        ))
+        .into());
+    }
+    let mut read = |k: usize| read(k).map(|f| (f.width, f.height, f.data));
+    let mut frames = Frames {
+        read: &mut read,
+        first: None,
+    };
+    let used: Vec<(usize, Transform)> = placed
+        .iter()
+        .enumerate()
+        .filter_map(|(k, t)| Some((k, (*t)?)))
+        .collect();
+    let mut blend: Option<Blend> = None;
+    for (i, &(k, transform)) in used.iter().enumerate() {
+        step(Step::Blending {
+            index: i + 1,
+            of: used.len(),
+        });
+        let (w, h, frame) = frames.get(k)?;
+        blend.get_or_insert_with(|| Blend::new(w, h, options)).add(
+            frame,
+            transform,
+            CAMERA_LUMA,
+            options,
+        );
+    }
+    let blend = blend.expect("the reference is placed");
+    let (width, height, levels) = (blend.width, blend.height, blend.sizes.len());
+    let (out, coverage) = blend.finish();
+    let report = StackReport {
+        width,
+        height,
+        reference,
+        frames: placed
+            .iter()
+            .enumerate()
+            .map(|(index, t)| FrameReport {
+                index,
+                reference: index == reference,
+                sharpness: 0.0,
+                against: None,
+                fit: None,
+                transform: t.unwrap_or(Transform::IDENTITY),
+                dropped: t
+                    .is_none()
+                    .then(|| Dropped::NoFit("left out when it was first stacked".into())),
+            })
+            .collect(),
+        levels,
+        coverage,
+    };
+    Ok((CameraImage::from_data(width, height, out)?, report))
+}
+
 /// The working space's luminance weights, as
 /// [`crate::register::luminance`] has them.
 const WORKING_LUMA: [f32; 3] = [0.2627, 0.6780, 0.0593];

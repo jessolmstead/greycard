@@ -1061,12 +1061,13 @@ pub struct Overrides {
     pub out: Option<PathBuf>,
 }
 
-/// What a merge made again did: the bracket's report, or the
-/// panorama's.
+/// What a merge made again did: the bracket's report, the
+/// panorama's, or the focus stack's.
 #[derive(Debug, Clone)]
 pub enum Again {
     Hdr(Report),
     Pano(Box<pano::Report>),
+    Stack(Box<focus::Report>),
 }
 
 /// What [`again`] says of a file written before its recipe was kept.
@@ -1173,9 +1174,11 @@ pub fn can_denoise_again(file: &Path, tag: &merge::Tag) -> bool {
 /// by its head's hash, and merged with the recipe's options and its
 /// geometry, which is not fitted again: a bracket's exposures and
 /// moves, a panorama's turns, lens, gains, canvas, and crop. So the
-/// frames land where they did, to the pixel. The new file is written
-/// as a merge's is, under the hidden folder that holds the name, and
-/// renamed over the old one at the end; nothing else of it changes.
+/// frames land where they did, to the pixel; a focus stack's are
+/// blended where its recipe put them, and its samples stored as they
+/// were. The new file is written as a merge's is, under the hidden
+/// folder that holds the name, and renamed over the old one at the end;
+/// nothing else of it changes.
 /// `edit` is what the frames are walked under (their demosaic and
 /// CA), as the merge's caller gave it.
 pub fn again(
@@ -1277,6 +1280,25 @@ pub fn again(
             progress,
         )
         .map(|r| Again::Pano(Box::new(r))),
+        Geometry::Stack(stacked) => focus::stack(
+            &frames,
+            edit,
+            &focus::Options {
+                reference: greycard_core::stack::Reference::Index(tag.reference),
+                selectivity: stacked.selectivity,
+                max_residual: stacked.max_residual,
+                out: Some(out.clone()),
+                on_exists,
+                denoiser,
+                ca,
+                uncompressed: stacked.uncompressed,
+                placed: Some(stacked.placed),
+                ..focus::Options::default()
+            },
+            models,
+            progress,
+        )
+        .map(|r| Again::Stack(Box::new(r))),
     }
 }
 

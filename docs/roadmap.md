@@ -826,12 +826,11 @@ brackets and the panorama to shoot for testing are in
 
 - [ ] Next: the re-merge's rename over an open file tried on Windows
       with §558's retry in `promote` (§541, §543)
-- [ ] The focus stack's frames through the walk, so a stack can be
-      denoised per frame and merged again like a bracket (§573);
-      changes every stack the command line writes, so a decision of
-      its own
-- [ ] A NoiseProfile on a focus stack's DNG, as the HDR merge writes
-      one (§573)
+- [ ] A focus stack's reconstructed highlights: clipped until the
+      capture sharpen reads a file with headroom at the scene's
+      levels (§739)
+- [ ] A focus stack of X-Trans frames tested: the synthetic DNG
+      writer writes Bayer only (§739)
 - [ ] The focus stack's available-memory readers run on a Mac and on
       Windows: compile-checked only (§709)
 - [ ] A focus stack's soft, low-contrast areas: where no frame is
@@ -861,9 +860,6 @@ brackets and the panorama to shoot for testing are in
       ledger's seam where its hard rejection meets the soft one at the
       reference's clip edge; the budget's row boundary on a mover; the
       4σ test against the demosaic's correlated chroma noise
-- [ ] A focus stack keeps a recipe as a bracket and a panorama do, so
-      `merge again` remakes it and the Noise row's re-merge reaches it
-      (found on the first real hand-stepped stack, 2026-11-08)
 - [ ] A bracket finder: a burst whose EXIF exposures step marked as a
       bracket, so the merge can be asked of a whole card (§523)
 - [ ] A Compress slider in the Light section: the guide plane of §85

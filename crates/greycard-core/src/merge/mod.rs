@@ -36,7 +36,7 @@ pub mod seam;
 mod tag;
 
 pub use ghost::{Ghosts, Judge};
-pub use tag::{Geometry, Laid, Placed, Recipe, Registration, Tag};
+pub use tag::{Geometry, Laid, Placed, Recipe, Registration, Stacked, Tag};
 
 use rayon::prelude::*;
 

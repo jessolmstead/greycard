@@ -773,13 +773,28 @@ struct Rig {
 }
 
 fn rig(name: &str) -> Rig {
+    rig_of(name, Kind::Hdr)
+}
+
+/// [`rig`] of the merge `kind`: a bracket, or three frames of one
+/// exposure stacked for focus.
+fn rig_of(name: &str, kind: Kind) -> Rig {
     let dir = crate::testing::scratch_dir(name);
     let root = dir.join("photos");
     let shoot = root.join("shoot");
     std::fs::create_dir_all(&shoot).unwrap();
     let (w, h) = (192, 128);
-    let gains = [1.0 / 3.8, 1.0, 3.8];
-    let shutters = [(1, 400), (1, 100), (1, 25)];
+    let focus = kind == Kind::Focus;
+    let gains = if focus {
+        [0.25; 3]
+    } else {
+        [1.0 / 3.8, 1.0, 3.8]
+    };
+    let shutters = if focus {
+        [(1, 100); 3]
+    } else {
+        [(1, 400), (1, 100), (1, 25)]
+    };
     let files: Vec<PathBuf> = (0..3)
         .map(|k| {
             let p = shoot.join(format!("IMG_{k}.dng"));
@@ -836,10 +851,16 @@ fn rig(name: &str) -> Rig {
     let row = crate::panel::browser::row_of(&state.borrow(), cells[0]).unwrap() as i32;
     app.invoke_select(row);
     state.borrow_mut().views.picked = cells;
-    app.invoke_merge_hdr();
+    let name = if focus {
+        app.invoke_merge_focus();
+        "IMG_0 stack.dng"
+    } else {
+        app.invoke_merge_hdr();
+        "IMG_0-HDR.dng"
+    };
     app.set_grid_open(false);
-    let out = shoot.join("IMG_0-HDR.dng");
-    assert_eq!(app.get_status(), "merged 3 frames into IMG_0-HDR.dng");
+    let out = shoot.join(name);
+    assert_eq!(app.get_status(), format!("merged 3 frames into {name}"));
     writer.index_tree(&root, &mut |_| {}).unwrap();
     open_view(&state, &app, &worker, View::Roots(None));
     land_sent(&state, &app, &worker);
@@ -1097,6 +1118,42 @@ fn the_row_makes_the_merge_again_and_the_picture_reloads() {
     assert!(!r.app.get_merge_running());
     assert_eq!(std::fs::read(&r.out).unwrap(), before);
     greycard_core::testing::rename_retry(&aside, &r.files[0]);
+    r.done();
+}
+
+/// A focus stack keeps its recipe as a bracket does: the Noise
+/// section's row is offered on it, and pressed, makes it again over
+/// its file with its frames denoised (the network the plain
+/// demosaic), its frames where they were.
+#[test]
+fn the_row_makes_a_focus_stack_again() {
+    let r = rig_of("merge-again-focus", Kind::Focus);
+    let first = greycard_core::decode::merge_tag_path(&r.out)
+        .unwrap()
+        .expect("our tag");
+    assert_eq!(first.kind, "stack");
+    r.open(&r.out);
+    assert!(r.app.get_merge_again_shown());
+    assert_eq!(r.app.get_merge_again_tier(), "off", "the recipe ran none");
+    r.app.set_merge_again_tier("balanced".into());
+    r.app.invoke_merge_again();
+    assert_eq!(r.app.get_status(), "merged 3 frames into IMG_0 stack.dng");
+    assert!(!r.app.get_merge_running());
+    let made = greycard_core::decode::merge_tag_path(&r.out)
+        .unwrap()
+        .expect("our tag");
+    assert!(made.denoised);
+    let recipe = made.recipe.expect("a recipe");
+    assert_eq!(recipe.denoise.as_deref(), Some("balanced"));
+    assert_eq!(Some(recipe.geometry), first.recipe.map(|r| r.geometry));
+    let hidden: Vec<String> = std::fs::read_dir(&r.shoot)
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .map(|e| e.file_name().to_string_lossy().into_owned())
+        .filter(|n| n.starts_with('.') || n.contains("stack-"))
+        .collect();
+    assert!(hidden.is_empty(), "{hidden:?}");
+    r.opened();
     r.done();
 }
 

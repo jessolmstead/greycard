@@ -408,10 +408,23 @@ impl Merge {
             let (out, headroom_stops, seconds, warnings, merged_edit, learned_skipped) =
                 match self.kind {
                     Kind::Focus => {
-                        // The stack finds its own reference: its edit is
-                        // taken after.
-                        let r = focus::stack(&self.files, &focus::Options::default(), &progress)?;
-                        let left_out = r
+                        // The frames are walked under the reference's
+                        // edit, as a bracket's are; a reference the
+                        // stack finds is the window's only by asking.
+                        let options = focus::Options::default();
+                        let known = focus::reference_of(self.files.len(), options.reference);
+                        let walked = match known {
+                            Some(k) => edit_of(k)?,
+                            None => Edit::default(),
+                        };
+                        let r = focus::stack(
+                            &self.files,
+                            &walked,
+                            &options,
+                            &mut greycard_engine::walk::NoModels,
+                            &progress,
+                        )?;
+                        let warnings = r
                             .stack
                             .frames
                             .iter()
@@ -422,15 +435,19 @@ impl Merge {
                                     r.names[f.index]
                                 ))
                             })
+                            .chain(r.warnings.iter().cloned())
                             .collect();
+                        let edit = match known {
+                            Some(k) if k == r.stack.reference => walked,
+                            _ => edit_of(r.stack.reference)?,
+                        };
                         (
                             r.out,
                             0.0,
                             r.seconds,
-                            left_out,
-                            focus::edit_for_stack(&edit_of(r.stack.reference)?),
-                            // A stack asks for no learned tier.
-                            None,
+                            warnings,
+                            focus::edit_for_stack(&edit),
+                            r.learned_skipped,
                         )
                     }
                     Kind::Hdr => {
@@ -622,6 +639,10 @@ impl Remerge {
                 }
                 merge::Again::Pano(r) => {
                     frames = r.frames.len();
+                    (r.out, r.warnings, r.seconds, r.learned_skipped)
+                }
+                merge::Again::Stack(r) => {
+                    frames = r.names.len();
                     (r.out, r.warnings, r.seconds, r.learned_skipped)
                 }
             };

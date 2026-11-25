@@ -86,6 +86,31 @@ pub fn write_linear_dng<W: Write + Seek>(
     gains: [f32; 3],
     options: &LinearDngOptions<'_>,
 ) -> Result<()> {
+    linear_dng(out, frame, image, gains, options, None)
+}
+
+/// [`write_linear_dng`] with a merge's `NoiseProfile` and our tag
+/// beside its own: a focus stack's file, whose samples stay at 16 bits
+/// as `options.compression` asks, since it holds no bracket's range.
+pub fn write_linear_merged_dng<W: Write + Seek>(
+    out: W,
+    frame: &RawFrame,
+    image: &CameraImage,
+    gains: [f32; 3],
+    options: &LinearDngOptions<'_>,
+    merged: &Merged<'_>,
+) -> Result<()> {
+    linear_dng(out, frame, image, gains, options, Some(merged))
+}
+
+fn linear_dng<W: Write + Seek>(
+    out: W,
+    frame: &RawFrame,
+    image: &CameraImage,
+    gains: [f32; 3],
+    options: &LinearDngOptions<'_>,
+    merged: Option<&Merged<'_>>,
+) -> Result<()> {
     if gains.iter().any(|g| !g.is_finite() || *g <= 0.0) {
         return Err(Error::Unsupported(format!("white balance gains {gains:?}")));
     }
@@ -109,7 +134,7 @@ pub fn write_linear_dng<W: Write + Seek>(
         (compression, &CompressionParams::default()),
         gains,
         options,
-        None,
+        merged,
     )
 }
 
@@ -913,6 +938,38 @@ mod tests {
         assert!((noise.a[0] - 3e-6).abs() < 1e-12 && (noise.b[2] - 2e-9).abs() < 1e-15);
         assert_eq!(back.dng.merged.as_ref(), Some(&tag));
         assert_eq!(back.shot.lens_model.as_deref(), Some("Test 50mm"));
+        // A focus stack's: the same tags over 16-bit samples, stored
+        // under its headroom.
+        let stack = crate::merge::Tag {
+            kind: "stack".into(),
+            ..tag.clone()
+        };
+        let mut buf = Cursor::new(Vec::new());
+        let mut options = options;
+        options.headroom = Some(2.0);
+        let held = CameraImage::from_data(4, 4, data.iter().map(|v| v.min(2.0)).collect()).unwrap();
+        write_linear_merged_dng(
+            &mut buf,
+            &frame,
+            &held,
+            [2.0, 1.0, 4.0],
+            &options,
+            &Merged {
+                noise_profile: [3e-6, 2e-9],
+                tag: &stack,
+            },
+        )
+        .unwrap();
+        let back = RawlerDecoder.decode_bytes(&buf.into_inner()).unwrap();
+        assert_eq!(back.layout, SensorLayout::Linear);
+        assert_eq!(back.levels.white.values, vec![65535.0; 3]);
+        for (got, want) in back.samples.to_f32().iter().zip(&held.data) {
+            assert_eq!(*got, (want / 2.0 * 65535.0).round(), "{want}");
+        }
+        assert_eq!(back.dng.baseline_exposure, Some(1.0));
+        let noise = back.dng.noise_profile.expect("a noise profile");
+        assert!((noise.a[0] - 3e-6).abs() < 1e-12 && (noise.b[2] - 2e-9).abs() < 1e-15);
+        assert_eq!(back.dng.merged.as_ref(), Some(&stack));
         // A linear DNG of ours that is no merge says neither.
         let plain = round_trip(Compression::Uncompressed);
         assert_eq!((plain.dng.noise_profile, plain.dng.merged), (None, None));
