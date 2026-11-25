@@ -430,6 +430,9 @@ licenses, never bundled; a `greycard-ai` crate that core never sees.
       regrain drawn again; short of that, the mapped fill as the
       stand-in a pending patch shows while its fill is made again
       (§569)
+- [ ] A very small TIFF loses its color profile: the decoder refuses
+      a profile tag larger than the picture's own bytes; read it from
+      the TIFF's directory ourselves
 - [ ] A fill kept across a change under it, a lens correction among
       them, so twenty fills are not made again for one slider; what to
       show where a kept fill no longer matches (discussion 59,

@@ -2208,6 +2208,63 @@ fn cache_at(dir: &std::path::Path) -> ThumbCache {
     ))))
 }
 
+/// A picture file's thumbnail kept before its profile was read is a
+/// miss, made again and kept under the pictures' recipe; a raw's kept
+/// under the same recipe is still a hit, its thumbnail unchanged.
+#[test]
+fn a_pictures_thumbnail_kept_before_profiles_were_read_is_made_again() {
+    let dir = thumb_scratch("picture-recipe");
+    let png = dir.join("exported.png");
+    image::RgbImage::from_pixel(30, 20, image::Rgb([40, 190, 50]))
+        .save(&png)
+        .unwrap();
+    let raw = dir.join("IMG_0003.CR3");
+    std::fs::write(&raw, vec![0x33u8; 90_000]).unwrap();
+    let cache = cache_at(&dir);
+    let stale = Thumb {
+        width: 3,
+        height: 2,
+        rgb: vec![7; 18],
+    };
+    for path in [&png, &raw] {
+        let kept_before = Tag {
+            recipe: THUMB_RECIPE,
+            stamp: file_stat(path).unwrap().1,
+        };
+        let hash = greycard_library::hash_file(path).unwrap();
+        cache
+            .lock()
+            .unwrap()
+            .as_mut()
+            .unwrap()
+            .put(&hash, THUMB_WIDTH, kept_before, &stale)
+            .unwrap();
+    }
+    assert_ne!(thumb_recipe(&png), THUMB_RECIPE);
+    assert_eq!(thumb_recipe(&raw), THUMB_RECIPE);
+    let look = |path: &std::path::Path| {
+        cached_thumbnail_noting(
+            &cache,
+            None,
+            None,
+            &Frame::file(path),
+            THUMB_WIDTH,
+            thumbnail,
+        )
+        .unwrap()
+    };
+    let (made, cached) = look(&png);
+    assert!(!cached, "the picture's old entry is a miss");
+    assert_eq!((made.width, made.height), (30, 20));
+    let (again, cached) = look(&png);
+    assert!(cached, "and the new one is kept");
+    assert_eq!(again.width, 30);
+    let (kept, cached) = look(&raw);
+    assert!(cached, "the raw's entry is still a hit");
+    assert_eq!(kept.rgb, stale.rgb);
+    crate::testing::remove_dir_retry(&dir);
+}
+
 /// A raw nothing can decode: its thumbnail can only have come
 /// from the cache.
 #[test]
@@ -2242,7 +2299,7 @@ fn a_cached_thumbnail_is_not_made_again() {
         .put(
             &hash,
             THUMB_WIDTH,
-            thumb_tag(file_stat(&raw).unwrap()),
+            thumb_tag(&raw, file_stat(&raw).unwrap()),
             &kept,
         )
         .unwrap();
@@ -2278,7 +2335,7 @@ fn a_cached_thumbnail_job_finds_what_the_pool_kept() {
     let raw = dir.join("IMG_0002.CR3");
     std::fs::write(&raw, vec![0x2au8; 90_000]).unwrap();
     let hash = greycard_library::hash_file(&raw).unwrap();
-    let stamp = thumb_tag(file_stat(&raw).unwrap()).stamp;
+    let stamp = thumb_tag(&raw, file_stat(&raw).unwrap()).stamp;
     let (tx, rx) = std::sync::mpsc::channel();
     let tx = Mutex::new(tx);
     let worker = Worker::new(move |o| {
@@ -2305,7 +2362,12 @@ fn a_cached_thumbnail_job_finds_what_the_pool_kept() {
         rgb: vec![90; 60],
     };
     thumbs
-        .put(&hash, made, thumb_tag(file_stat(&raw).unwrap()), &kept)
+        .put(
+            &hash,
+            made,
+            thumb_tag(&raw, file_stat(&raw).unwrap()),
+            &kept,
+        )
         .unwrap();
     worker.set_thumb_cache(Some(thumbs));
     std::fs::remove_file(&raw).unwrap();
@@ -2330,6 +2392,61 @@ fn a_cached_thumbnail_job_finds_what_the_pool_kept() {
         stamp: stamp + 1,
     });
     assert_eq!(rx.recv_timeout(wait).unwrap(), "none 4");
+    worker.stop();
+    crate::testing::remove_dir_retry(&dir);
+}
+
+/// An offline picture's thumbnail kept before its profile was read,
+/// under the raws' recipe, stands in while its file is out of reach;
+/// with the file in reach, the job finds none and it is made again.
+#[test]
+fn a_cached_thumbnail_job_finds_a_pictures_earlier_entry_offline_only() {
+    let dir = thumb_scratch("offline-earlier");
+    let png = dir.join("exported.png");
+    image::RgbImage::from_pixel(30, 20, image::Rgb([40, 190, 50]))
+        .save(&png)
+        .unwrap();
+    let hash = greycard_library::hash_file(&png).unwrap();
+    let stamp = file_stat(&png).unwrap().1;
+    let (tx, rx) = std::sync::mpsc::channel();
+    let tx = Mutex::new(tx);
+    let worker = Worker::new(move |o| {
+        let line = match o {
+            Outcome::Thumbnail { index, width, .. } => format!("thumbnail {index} {width}"),
+            Outcome::NoThumbnail { index, .. } => format!("none {index}"),
+            _ => return,
+        };
+        let _ = tx.lock().unwrap().send(line);
+    });
+    let mut thumbs = Thumbs::at(dir.join("thumbs"), greycard_library::thumbs::DEFAULT_CAP);
+    let made = crate::made::made_size(worker.pool().expect("a window's worker").size());
+    let kept = Thumb {
+        width: 5,
+        height: 4,
+        rgb: vec![90; 60],
+    };
+    let before = Tag {
+        recipe: THUMB_RECIPE,
+        stamp,
+    };
+    thumbs.put(&hash, made, before, &kept).unwrap();
+    worker.set_thumb_cache(Some(thumbs));
+    let job = |index| Job::CachedThumbnail {
+        index,
+        frame: Frame::file(png.clone()),
+        hash: hash.clone(),
+        stamp,
+    };
+    let wait = std::time::Duration::from_secs(60);
+    worker.send(job(1));
+    assert_eq!(rx.recv_timeout(wait).unwrap(), "none 1", "in reach");
+    std::fs::remove_file(&png).unwrap();
+    worker.send(job(2));
+    assert_eq!(
+        rx.recv_timeout(wait).unwrap(),
+        "thumbnail 2 5",
+        "out of reach"
+    );
     worker.stop();
     crate::testing::remove_dir_retry(&dir);
 }

@@ -909,26 +909,28 @@ pub fn fetch(
             });
             return;
         }
-        deliver(match previews.and_then(|p| p.get(hash, *stamp)) {
-            Some(thumb) => Loaded::Ok {
-                file: want.file,
-                frame: want.frame(),
-                size: want.size,
-                preview: Arc::new(cut_to_camera(
-                    Preview {
-                        camera_only: want.camera,
-                        ..Preview::local(thumb, want.size == 0)
-                    },
-                    &want.path,
-                    false,
-                    want.whole,
-                )),
+        deliver(
+            match previews.and_then(|p| p.get(&want.path, hash, *stamp)) {
+                Some(thumb) => Loaded::Ok {
+                    file: want.file,
+                    frame: want.frame(),
+                    size: want.size,
+                    preview: Arc::new(cut_to_camera(
+                        Preview {
+                            camera_only: want.camera,
+                            ..Preview::local(thumb, want.size == 0)
+                        },
+                        &want.path,
+                        false,
+                        want.whole,
+                    )),
+                },
+                None => Loaded::NoPreview {
+                    file: want.file,
+                    frame: want.frame(),
+                },
             },
-            None => Loaded::NoPreview {
-                file: want.file,
-                frame: want.frame(),
-            },
-        });
+        );
         return;
     }
     // A frame with an edit stands in for its develop, or is compared
@@ -1075,7 +1077,7 @@ fn developed_picture(
 ) -> anyhow::Result<(image::RgbImage, Orientation)> {
     let kept = previews.and_then(|p| {
         let (hash, stamp) = crate::worker::thumb_key(path)?;
-        p.get(&hash, stamp)
+        p.get(path, &hash, stamp)
     });
     if let Some(thumb) = kept
         && let Some(image) = image::RgbImage::from_raw(thumb.width, thumb.height, thumb.rgb)

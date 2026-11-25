@@ -56,7 +56,9 @@ use self::{
 pub(crate) use self::base::{learned_failure, network, run_tiling};
 #[cfg(any(test, feature = "testing"))]
 pub use self::prefetch::{behind_prefetch, claim};
-pub use self::thumbs::{THUMB_RECIPE, THUMB_WIDTH, count_thumb_cache};
+pub use self::thumbs::{
+    THUMB_RECIPE, THUMB_WIDTH, count_thumb_cache, earlier_recipe, thumb_recipe,
+};
 pub use self::{
     decode::correct_lens_of,
     handle::order_thumbnails,

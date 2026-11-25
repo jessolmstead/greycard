@@ -996,7 +996,7 @@ fn the_row_makes_the_merge_again_and_the_picture_reloads() {
     // A picture of the old file in the cache, under its key.
     let (old_hash, old_stamp) = crate::worker::thumb_key(&r.out).unwrap();
     let tag = greycard_library::thumbs::Tag {
-        recipe: crate::worker::THUMB_RECIPE,
+        recipe: crate::worker::thumb_recipe(&r.out),
         stamp: old_stamp,
     };
     let thumb = greycard_library::thumbs::Thumb {

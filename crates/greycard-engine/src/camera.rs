@@ -43,12 +43,18 @@ fn camera_picture_sized(
     if greycard_core::picture::is_picture_path(path) {
         // The picture module's reader for the tag: one answer a file,
         // so the loupe, the strip and the develop cannot disagree
-        // about which way up a multi-directory TIFF stands.
+        // about which way up a multi-directory TIFF stands. Its
+        // profile too, so a file in a wider space than sRGB shows here
+        // as it develops.
         let orientation = greycard_core::picture::orientation_path(path)?;
-        let decoder = image::ImageReader::open(path)?
+        let mut decoder = image::ImageReader::open(path)?
             .with_guessed_format()?
             .into_decoder()?;
-        let rgb = image::DynamicImage::from_decoder(decoder)?.to_rgb8();
+        let icc = image::ImageDecoder::icc_profile(&mut decoder)
+            .ok()
+            .flatten();
+        let to_srgb = greycard_core::picture::ToSrgb::of_profile(icc.as_deref())?;
+        let rgb = to_srgb.rgb8(&image::DynamicImage::from_decoder(decoder)?);
         return Ok((rgb, orientation));
     }
     let preview = match long_edge {

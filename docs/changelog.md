@@ -213,6 +213,8 @@ design note behind it.
 - An export of a crop dragged far out on a steep keystone, past 200
   megapixels, fails with its reason instead of running out of memory;
   at a smaller long edge it exports.
+- A TIFF or JPEG in Rec.2020, Adobe RGB, or Display P3 shows its true
+  colors in the grid, the filmstrip, and the culling loupe (issue 209).
 - A DNG with a linearization table, such as some DxO PureRAW files,
   no longer develops six stops dark and magenta.
 - A camera DNG that lists a tiny thumbnail first, a Leica M11's, shows

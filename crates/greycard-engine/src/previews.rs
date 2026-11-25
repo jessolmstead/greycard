@@ -30,7 +30,7 @@ use std::time::Instant;
 use greycard_core::raw::Orientation;
 use greycard_library::thumbs::{Tag, Thumb};
 
-use crate::worker::{THUMB_RECIPE, ThumbCache, file_stat, thumb_tag, thumbnail};
+use crate::worker::{ThumbCache, earlier_recipe, file_stat, thumb_recipe, thumb_tag, thumbnail};
 
 /// A preview's long edge. Past a 1440p loupe's fitted view and half a
 /// 4K one, so a fitted frame is not magnified on a desktop screen; at
@@ -179,7 +179,7 @@ impl Previews {
         if !self.under_a_root(path) {
             return;
         }
-        let tag = thumb_tag(stat);
+        let tag = thumb_tag(path, stat);
         let kept = self
             .cache
             .lock()
@@ -343,14 +343,20 @@ impl Previews {
         Some(made)
     }
 
-    /// The preview kept under a file's hash and stamp, from the cache
-    /// alone: nothing of the file is read. The entry is read under the
-    /// cache's lock and decoded outside it.
-    pub fn get(&self, hash: &str, stamp: u64) -> Option<Thumb> {
-        let tag = Tag {
-            recipe: THUMB_RECIPE,
-            stamp,
-        };
+    /// The preview kept under the hash and stamp of the file at `path`,
+    /// under its recipe ([`thumb_recipe`]), or, the file out of reach,
+    /// under the one it had before ([`earlier_recipe`]): from the cache
+    /// alone, nothing of the file read but a stat after a miss. The
+    /// entry is read under the cache's lock and decoded outside it.
+    pub fn get(&self, path: &Path, hash: &str, stamp: u64) -> Option<Thumb> {
+        self.get_at(hash, thumb_recipe(path), stamp).or_else(|| {
+            let earlier = earlier_recipe(path)?;
+            self.get_at(hash, earlier, stamp)
+        })
+    }
+
+    fn get_at(&self, hash: &str, recipe: u16, stamp: u64) -> Option<Thumb> {
+        let tag = Tag { recipe, stamp };
         let bytes = self
             .cache
             .lock()
@@ -461,11 +467,11 @@ mod tests {
         let entry = cache
             .as_ref()
             .unwrap()
-            .entry_path(&hash, SIZE, thumb_tag((0, stamp)));
+            .entry_path(&hash, SIZE, thumb_tag(&file, (0, stamp)));
         assert!(
             entry.ends_with(format!(
                 "{hash}-2048-r{}-{stamp}.thumb",
-                crate::worker::THUMB_RECIPE
+                thumb_recipe(&file)
             )),
             "{}",
             entry.display()
@@ -496,9 +502,14 @@ mod tests {
         previews.note(&file, stat, &hash);
         assert!(!previews.owes(&file), "kept already");
         std::fs::remove_file(&file).unwrap();
-        let got = previews.get(&hash, stamp).expect("read from the cache");
+        let got = previews
+            .get(&file, &hash, stamp)
+            .expect("read from the cache");
         assert_eq!((got.width, got.height), (2048, 1365));
-        assert!(previews.get(&hash, stamp + 1).is_none(), "another stamp");
+        assert!(
+            previews.get(&file, &hash, stamp + 1).is_none(),
+            "another stamp"
+        );
 
         // A second file, changed after its note: not kept.
         let other = root.join("c.png");
@@ -506,6 +517,45 @@ mod tests {
         let (hash, _) = Previews::key_of(&other).unwrap();
         previews.note(&other, (1, 1), &hash);
         assert_eq!(previews.make(&other).unwrap(), None);
+        crate::testing::remove_dir_retry(&dir);
+    }
+
+    /// A picture's preview kept before its profile was read, under the
+    /// raws' recipe: read for a file out of reach, which cannot be made
+    /// again until it is back; never for one in reach, which is made
+    /// again the new way.
+    #[test]
+    fn a_pictures_preview_kept_before_profiles_stands_in_offline_only() {
+        let dir = scratch("earlier");
+        let file = dir.join("exported.png");
+        png(&file, 300, 200);
+        let previews = previews_at(&dir, greycard_library::thumbs::DEFAULT_CAP);
+        let (hash, stamp) = Previews::key_of(&file).unwrap();
+        let kept = Thumb {
+            width: 3,
+            height: 2,
+            rgb: vec![60; 18],
+        };
+        let before = Tag {
+            recipe: crate::worker::THUMB_RECIPE,
+            stamp,
+        };
+        previews
+            .cache
+            .lock()
+            .unwrap()
+            .as_mut()
+            .unwrap()
+            .put_at(&hash, SIZE, before, &kept, QUALITY)
+            .unwrap();
+        assert!(earlier_recipe(&file).is_none());
+        assert!(previews.get(&file, &hash, stamp).is_none(), "in reach");
+        std::fs::remove_file(&file).unwrap();
+        assert_eq!(earlier_recipe(&file), Some(crate::worker::THUMB_RECIPE));
+        let got = previews.get(&file, &hash, stamp).expect("out of reach");
+        assert_eq!((got.width, got.height), (3, 2));
+        // A raw has no earlier recipe: its own is the same.
+        assert!(earlier_recipe(&dir.join("gone.CR3")).is_none());
         crate::testing::remove_dir_retry(&dir);
     }
 
@@ -547,7 +597,7 @@ mod tests {
                 Ok(Some(m)) => {
                     // Read back as the offline loupe reads it.
                     let started = Instant::now();
-                    previews.get(&hash, stamp).expect("kept");
+                    previews.get(f, &hash, stamp).expect("kept");
                     let back = started.elapsed().as_secs_f64();
                     println!(
                         "{}: {}x{}, {} KB, made in {:.0} ms, read in {:.1} ms",

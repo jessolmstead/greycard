@@ -589,7 +589,7 @@ fn an_offline_frame_is_culled_from_its_local_preview_and_its_file_is_not_read() 
             .put_at(
                 hash,
                 previews::SIZE,
-                crate::worker::thumb_tag((0, stamp)),
+                crate::worker::thumb_tag(&z, (0, stamp)),
                 &kept,
                 previews::QUALITY,
             )

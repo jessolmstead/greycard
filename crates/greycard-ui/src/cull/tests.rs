@@ -385,7 +385,7 @@ fn the_local_preview_reads_no_file_and_a_decode_makes_one() {
     assert!(!previews.owes(&file), "taken by the loupe's decode");
     let started = Instant::now();
     let kept = loop {
-        if let Some(kept) = previews.get(&hash, stamp) {
+        if let Some(kept) = previews.get(&file, &hash, stamp) {
             break kept;
         }
         assert!(started.elapsed().as_secs() < 10, "made off the thread");
@@ -1382,7 +1382,7 @@ fn a_raw_with_no_camera_picture_is_developed_for_the_loupe_and_the_lightbox() {
     );
     // Its local preview, kept from the develop off the thread.
     let started = Instant::now();
-    while previews.get(&hash, stamp).is_none() {
+    while previews.get(&raw, &hash, stamp).is_none() {
         assert!(started.elapsed().as_secs() < 10, "kept from the develop");
         std::thread::sleep(std::time::Duration::from_millis(5));
     }

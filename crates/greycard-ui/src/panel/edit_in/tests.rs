@@ -834,7 +834,7 @@ fn a_save_shows_in_the_grid() {
     let worker = h.s.worker.clone();
     let cached = |(hash, stamp): &(String, u64)| {
         let tag = greycard_library::thumbs::Tag {
-            recipe: crate::worker::THUMB_RECIPE,
+            recipe: crate::worker::thumb_recipe(&out),
             stamp: *stamp,
         };
         worker

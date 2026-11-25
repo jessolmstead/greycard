@@ -56,8 +56,9 @@ use crate::version_key::Key;
 use crate::worker::ThumbCache;
 
 /// The recipe the pictures made from an edit are kept under, where the
-/// camera's carry `worker::THUMB_RECIPE`: the high bit says "made from
-/// the edit", so the two never name one entry. Raise the low bits when
+/// camera's carry `worker::thumb_recipe` (a raw's `THUMB_RECIPE`, a
+/// picture file's that with `PICTURE_STEP` in its high byte): the high
+/// bit says "made from the edit", so the two never name one entry. Raise the low bits when
 /// the shrink, the un-turn or the encode below make another picture
 /// from the same finished one; a change to the develop or the finish
 /// is `greycard_edit::key::DEVELOP_RECIPE`'s, unless it changes these

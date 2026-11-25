@@ -514,14 +514,13 @@ impl Worker {
                                 .expect("thumbnail cache")
                                 .as_mut()
                                 .and_then(|c| {
-                                    c.get(
-                                        &hash,
-                                        size,
-                                        Tag {
-                                            recipe: THUMB_RECIPE,
-                                            stamp,
-                                        },
-                                    )
+                                    let at = |recipe| Tag { recipe, stamp };
+                                    c.get(&hash, size, at(super::thumbs::thumb_recipe(&frame.path)))
+                                        .or_else(|| {
+                                            let earlier =
+                                                super::thumbs::earlier_recipe(&frame.path)?;
+                                            c.get(&hash, size, at(earlier))
+                                        })
                                 })
                                 .map(|t| {
                                     super::thumbs::cut_to_camera(

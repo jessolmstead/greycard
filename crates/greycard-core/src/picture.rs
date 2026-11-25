@@ -492,20 +492,7 @@ pub fn decode_picture(bytes: &[u8]) -> Result<Picture> {
     };
     let shot = crate::decode::rawler_backend::shot_of(&metadata);
 
-    let (transform, space) = match icc.as_deref().map(MatrixTrc::parse) {
-        Some(Some(profile)) => {
-            let name = profile
-                .description
-                .clone()
-                .unwrap_or_else(|| "embedded profile".into());
-            (Transform::from_profile(&profile)?, name)
-        }
-        Some(None) => (
-            Transform::srgb()?,
-            "sRGB (the embedded profile is not a matrix one)".into(),
-        ),
-        None => (Transform::srgb()?, "sRGB (no profile)".into()),
-    };
+    let (transform, space) = transform_of(icc.as_deref())?;
     let (image, bits) = to_working(decoded, &transform)?;
     let image = orient(image, orientation);
     Ok(Picture {
@@ -518,6 +505,208 @@ pub fn decode_picture(bytes: &[u8]) -> Result<Picture> {
         bits,
         white: transform.white,
     })
+}
+
+/// The transform the samples of a file with this embedded profile go
+/// through, and what that says of their space: the profile's own for
+/// a matrix/TRC one, sRGB for none or one that is not.
+fn transform_of(icc: Option<&[u8]>) -> Result<(Transform, String)> {
+    Ok(match icc.map(MatrixTrc::parse) {
+        Some(Some(profile)) => {
+            let name = profile
+                .description
+                .clone()
+                .unwrap_or_else(|| "embedded profile".into());
+            (Transform::from_profile(&profile)?, name)
+        }
+        Some(None) => (
+            Transform::srgb()?,
+            "sRGB (the embedded profile is not a matrix one)".into(),
+        ),
+        None => (Transform::srgb()?, "sRGB (no profile)".into()),
+    })
+}
+
+/// A picture file's samples taken to sRGB's, encoded: what
+/// [`decode_picture`] makes of them in the working space, brought on to
+/// sRGB a pixel at a time, for a small picture of the file that has to
+/// agree with its develop (a thumbnail, the culling loupe's) without
+/// the working image whole. Out of sRGB's gamut a channel is clamped,
+/// as a raw's thumbnail's is.
+#[derive(Debug, Clone)]
+pub struct ToSrgb {
+    trc: [Trc; 3],
+    /// Rows, the file's linear RGB to sRGB's.
+    matrix: [[f32; 3]; 3],
+    srgb: bool,
+}
+
+impl ToSrgb {
+    /// For a file that embeds `icc` (`ImageDecoder::icc_profile`), or
+    /// none. The profile is read as [`decode_picture`] reads it.
+    pub fn of_profile(icc: Option<&[u8]>) -> Result<Self> {
+        let (t, _) = transform_of(icc)?;
+        let to_srgb = rows(
+            &WORKING_SPACE
+                .to_space_matrix(&RgbSpace::SRGB, CAT)
+                .ok_or(Error::NoCalibration)?,
+        );
+        let m = t.matrix;
+        let matrix = std::array::from_fn(|i| {
+            std::array::from_fn(|j| (0..3).map(|k| to_srgb[i][k] * m[k][j]).sum())
+        });
+        let srgb = icc.is_none() || samples_are_srgb(&t.trc, &matrix);
+        Ok(Self {
+            trc: t.trc,
+            matrix,
+            srgb,
+        })
+    }
+
+    /// Whether the file's encoded samples are sRGB's as they stand, to
+    /// within half an 8-bit level: no profile, one [`decode_picture`]
+    /// does not read, or one of sRGB's. A caller keeps such samples as
+    /// they are and pays nothing for the profile.
+    pub fn is_srgb(&self) -> bool {
+        self.srgb
+    }
+
+    /// Encoded samples, 0 to 1, to sRGB's.
+    pub fn encoded(&self, rgb: [f32; 3]) -> [f32; 3] {
+        self.linear([0, 1, 2].map(|i| self.trc[i].linear(rgb[i])))
+    }
+
+    /// Linear samples to sRGB's, encoded: a float file's, which
+    /// [`decode_picture`] takes as linear whatever its curve.
+    pub fn linear(&self, rgb: [f32; 3]) -> [f32; 3] {
+        let m = self.matrix;
+        [0, 1, 2].map(|i| {
+            let v = m[i][0] * rgb[0] + m[i][1] * rgb[1] + m[i][2] * rgb[2];
+            crate::color::srgb_encode(v.clamp(0.0, 1.0))
+        })
+    }
+
+    /// A decoded picture whole as 8-bit sRGB: `to_rgb8` itself when the
+    /// samples are sRGB's already, else each through a table of its
+    /// depth's curve, the matrix, and a table of sRGB's.
+    pub fn rgb8(&self, decoded: &DynamicImage) -> image::RgbImage {
+        let float = is_float(decoded);
+        if self.srgb && !float {
+            return decoded.to_rgb8();
+        }
+        let (w, h) = (decoded.width(), decoded.height());
+        // Linear to encoded in 16-bit steps: a twentieth of a level at
+        // black, where sRGB's curve is steepest. Made once a process.
+        static ENCODE: std::sync::OnceLock<Vec<u8>> = std::sync::OnceLock::new();
+        let encode = ENCODE.get_or_init(|| {
+            (0..=u16::MAX)
+                .map(|i| (crate::color::srgb_encode(i as f32 / 65535.0) * 255.0).round() as u8)
+                .collect()
+        });
+        let m = self.matrix;
+        let out = |lin: [f32; 3]| -> [u8; 3] {
+            [0, 1, 2].map(|i| {
+                let v = m[i][0] * lin[0] + m[i][1] * lin[1] + m[i][2] * lin[2];
+                encode[(v.clamp(0.0, 1.0) * 65535.0).round() as usize]
+            })
+        };
+        let mut rgb = vec![0u8; w as usize * h as usize * 3];
+        if float {
+            let px = decoded.to_rgb32f();
+            rgb.par_chunks_mut(3)
+                .zip(px.as_raw().par_chunks(3))
+                .for_each(|(o, p)| o.copy_from_slice(&out([p[0], p[1], p[2]])));
+        } else if is_sixteen(decoded) {
+            let px = decoded.to_rgb16();
+            let luts: [Vec<f32>; 3] = std::array::from_fn(|i| self.trc[i].lut(16));
+            rgb.par_chunks_mut(3)
+                .zip(px.as_raw().par_chunks(3))
+                .for_each(|(o, p)| {
+                    o.copy_from_slice(&out([0, 1, 2].map(|i| luts[i][p[i] as usize])));
+                });
+        } else {
+            let px = decoded.to_rgb8();
+            let luts: [Vec<f32>; 3] = std::array::from_fn(|i| self.trc[i].lut(8));
+            rgb.par_chunks_mut(3)
+                .zip(px.as_raw().par_chunks(3))
+                .for_each(|(o, p)| {
+                    o.copy_from_slice(&out([0, 1, 2].map(|i| luts[i][p[i] as usize])));
+                });
+        }
+        image::RgbImage::from_raw(w, h, rgb).expect("three samples a pixel")
+    }
+}
+
+/// Whether a decoded picture's samples are floats, which
+/// [`decode_picture`] takes as linear.
+pub fn is_float(decoded: &DynamicImage) -> bool {
+    matches!(
+        decoded,
+        DynamicImage::ImageRgb32F(_) | DynamicImage::ImageRgba32F(_)
+    )
+}
+
+/// Whether a decoded picture's samples are 16 bits, which
+/// [`decode_picture`] reads at that depth.
+pub fn is_sixteen(decoded: &DynamicImage) -> bool {
+    matches!(
+        decoded,
+        DynamicImage::ImageLuma16(_)
+            | DynamicImage::ImageLumaA16(_)
+            | DynamicImage::ImageRgb16(_)
+            | DynamicImage::ImageRgba16(_)
+    )
+}
+
+/// How far, in 8-bit levels, a curve may land from sRGB's for the
+/// samples to be sRGB's as they stand.
+const CURVE_LEVELS: f32 = 0.5;
+
+/// How far, in 8-bit levels, the matrix may take a corner of the cube
+/// from itself for the samples to be sRGB's as they stand. Looser than
+/// the curves': the common sRGB profiles' colorants, D50 adapted and
+/// rounded to the profile's fixed point, come back from the working
+/// space's own D65 a little off at the steep foot of sRGB's curve (the
+/// HP profile Lightroom, Photoshop, and Capture One embed by 0.55 of a
+/// level), and a wider space is hundreds of levels off.
+const CORNER_LEVELS: f32 = 2.0;
+
+/// Whether samples through these curves and this matrix to sRGB come
+/// back where they were ([`CURVE_LEVELS`], [`CORNER_LEVELS`]).
+fn samples_are_srgb(trc: &[Trc; 3], m: &[[f32; 3]; 3]) -> bool {
+    curve_levels(trc) < CURVE_LEVELS && corner_levels(m) < CORNER_LEVELS
+}
+
+/// The furthest the curves land from sRGB's, in 8-bit levels, over
+/// every 8-bit level.
+fn curve_levels(trc: &[Trc; 3]) -> f32 {
+    use crate::color::srgb_encode;
+    trc.iter()
+        .flat_map(|c| {
+            (0..=255).map(move |i| {
+                let x = i as f32 / 255.0;
+                (srgb_encode(c.linear(x)) - x).abs() * 255.0
+            })
+        })
+        .fold(0.0, f32::max)
+}
+
+/// The furthest the matrix takes a corner of the cube from itself, in
+/// 8-bit levels of sRGB's curve: there one channel's leak into another
+/// meets the curve's steep foot. Unclamped: a wider space's primary
+/// lands outside sRGB's cube, and a clamp would put it back on the
+/// corner it came from.
+fn corner_levels(m: &[[f32; 3]; 3]) -> f32 {
+    use crate::color::srgb_encode;
+    (0..8usize)
+        .flat_map(|k| {
+            let c = [k & 1, (k >> 1) & 1, (k >> 2) & 1].map(|b| b as f32);
+            (0..3).map(move |i| {
+                let v = m[i][0] * c[0] + m[i][1] * c[1] + m[i][2] * c[2];
+                (srgb_encode(v) - c[i]).abs() * 255.0
+            })
+        })
+        .fold(0.0, f32::max)
 }
 
 fn decode_error(e: image::ImageError) -> Error {
@@ -1010,7 +1199,9 @@ mod tests {
             para.extend(((p * 65536.0).round() as i32).to_be_bytes());
         }
         for sig in [b"rTRC", b"gTRC", b"bTRC"] {
-            tags.push((*sig, para.clone()));
+            if !tags.iter().any(|(s, _)| s == sig) {
+                tags.push((*sig, para.clone()));
+            }
         }
         let mut desc = b"desc\0\0\0\0".to_vec();
         desc.extend((name.len() as u32 + 1).to_be_bytes());
@@ -1043,6 +1234,216 @@ mod tests {
     const SRGB_RED: [f64; 3] = [0.4360, 0.2225, 0.0139];
     const SRGB_GREEN: [f64; 3] = [0.3851, 0.7169, 0.0971];
     const SRGB_BLUE: [f64; 3] = [0.1431, 0.0606, 0.7141];
+
+    /// A curve of `n` evenly spaced entries, sRGB's, as the HP profile's
+    /// 1024 are.
+    fn srgb_table(n: usize) -> Vec<u8> {
+        let mut d = b"curv\0\0\0\0".to_vec();
+        d.extend((n as u32).to_be_bytes());
+        for i in 0..n {
+            let v = srgb_decode(i as f32 / (n - 1) as f32) as f64;
+            d.extend(((v * 65535.0).round() as u16).to_be_bytes());
+        }
+        d
+    }
+
+    /// The three curves the same.
+    fn curves(curve: &[u8]) -> Vec<([u8; 4], Vec<u8>)> {
+        [*b"rTRC", *b"gTRC", *b"bTRC"]
+            .map(|s| (s, curve.to_vec()))
+            .to_vec()
+    }
+
+    /// A profile's colorants in the s15Fixed16 steps it holds them in.
+    fn fixed(v: [i32; 3]) -> [f64; 3] {
+        v.map(|x| x as f64 / 65536.0)
+    }
+
+    /// The sRGB profiles files are tagged with count as sRGB, so their
+    /// thumbnails and views take the cheap way; the curve within half a
+    /// level and the matrix's corners within [`CORNER_LEVELS`]. The HP
+    /// "sRGB IEC61966-2.1" profile (Lightroom's, Photoshop's, Capture
+    /// One's) with its 1024-entry table, and lcms's built-in one
+    /// (`cmsCreate_sRGBProfile`, colord's too) with its parametric
+    /// curve, both built here with their own colorants. A wider space
+    /// is hundreds of levels out at a corner, whatever its curve.
+    #[test]
+    fn the_common_srgb_profiles_are_srgb_and_wider_ones_are_not() {
+        let levels = |icc: &[u8]| {
+            let to = ToSrgb::of_profile(Some(icc)).unwrap();
+            let p = MatrixTrc::parse(icc).unwrap();
+            (
+                to.is_srgb(),
+                curve_levels(&p.trc),
+                corner_levels(&to.matrix),
+            )
+        };
+        let hp = profile_with(
+            [0.4360657, 0.2224884, 0.0139160],
+            [0.3851471, 0.7168732, 0.0970764],
+            [0.1430664, 0.0606079, 0.7140961],
+            "sRGB IEC61966-2.1",
+            curves(&srgb_table(1024)),
+        );
+        // lcms's parametric sRGB curve, its own fixed-point steps.
+        let mut para = b"para\0\0\0\0\0\x03\0\0".to_vec();
+        for p in [0x26666i32, 0xf2a7, 0x0d59, 0x13d0, 0x0a5b] {
+            para.extend(p.to_be_bytes());
+        }
+        let lcms = profile_with(
+            fixed([28576, 14581, 912]),
+            fixed([25239, 46983, 6361]),
+            fixed([9375, 3972, 46787]),
+            "sRGB built-in",
+            curves(&para),
+        );
+        let here = profile(SRGB_RED, SRGB_GREEN, SRGB_BLUE, "sRGB built here");
+        for (name, icc) in [("HP", &hp), ("lcms", &lcms), ("built here", &here)] {
+            let (srgb, curve, corner) = levels(icc);
+            eprintln!("{name}: the curve {curve:.3} levels off, a corner {corner:.3}");
+            assert!(
+                srgb,
+                "{name}: the curve {curve} levels off, a corner {corner}"
+            );
+        }
+        assert!(ToSrgb::of_profile(None).unwrap().is_srgb());
+
+        let mut adobe_gamma = b"curv\0\0\0\0\0\0\0\x01".to_vec();
+        adobe_gamma.extend(563u16.to_be_bytes());
+        let mut pro_gamma = b"curv\0\0\0\0\0\0\0\x01".to_vec();
+        pro_gamma.extend(461u16.to_be_bytes());
+        let wide = [
+            // sRGB's curve: the matrix alone says no.
+            (
+                "Display P3",
+                profile(
+                    [0.5151, 0.2412, -0.0011],
+                    [0.2920, 0.6922, 0.0419],
+                    [0.1571, 0.0666, 0.7841],
+                    "Display P3",
+                ),
+            ),
+            (
+                "Rec.2020",
+                profile(
+                    [0.6734, 0.2790, -0.0019],
+                    [0.1656, 0.6753, 0.0300],
+                    [0.1251, 0.0457, 0.7973],
+                    "Rec.2020",
+                ),
+            ),
+            (
+                "Adobe RGB",
+                profile_with(
+                    [0.6097, 0.3111, 0.0195],
+                    [0.2053, 0.6257, 0.0609],
+                    [0.1492, 0.0632, 0.7446],
+                    "Adobe RGB",
+                    curves(&adobe_gamma),
+                ),
+            ),
+            (
+                "ProPhoto",
+                profile_with(
+                    [0.7977, 0.2880, 0.0],
+                    [0.1352, 0.7119, 0.0],
+                    [0.0313, 0.0001, 0.8249],
+                    "ProPhoto",
+                    curves(&pro_gamma),
+                ),
+            ),
+        ];
+        for (name, icc) in wide {
+            let (srgb, _, corner) = levels(&icc);
+            eprintln!("{name}: a corner {corner:.3} levels off");
+            assert!(!srgb && corner > 10.0 * CORNER_LEVELS, "{name}: {corner}");
+        }
+    }
+
+    /// A picture's samples taken to sRGB a pixel at a time agree with
+    /// the decode into the working space taken on to sRGB: in ProPhoto
+    /// (its own colorants and a gamma of 1.8), at 8 bits and 16, and as
+    /// floats.
+    #[test]
+    fn samples_to_srgb_agree_with_the_decode() {
+        use crate::color::srgb_encode;
+        let mut gamma = b"curv\0\0\0\0\0\0\0\x01".to_vec();
+        gamma.extend(((1.8f32 * 256.0).round() as u16).to_be_bytes());
+        let curves = [b"rTRC", b"gTRC", b"bTRC"].map(|s| (*s, gamma.clone()));
+        let prophoto = profile_with(
+            [0.7977, 0.2880, 0.0],
+            [0.1352, 0.7119, 0.0],
+            [0.0313, 0.0001, 0.8249],
+            "ProPhoto built here",
+            curves.to_vec(),
+        );
+        let to = ToSrgb::of_profile(Some(&prophoto)).unwrap();
+        assert!(!to.is_srgb());
+        let to_srgb = rows(&WORKING_SPACE.to_space_matrix(&RgbSpace::SRGB, CAT).unwrap());
+        let developed = |p: [f32; 3]| -> [f32; 3] {
+            to_srgb.map(|r| srgb_encode((r[0] * p[0] + r[1] * p[1] + r[2] * p[2]).clamp(0.0, 1.0)))
+        };
+        let samples: [[u16; 3]; 4] = [
+            [20000, 45000, 9000],
+            [50000, 12000, 15000],
+            [30000, 30000, 30000],
+            [65535, 65535, 65535],
+        ];
+        let mut tiff = Cursor::new(Vec::new());
+        // Rows enough that the `image` crate reads the profile: its
+        // TIFF decoder refuses a tag whose values outweigh the picture's
+        // bytes.
+        let height = 1024;
+        crate::exif::write_rgb16_tiff(
+            &mut tiff,
+            4,
+            height,
+            &samples.as_flattened().repeat(height as usize),
+            Some(&prophoto),
+            None,
+        )
+        .unwrap();
+        let bytes = tiff.into_inner();
+        let pic = decode_picture(&bytes).unwrap();
+        assert_eq!(pic.space, "ProPhoto built here");
+        let decoded = image::load_from_memory(&bytes).unwrap();
+        let whole = to.rgb8(&decoded);
+        for (x, s) in samples.iter().enumerate() {
+            let want = developed(pic.image.pixel(x, 0));
+            let got = to.encoded(s.map(|v| v as f32 / 65535.0));
+            for i in 0..3 {
+                assert!((got[i] - want[i]).abs() < 1e-3, "{got:?} vs {want:?}");
+                let level = whole.get_pixel(x as u32, 0)[i] as f32;
+                assert!(
+                    (level - want[i] * 255.0).abs() <= 0.6,
+                    "{x}: {level} vs {want:?}"
+                );
+            }
+        }
+        // At 8 bits, through the 8-bit table.
+        let eight = DynamicImage::ImageRgb8(decoded.to_rgb8());
+        let whole = to.rgb8(&eight);
+        for x in 0..4 {
+            let p = eight.as_rgb8().unwrap().get_pixel(x, 0).0;
+            let want = to.encoded(p.map(|v| v as f32 / 255.0));
+            for i in 0..3 {
+                let level = whole.get_pixel(x, 0)[i] as f32;
+                assert!(
+                    (level - want[i] * 255.0).abs() <= 0.6,
+                    "{level} vs {want:?}"
+                );
+            }
+        }
+        // Floats are linear, whatever the curve says.
+        let lin = [0.1f32, 0.5, 0.02];
+        let floats =
+            DynamicImage::ImageRgb32F(image::Rgb32FImage::from_raw(1, 1, lin.to_vec()).unwrap());
+        let got = to.rgb8(&floats).get_pixel(0, 0).0;
+        let want = to.linear(lin);
+        for i in 0..3 {
+            assert!((got[i] as f32 - want[i] * 255.0).abs() <= 0.6);
+        }
+    }
 
     #[test]
     fn a_profile_is_read_and_srgbs_lands_on_the_working_matrix() {
