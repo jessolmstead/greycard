@@ -1470,10 +1470,13 @@ clears or a tester asks for it.
       needs a develop of its own, the kept Original being the edit's
 - [ ] An export that leaves out the location alone and keeps the rest
       of the metadata (discussion 147)
-- [ ] PEF on more than one file: opened and previewed from one K-1
-      frame, landscape. Wants a portrait frame (a full JPEG stored
-      already turned is refused for the small preview), an older
-      body, and a Pentax camera style reader (issue 197)
+- [ ] Lens lines the matcher still crosses: Nikon AF, AF-S, AF-I,
+      and P; Sigma's DG DN against DG HSM and its Art, Contemporary,
+      and Sports; Samsung/Schneider D-XENON onto other mounts; and
+      whether Pentax's F and FA Macro 100 share the D FA's optics
+      (issue 197)
+- [ ] PEF past the K-1 and K-3 Mark III: an older body, and a Pentax
+      camera style reader (issue 197)
 - [ ] An export names a lens picked by hand even with the correction
       off, so a stand-in profile's name goes out as the lens; and a
       source's LensMake is kept beside a LensModel we fill, where

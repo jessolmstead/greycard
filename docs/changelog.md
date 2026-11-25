@@ -232,6 +232,9 @@ design note behind it.
   [§738](https://github.com/jessolmstead/greycard/blob/master/docs/notes/738-bound-the-add-to-collection-menu.md)).
 - No other menu fed by a list can grow past the window and crash:
   Edit in, the archives, a preset's Move to group, and recent folders.
+- A lens no longer takes the profile of another line of its maker's,
+  such as an EF's for an EF-S or an FA's for a D FA*; such a picture
+  now opens uncorrected until a lens is picked (issue 197).
 - A DNG with a linearization table, such as some DxO PureRAW files,
   no longer develops six stops dark and magenta.
 - A camera DNG that lists a tiny thumbnail first, a Leica M11's, shows

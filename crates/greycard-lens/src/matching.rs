@@ -7,15 +7,19 @@ use crate::db::{Camera, Database, Lens, LensType};
 
 /// A name as tokens: runs of letters and runs of digits (a decimal
 /// point kept inside a number), lower case, with a few tokens dropped
-/// that say nothing.
+/// that say nothing. A star after letters stays on them, since it
+/// names a line of its own (Pentax's "DA*" is not its "DA"), and an
+/// "f" is dropped only as an aperture's, before a number or a slash
+/// ("F2.8", "f/4"): elsewhere it is a line too ("Pentax-F 28mm").
 pub fn tokens(name: &str) -> Vec<String> {
     let mut out = Vec::new();
     let mut cur = String::new();
     let mut digits = false;
-    let flush = |cur: &mut String, out: &mut Vec<String>| {
+    let flush = |cur: &mut String, out: &mut Vec<String>, next: Option<char>| {
         if !cur.is_empty() {
             let t = cur.trim_end_matches('.').to_string();
-            if !t.is_empty() && !NOISE.contains(&t.as_str()) {
+            let aperture = t == "f" && next.is_some_and(|c| c.is_ascii_digit() || c == '/');
+            if !t.is_empty() && !aperture && !NOISE.contains(&t.as_str()) {
                 out.push(t);
             }
             cur.clear();
@@ -24,7 +28,7 @@ pub fn tokens(name: &str) -> Vec<String> {
     for ch in name.chars() {
         if ch.is_ascii_digit() {
             if !digits {
-                flush(&mut cur, &mut out);
+                flush(&mut cur, &mut out, Some(ch));
             }
             digits = true;
             cur.push(ch);
@@ -32,21 +36,24 @@ pub fn tokens(name: &str) -> Vec<String> {
             cur.push(ch);
         } else if ch.is_alphabetic() {
             if digits {
-                flush(&mut cur, &mut out);
+                flush(&mut cur, &mut out, Some(ch));
             }
             digits = false;
             cur.extend(ch.to_lowercase());
+        } else if ch == '*' && !digits && !cur.is_empty() {
+            cur.push(ch);
+            flush(&mut cur, &mut out, Some(ch));
         } else {
-            flush(&mut cur, &mut out);
+            flush(&mut cur, &mut out, Some(ch));
             digits = false;
         }
     }
-    flush(&mut cur, &mut out);
+    flush(&mut cur, &mut out, None);
     out
 }
 
 /// Tokens that appear or not at a maker's whim.
-const NOISE: &[&str] = &["mm", "f", "lens", "the", "asph", "aspherical"];
+const NOISE: &[&str] = &["mm", "lens", "the", "asph", "aspherical"];
 
 /// The maker's own tokens, dropped from a name before comparison.
 fn without_maker(tokens: Vec<String>, maker: &str) -> Vec<String> {
@@ -261,9 +268,15 @@ impl Database {
             // right one ("Meike 85mm f/1.8" against "Meike SL 85mm F1.8
             // STM PRO", filed under "Meke").
             let file = without_maker(named.clone(), &l.maker);
+            // The name of the maker's with lines, when one has them: a
+            // lens filed under "Ricoh Imaging Company" is Pentax's.
+            let lined = l
+                .makers()
+                .find(|m| lines_of(m).is_some())
+                .unwrap_or(&l.maker);
             for m in &l.models {
                 let db = without_maker(tokens(m), &l.maker);
-                if contradicts(&file, &db, &l.maker) || strays(&named, lens_make, &l.maker, &db) {
+                if contradicts(&file, &db, lined) || strays(&named, lens_make, lined, &db) {
                     continue;
                 }
                 let Some(mut s) = score(&file, &db) else {
@@ -319,26 +332,89 @@ type Lines = &'static [&'static [&'static str]];
 /// The makers whose lens names say their mount or format in a word,
 /// the brands a name of theirs may begin with, and the words, one slice
 /// a line of lenses, as tokens: Leica's M, TL (once T), SL, R, and S;
-/// Canon's RF, EF, and FD; Nikon's Z and its F lenses' AF and AI;
-/// Sony's FE, E, and DT.
-const LINES: &[(&str, &[&str], Lines)] = &[
+/// Canon's RF, EF, and FD, the S of EF-S and RF-S, the M of EF-M,
+/// and its TS-E and MP-E; Nikon's Z and its F lenses' AF and AI
+/// (AI-S written "AiS" too); Sony's FE, E, and DT; Pentax's D FA, FA
+/// (once F, mostly the same glass in a new barrel), DA, A, M, K,
+/// Limited, and Takumar, a star a line of its own ("FA*"). A word of
+/// two tokens is a phrase, the two in a row: the D of a D FA, never a
+/// Samsung "D-XENON"'s.
+///
+/// The last says whether a name's lines are read as a set (see
+/// [`contradicts`]): Canon's and Pentax's names carry every line they
+/// are of, so an EF-S is not an EF, nor a D FA* an FA. Another maker's
+/// name may carry a word of a line by chance (a Viltrox's "AF" says it
+/// focuses itself), and only a line each carries that the other does
+/// not tells two of theirs apart.
+const LINES: &[(&str, &[&str], Lines, bool)] = &[
     (
         "leica",
         &["leica"],
         &[&["m"], &["tl", "t"], &["sl"], &["r"], &["s"]],
+        false,
     ),
-    ("canon", &["canon"], &[&["rf"], &["ef"], &["fd", "fdn"]]),
-    ("nikon", &["nikon", "nikkor"], &[&["z"], &["af", "ai"]]),
-    ("sony", &["sony"], &[&["fe"], &["e"], &["dt"]]),
+    (
+        "canon",
+        &["canon"],
+        &[
+            &["rf"],
+            &["ef"],
+            &["fd", "fdn"],
+            &["s"],
+            &["m"],
+            &["ts"],
+            &["mp"],
+        ],
+        true,
+    ),
+    (
+        "nikon",
+        &["nikon", "nikkor"],
+        &[&["z"], &["af", "ai", "ais"]],
+        false,
+    ),
+    ("sony", &["sony"], &[&["fe"], &["e"], &["dt"]], false),
+    (
+        "pentax",
+        &["pentax"],
+        &[
+            &["d fa", "d fa*"],
+            &["f", "fa"],
+            &["f*", "fa*"],
+            &["da"],
+            &["da*"],
+            &["a"],
+            &["a*"],
+            &["m"],
+            &["k"],
+            &["limited"],
+            &["takumar"],
+        ],
+        true,
+    ),
 ];
 
-/// The lines of `maker`'s, when it is one of [`LINES`].
-fn lines_of(maker: &str) -> Option<(&'static str, Lines)> {
+/// Whether a name, as tokens, carries a word of a line: a token, or
+/// for a phrase ("d fa") its tokens in a row.
+fn has(name: &[String], word: &str) -> bool {
+    let words: Vec<&str> = word.split(' ').collect();
+    name.windows(words.len())
+        .any(|w| w.iter().zip(&words).all(|(t, x)| t == x))
+}
+
+/// Whether a name, as tokens, carries any word of `line`.
+fn on(name: &[String], line: &[&str]) -> bool {
+    line.iter().any(|w| has(name, w))
+}
+
+/// The lines of `maker`'s, when it is one of [`LINES`], and whether
+/// its names' lines are read as a set.
+fn lines_of(maker: &str) -> Option<(&'static str, Lines, bool)> {
     let first = tokens(maker).into_iter().next()?;
     LINES
         .iter()
-        .find(|(m, _, _)| *m == first)
-        .map(|(m, _, lines)| (*m, *lines))
+        .find(|(m, ..)| *m == first)
+        .map(|(m, _, lines, whole)| (*m, *lines, *whole))
 }
 
 /// Whether a name of `maker`'s, `db` as tokens, strays from a file
@@ -353,54 +429,67 @@ fn strays(named: &[String], lens_make: Option<&str>, maker: &str, db: &[String])
     let brand = named.first().and_then(|first| {
         LINES
             .iter()
-            .find(|(_, brands, _)| brands.contains(&first.as_str()))
-            .map(|(m, _, lines)| (*m, *lines, first.as_str()))
+            .find(|(_, brands, ..)| brands.contains(&first.as_str()))
+            .map(|(m, _, lines, _)| (*m, *lines, first.as_str()))
     });
     let own = lens_make
         .and_then(lines_of)
+        .map(|(m, lines, _)| (m, lines))
         .or(brand.map(|(m, lines, _)| (m, lines)));
     let Some((own, lines)) = own else {
         return false;
     };
-    if lines_of(maker).is_some_and(|(m, _)| m == own) {
+    if lines_of(maker).is_some_and(|(m, ..)| m == own) {
         return false;
     }
-    let on = |name: &[String], line: &[&str]| name.iter().any(|t| line.contains(&t.as_str()));
-    let fired: Vec<&&[&str]> = lines.iter().filter(|line| on(named, line)).collect();
+    // Of a maker whose lines are a set, a line of one letter (Canon's
+    // S, Pentax's A) is the line only in a name that says it is the
+    // maker's ("smc PENTAX-A"): a third party's "| A" or "(A16)" sold
+    // for the mount is no Pentax line. Leica's M is its line alone.
+    let Some((_, brands, _, whole)) = LINES.iter().find(|(m, ..)| *m == own) else {
+        return false;
+    };
+    let branded = brands.iter().any(|b| has(named, b));
+    let fired: Vec<&&[&str]> = lines
+        .iter()
+        .filter(|line| (!whole || branded || line.iter().any(|w| w.len() > 1)) && on(named, line))
+        .collect();
     if fired.is_empty() {
         return false;
     }
     // A word of one letter in another maker's name is its own
     // business (Pentax's "Pentax-M"), not the line's.
-    let carries = |line: &[&str]| db.iter().any(|t| t.len() > 1 && line.contains(&t.as_str()));
+    let carries = |line: &[&str]| line.iter().any(|w| w.len() > 1 && has(db, w));
     fired.iter().any(|line| !carries(line))
         || brand.is_some_and(|(m, _, b)| m == own && !on(db, &[b]))
 }
 
 /// Whether a database name of `maker`'s is for another line of lenses
 /// than the file's name says: each carries one line's word and not the
-/// other's ("Summilux-M" against "Summilux-TL", "FE" against "E"), or
-/// the file's carries another maker's line in a word of two letters or
-/// more, which no maker shares ("FE" against Canon's "RF"). A name with
-/// no such word contradicts nothing.
+/// other's ("Summilux-M" against "Summilux-TL", "FE" against "E"), or,
+/// for a maker whose lines are read as a set (see [`LINES`]), both
+/// carry lines and not the same ones ("EF-S" against "EF", "D FA*"
+/// against "FA", "FA" against "D FA"); or the file's carries another
+/// maker's line in a word of two letters or more, which no maker shares
+/// ("FE" against Canon's "RF"). A name with no such word contradicts
+/// nothing.
 fn contradicts(file: &[String], db: &[String], maker: &str) -> bool {
-    let Some((first, lines)) = lines_of(maker) else {
+    let Some((first, lines, whole)) = lines_of(maker) else {
         return false;
     };
-    let on = |name: &[String], line: &[&str]| name.iter().any(|t| line.contains(&t.as_str()));
-    let own = lines.iter().enumerate().any(|(i, a)| {
-        on(file, a)
-            && !on(db, a)
-            && lines
-                .iter()
-                .enumerate()
-                .any(|(j, b)| i != j && on(db, b) && !on(file, b))
-    });
+    let carried = |name: &[String]| lines.iter().map(|l| on(name, l)).collect::<Vec<_>>();
+    let (f, d) = (carried(file), carried(db));
+    let only = |a: &[bool], b: &[bool]| a.iter().zip(b).any(|(x, y)| *x && !*y);
+    let own = if whole {
+        f.contains(&true) && d.contains(&true) && f != d
+    } else {
+        only(&f, &d) && only(&d, &f)
+    };
     let foreign = || {
         LINES
             .iter()
-            .filter(|(m, _, _)| *m != first)
-            .flat_map(|(_, _, ls)| ls.iter().flat_map(|l| l.iter()))
+            .filter(|(m, ..)| *m != first)
+            .flat_map(|(_, _, ls, _)| ls.iter().flat_map(|l| l.iter()))
             .any(|w| {
                 w.len() > 1
                     && on(file, &[w])
@@ -1292,6 +1381,188 @@ mod tests {
             "Sigma"
         ));
         assert!(!c("RF50mm F1.2 L USM", "Canon RF 50mm F1.2 L USM", "Canon"));
+    }
+
+    #[test]
+    fn a_star_and_a_line_letter_are_tokens() {
+        assert_eq!(
+            tokens("HD PENTAX-D FA* 50mm F1.4 SDM AW"),
+            ["hd", "pentax", "d", "fa*", "50", "1.4", "sdm", "aw"]
+        );
+        assert_eq!(
+            tokens("smc Pentax-F 28mm f/2.8"),
+            ["smc", "pentax", "f", "28", "2.8"]
+        );
+        assert_eq!(
+            tokens("Distagon T* 2/35 ZF.2"),
+            ["distagon", "t*", "2", "35", "zf", "2"]
+        );
+        // A star before letters is a separator, as it was.
+        assert_eq!(tokens("PENTAX *ist DS"), ["pentax", "ist", "ds"]);
+    }
+
+    /// Lenses of one maker's whose names differ in a line only: each
+    /// against the other, a maker whose lenses another's file would
+    /// otherwise take, and two Ricoh files the right lens is filed under.
+    const LINE_PAIRS: &str = r#"<lensdatabase version="2">
+        <mount><name>Pentax KAF4</name><compat>Pentax KAF</compat></mount>
+        <camera>
+            <maker>Ricoh Imaging Company, Ltd.</maker>
+            <maker lang="en">Pentax</maker>
+            <model>Pentax K-1</model>
+            <mount>Pentax KAF4</mount>
+            <cropfactor>1</cropfactor>
+        </camera>
+        <camera>
+            <maker>Ricoh Imaging Company, Ltd.</maker>
+            <maker lang="en">Pentax</maker>
+            <model>Pentax K-3 Mark III</model>
+            <mount>Pentax KAF4</mount>
+            <cropfactor>1.546</cropfactor>
+        </camera>
+        <lens><maker>Pentax</maker><model>smc Pentax-FA 50mm f/1.4</model>
+            <mount>Pentax KAF</mount><cropfactor>1</cropfactor>
+            <calibration><distortion model="poly3" focal="50" k1="-0.01"/></calibration></lens>
+        <lens><maker>Pentax</maker><model>smc Pentax-M 200mm f/4</model>
+            <mount>Pentax KAF</mount><cropfactor>1</cropfactor>
+            <calibration><distortion model="poly3" focal="200" k1="-0.01"/></calibration></lens>
+        <lens><maker>Pentax</maker><model>smc Pentax-D FA Macro 100mm f/2.8 WR</model>
+            <mount>Pentax KAF</mount><cropfactor>1</cropfactor>
+            <calibration><distortion model="poly3" focal="100" k1="-0.01"/></calibration></lens>
+        <lens><maker>Pentax</maker><model>smc Pentax-F 35-80mm f/4-5.6</model>
+            <mount>Pentax KAF</mount><cropfactor>1</cropfactor>
+            <calibration><distortion model="poly3" focal="35" k1="-0.01"/></calibration></lens>
+        <lens><maker>Ricoh Imaging Company, Ltd.</maker><maker lang="en">Pentax</maker>
+            <model>HD Pentax-DA 20-40mm f/2.8-4 ED Limited DC WR</model>
+            <mount>Pentax KAF4</mount><cropfactor>1.53</cropfactor>
+            <calibration><distortion model="poly3" focal="20" k1="-0.01"/></calibration></lens>
+        <lens><maker>Ricoh Imaging Company</maker><maker lang="en">Pentax</maker>
+            <model>HD PENTAX-D FA 21mm F2.4 ED Limited DC WR</model>
+            <mount>Pentax KAF4</mount><cropfactor>1</cropfactor>
+            <calibration><distortion model="poly3" focal="21" k1="-0.01"/></calibration></lens>
+        <lens><maker>Canon</maker><model>Canon EF 28-80mm f/3.5-5.6 USM</model>
+            <mount>Canon EF</mount><cropfactor>1</cropfactor>
+            <calibration><distortion model="poly3" focal="28" k1="-0.01"/></calibration></lens>
+        <lens><maker>Canon</maker><model>Canon EF 24mm f/2.8</model>
+            <mount>Canon EF</mount><cropfactor>1</cropfactor>
+            <calibration><distortion model="poly3" focal="24" k1="-0.01"/></calibration></lens>
+        <lens><maker>Canon</maker><model>Canon EF-S 18-55mm f/3.5-5.6 IS STM</model>
+            <mount>Canon EF-S</mount><cropfactor>1.6</cropfactor>
+            <calibration><distortion model="poly3" focal="18" k1="-0.01"/></calibration></lens>
+        <lens><maker>Pentax</maker><model>smc Pentax-DA 50-200mm f/4-5.6 DA ED</model>
+            <mount>Pentax KAF</mount><cropfactor>1.53</cropfactor>
+            <calibration><distortion model="poly3" focal="50" k1="-0.01"/></calibration></lens>
+        <lens><maker>Pentax</maker><model>smc Pentax-DA 12-24mm f/4 ED AL IF</model>
+            <mount>Pentax KAF</mount><cropfactor>1.53</cropfactor>
+            <calibration><distortion model="poly3" focal="12" k1="-0.01"/></calibration></lens>
+        <lens><maker>Minolta</maker><model>Minolta/Sony AF 100mm F2.8 Macro (D)</model>
+            <mount>Sony Alpha</mount><cropfactor>1.53</cropfactor>
+            <calibration><distortion model="poly3" focal="100" k1="-0.01"/></calibration></lens>
+        <lens><maker>Samsung</maker><model>Samsung NX 50-200mm f/4-5.6</model>
+            <mount>Samsung NX</mount><cropfactor>1.53</cropfactor>
+            <calibration><distortion model="poly3" focal="50" k1="-0.01"/></calibration></lens>
+        <lens><maker>Sigma</maker><model>Sigma 18-35mm f/1.8 DC HSM [A]</model>
+            <mount>Pentax KAF</mount><cropfactor>1.53</cropfactor>
+            <calibration><distortion model="poly3" focal="18" k1="-0.01"/></calibration></lens>
+        <lens><maker>Tamron</maker><model>Tamron AF 17-50mm f/2.8 XR Di-II LD (Model A16)</model>
+            <mount>Pentax KAF</mount><cropfactor>1.53</cropfactor>
+            <calibration><distortion model="poly3" focal="17" k1="-0.01"/></calibration></lens>
+        <lens><maker>Nikon</maker><model>Nikkor Z 28mm f/2.8</model>
+            <mount>Nikon Z</mount><cropfactor>1</cropfactor>
+            <calibration><distortion model="poly3" focal="28" k1="-0.01"/></calibration></lens>
+    </lensdatabase>"#;
+
+    /// A wrong lens's distortion, CA, and vignetting are worse than none:
+    /// a name the file gives of one line does not take the database's
+    /// lens of another that shares its numbers, and the right one is
+    /// still found when the database has it, filed under Ricoh.
+    #[test]
+    fn a_lens_of_another_line_is_no_profile() {
+        let mut db = Database::default();
+        db.read_xml(LINE_PAIRS).unwrap();
+        let k1 = db.camera("Pentax", "K-1");
+        assert!(k1.is_some());
+        let pentax = |name: &str, focal: f32| {
+            db.lens(k1, Some("Pentax"), name, Some(focal))
+                .map(|l| l.name().to_string())
+        };
+        for (name, focal) in [
+            // A 2018 design, not the 1991 FA 50mm f/1.4.
+            ("HD PENTAX-D FA* 50mm F1.4 SDM AW", 50.0),
+            ("smc PENTAX-FA* Macro 200mm F4 ED[IF]", 200.0),
+            ("smc PENTAX-FA Macro 100mm F2.8", 100.0),
+            ("smc PENTAX-F Macro 100mm F2.8", 100.0),
+            // Nor another maker's lens of its numbers.
+            ("smc PENTAX-FA 28-80mm F3.5-5.6", 28.0),
+        ] {
+            assert_eq!(pentax(name, focal), None, "{name}");
+        }
+        // F and FA are one line, mostly the same glass in a new barrel;
+        // Samsung's D-XENON is Pentax's DA under another name; and a
+        // third party's one-letter word is no Pentax line.
+        for (name, focal, found) in [
+            ("smc PENTAX-F 50mm F1.4", 50.0, "smc Pentax-FA 50mm f/1.4"),
+            // The DA's and the D FA's twins, not Samsung's NX 50-200
+            // nor Minolta's 100 Macro (D) off the mount.
+            (
+                "Samsung/Schneider D-XENON 50-200mm F4-5.6 ED",
+                50.0,
+                "smc Pentax-DA 50-200mm f/4-5.6 DA ED",
+            ),
+            (
+                "Samsung/Schneider D-XENON 100mm F2.8 Macro",
+                100.0,
+                "smc Pentax-D FA Macro 100mm f/2.8 WR",
+            ),
+            (
+                "smc PENTAX-FA 35-80mm F4-5.6",
+                35.0,
+                "smc Pentax-F 35-80mm f/4-5.6",
+            ),
+            (
+                "Samsung/Schneider D-XENON 12-24mm F4 ED AL [IF]",
+                12.0,
+                "smc Pentax-DA 12-24mm f/4 ED AL IF",
+            ),
+            (
+                "Sigma 18-35mm F1.8 DC HSM | A",
+                18.0,
+                "Sigma 18-35mm f/1.8 DC HSM [A]",
+            ),
+            (
+                "Tamron AF 17-50mm F2.8 XR Di-II LD (Model A16)",
+                17.0,
+                "Tamron AF 17-50mm f/2.8 XR Di-II LD (Model A16)",
+            ),
+        ] {
+            assert_eq!(pentax(name, focal).as_deref(), Some(found), "{name}");
+        }
+        assert_eq!(
+            pentax("HD PENTAX-D FA 21mm F2.4 ED Limited DC WR", 21.0).as_deref(),
+            Some("HD PENTAX-D FA 21mm F2.4 ED Limited DC WR")
+        );
+        let k3 = db.camera("Pentax", "K-3 Mark III");
+        assert_eq!(
+            db.lens(
+                k3,
+                Some("Pentax"),
+                "HD PENTAX-DA 20-40mm F2.8-4 ED Limited DC WR",
+                Some(20.0)
+            )
+            .map(Lens::name),
+            Some("HD Pentax-DA 20-40mm f/2.8-4 ED Limited DC WR")
+        );
+        let any = |make: &str, name: &str, focal: f32| {
+            db.lens(None, Some(make), name, Some(focal))
+                .map(|l| l.name().to_string())
+        };
+        assert_eq!(any("Canon", "EF-S24mm f/2.8 STM", 24.0), None);
+        assert_eq!(any("Canon", "EF-M18-55mm f/3.5-5.6 IS STM", 18.0), None);
+        assert_eq!(
+            any("Canon", "EF-S18-55mm f/3.5-5.6 IS STM", 18.0).as_deref(),
+            Some("Canon EF-S 18-55mm f/3.5-5.6 IS STM")
+        );
+        assert_eq!(any("Nikon", "Nikkor 28mm f/2.8 AiS", 28.0), None);
     }
 
     /// Sigma's two 24-70 DG DN, their year codes in the database's
