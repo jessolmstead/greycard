@@ -7372,7 +7372,7 @@ fn fill_slot(
 ) -> PathBuf {
     // A file that may decode with light over its white: the headroom's
     // version, so its fills are made again when the table changes and
-    // no other file's are; a DNG the linearization's, likewise. The two
+    // no other file's are; a DNG the DNG decode's, likewise. The two
     // are of different files, so one slot part holds either.
     fill_slot_under(
         root,
@@ -7386,23 +7386,21 @@ fn fill_slot(
 }
 
 /// The version of the decode a fill of `file` is keyed with: the
-/// headroom's for a file that may have headroom, the linearization's
-/// for one that may carry a table, else none.
+/// headroom's for a file that may have headroom, the DNG decode's for
+/// a DNG, else none.
 fn decode_version(file: &Path) -> Option<&'static str> {
-    use greycard_core::decode::{
-        HEADROOM, LINEARIZATION, may_have_headroom, may_have_linearization,
-    };
+    use greycard_core::decode::{DNG_DECODE, HEADROOM, may_be_dng, may_have_headroom};
     if may_have_headroom(file) {
         Some(HEADROOM)
-    } else if may_have_linearization(file) {
-        Some(LINEARIZATION)
+    } else if may_be_dng(file) {
+        Some(DNG_DECODE)
     } else {
         None
     }
 }
 
-/// The slots the fill of a file that may decode with headroom, or may
-/// carry a linearization table, lived in under each earlier version of
+/// The slots the fill of a file that may decode with headroom, or of a
+/// DNG, lived in under each earlier version of
 /// that ([`decode_version`]), none first: what
 /// [`let_go_of_earlier_slots`] removes. Empty for any other file.
 fn earlier_fill_slots(
@@ -7415,7 +7413,7 @@ fn earlier_fill_slots(
 ) -> Vec<PathBuf> {
     let earlier = match decode_version(file) {
         Some(greycard_core::decode::HEADROOM) => earlier_headrooms(),
-        Some(_) => earlier_linearizations(),
+        Some(_) => earlier_dng_decodes(),
         None => return Vec::new(),
     };
     earlier
@@ -7436,16 +7434,23 @@ fn earlier_headrooms() -> Vec<Option<String>> {
         .collect()
 }
 
-/// The linearization versions before
-/// [`greycard_core::decode::LINEARIZATION`], `linearization-N`: none
-/// (before there was one), then 1 to N - 1.
-fn earlier_linearizations() -> Vec<Option<String>> {
-    let now: u32 = greycard_core::decode::LINEARIZATION
-        .strip_prefix("linearization-")
+/// The DNG decode's versions before
+/// [`greycard_core::decode::DNG_DECODE`], `dng-decode-N`: none (before
+/// there was one), then 1 to N - 1 by the names they had
+/// ([`greycard_core::decode::EARLIER_DNG_DECODES`]).
+fn earlier_dng_decodes() -> Vec<Option<String>> {
+    use greycard_core::decode::{DNG_DECODE, EARLIER_DNG_DECODES};
+    let now: usize = DNG_DECODE
+        .strip_prefix("dng-decode-")
         .and_then(|n| n.parse().ok())
-        .expect("LINEARIZATION is linearization-N");
+        .expect("DNG_DECODE is dng-decode-N");
+    assert_eq!(
+        EARLIER_DNG_DECODES.len(),
+        now - 1,
+        "EARLIER_DNG_DECODES names every version before DNG_DECODE"
+    );
     std::iter::once(None)
-        .chain((1..now).map(|k| Some(format!("linearization-{k}"))))
+        .chain(EARLIER_DNG_DECODES.iter().map(|k| Some(k.to_string())))
         .collect()
 }
 
@@ -8092,8 +8097,8 @@ mod tests {
             fill_slot_under(root, cr3, &patch, &region, size, window, Some("headroom-2"))
         );
         assert!(earlier_fill_slots(root, file, &patch, &region, size, window).is_empty());
-        // A DNG's, made on a base the linearization moves, likewise;
-        // before it there was no version.
+        // A DNG's, made on a base the DNG decode moves, likewise;
+        // before it there was no version, then linearization-1.
         let dng = Path::new("/f/L1000001.DNG");
         assert_ne!(
             fill_slot(root, dng, &patch, &region, size, window),
@@ -8108,14 +8113,28 @@ mod tests {
                 &region,
                 size,
                 window,
-                Some("linearization-1")
+                Some("dng-decode-2")
             )
         );
         assert_eq!(
             earlier_fill_slots(root, dng, &patch, &region, size, window),
-            [old_slot(root, dng, &patch, &region, size, window)]
+            [
+                old_slot(root, dng, &patch, &region, size, window),
+                fill_slot_under(
+                    root,
+                    dng,
+                    &patch,
+                    &region,
+                    size,
+                    window,
+                    Some("linearization-1")
+                )
+            ]
         );
-        assert_eq!(earlier_linearizations(), [None]);
+        assert_eq!(
+            earlier_dng_decodes(),
+            [None, Some("linearization-1".to_string())]
+        );
         assert_eq!(
             earlier_headrooms(),
             [

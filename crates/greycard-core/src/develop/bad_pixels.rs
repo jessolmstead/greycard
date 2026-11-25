@@ -60,7 +60,7 @@ const MAX_REACH: usize = 4;
 
 /// A monochrome sensor's plane as a pattern: every photosite is of one
 /// color.
-pub fn one_color() -> CfaPattern {
+fn one_color() -> CfaPattern {
     CfaPattern {
         width: 1,
         height: 1,
@@ -69,20 +69,23 @@ pub fn one_color() -> CfaPattern {
 }
 
 /// Make every photosite `bad` flags again from its good same-color
-/// neighbors, `pattern` as seen from the buffer's corner. Answers how
-/// many were made again.
+/// neighbors: of a mosaic's `pattern` as seen from the buffer's corner,
+/// or, with none, of a monochrome sensor's plane, where the ones
+/// beside it are read first. Answers how many were made again. A
+/// mosaic is read the same whatever its pattern, one of a single color
+/// too.
 pub fn repair(
     samples: &mut [f32],
     width: usize,
     height: usize,
-    pattern: &CfaPattern,
+    pattern: Option<&CfaPattern>,
     bad: &[bool],
 ) -> usize {
     let read: &[f32] = samples;
-    let reaches: &[usize] = if pattern.colors.len() == 1 {
-        &[1, 2, MAX_REACH]
-    } else {
-        &[2, MAX_REACH]
+    let plane = one_color();
+    let (pattern, reaches): (&CfaPattern, &[usize]) = match pattern {
+        Some(pattern) => (pattern, &[2, MAX_REACH]),
+        None => (&plane, &[1, 2, MAX_REACH]),
     };
     let fixes: Vec<(usize, f32)> = bad
         .par_iter()
@@ -167,7 +170,7 @@ mod tests {
         };
         mark_listed(&mut bad, w, h, 0, 0, &fix);
         assert_eq!(bad.iter().filter(|b| **b).count(), 1);
-        assert_eq!(repair(&mut s, w, h, &pattern, &bad), 1);
+        assert_eq!(repair(&mut s, w, h, Some(&pattern), &bad), 1);
         assert_eq!(s, before);
     }
 
@@ -221,7 +224,7 @@ mod tests {
                 *v = 0.0;
             }
         }
-        assert_eq!(repair(&mut s, w, h, &pattern, &bad), 25);
+        assert_eq!(repair(&mut s, w, h, Some(&pattern), &bad), 25);
         assert!(s.iter().all(|&v| v == 0.5), "{s:?}");
     }
 
@@ -244,7 +247,7 @@ mod tests {
             s[i] = 1.0;
             bad[i] = true;
         }
-        assert_eq!(repair(&mut s, w, h, &pattern, &bad), 3);
+        assert_eq!(repair(&mut s, w, h, Some(&pattern), &bad), 3);
         assert_eq!(s, before);
     }
 
@@ -264,7 +267,7 @@ mod tests {
             let mut s = shot.clone();
             let bad: Vec<bool> = (0..w * h).map(|i| ring(i) <= size).collect();
             let count = bad.iter().filter(|b| **b).count();
-            assert_eq!(repair(&mut s, w, h, &one_color(), &bad), count);
+            assert_eq!(repair(&mut s, w, h, None, &bad), count);
             assert_eq!(s[center], want);
             for i in (0..w * h).filter(|&i| !bad[i]) {
                 assert_eq!(s[i], shot[i]);
@@ -275,7 +278,97 @@ mod tests {
         (s[1], s[4], s[5]) = (0.2, 0.9, 0.4);
         let mut bad = [false; 16];
         bad[0] = true;
-        assert_eq!(repair(&mut s, 4, 4, &one_color(), &bad), 1);
+        assert_eq!(repair(&mut s, 4, 4, None, &bad), 1);
         assert_eq!(s[0], 0.4);
+    }
+
+    /// Rings about (5, 5): 1.0 at it, 0.5 beside it, 0.3 two out, 0.1
+    /// past that.
+    fn rings(w: usize, h: usize) -> Vec<f32> {
+        let ring = |i: usize| (i % w).abs_diff(5).max((i / w).abs_diff(5));
+        (0..w * h)
+            .map(|i| [1.0, 0.5, 0.3, 0.1, 0.1, 0.1][ring(i)])
+            .collect()
+    }
+
+    /// A mosaic is read as a mosaic whatever its pattern: one of a
+    /// single color, as a hostile file may declare, takes the median
+    /// within two, never the plane's ones beside it first.
+    #[test]
+    fn a_one_color_mosaic_is_not_a_plane() {
+        let (w, h) = (11, 11);
+        let mut bad = vec![false; w * h];
+        bad[5 * w + 5] = true;
+        let mut mosaic = rings(w, h);
+        assert_eq!(repair(&mut mosaic, w, h, Some(&one_color()), &bad), 1);
+        // Within two: eight at 0.5 and sixteen at 0.3.
+        assert_eq!(mosaic[5 * w + 5], 0.3);
+        let mut plane = rings(w, h);
+        assert_eq!(repair(&mut plane, w, h, None, &bad), 1);
+        assert_eq!(plane[5 * w + 5], 0.5);
+    }
+
+    /// A whole bad row on a monochrome plane: each photosite has the
+    /// rows above and below beside it, an even count (six, or four at
+    /// either end), and takes their middle two's mean.
+    #[test]
+    fn a_monochrome_planes_bad_row() {
+        let (w, h) = (6, 5);
+        // Row 1 at 0.2 + 0.1 x, row 3 at 0.6 + 0.1 x; row 2 stuck.
+        let shot: Vec<f32> = (0..w * h)
+            .map(|i| {
+                let (x, y) = (i % w, i / w);
+                match y {
+                    1 => 0.2 + 0.1 * x as f32,
+                    3 => 0.6 + 0.1 * x as f32,
+                    _ => 0.0,
+                }
+            })
+            .collect();
+        let mut s = shot.clone();
+        let mut bad = vec![false; w * h];
+        let fix = BadPixels::List {
+            phase: 0,
+            points: vec![],
+            rects: vec![[2, 0, 3, 6]],
+        };
+        mark_listed(&mut bad, w, h, 0, 0, &fix);
+        assert_eq!(bad.iter().filter(|b| **b).count(), w);
+        s[2 * w..3 * w].fill(1.0);
+        assert_eq!(repair(&mut s, w, h, None, &bad), w);
+        for x in 0..w {
+            // The middle two are the highest above and the lowest below.
+            let above = 0.2 + 0.1 * (x + 1).min(w - 1) as f32;
+            let below = 0.6 + 0.1 * x.saturating_sub(1) as f32;
+            let want = (above + below) / 2.0;
+            assert!((s[2 * w + x] - want).abs() < 1e-6, "{x}: {}", s[2 * w + x]);
+        }
+        for i in (0..w * h).filter(|&i| !bad[i]) {
+            assert_eq!(s[i], shot[i]);
+        }
+    }
+
+    /// A rectangle listed on a monochrome plane: a 2x3 block on a flat
+    /// plane comes back flat, its members read from the good ones
+    /// round it and never from one another.
+    #[test]
+    fn a_monochrome_planes_listed_rect() {
+        let (w, h) = (9, 8);
+        let mut s = vec![0.4f32; w * h];
+        let mut bad = vec![false; w * h];
+        let fix = BadPixels::List {
+            phase: 0,
+            points: vec![],
+            rects: vec![[3, 2, 5, 5]],
+        };
+        mark_listed(&mut bad, w, h, 0, 0, &fix);
+        assert_eq!(bad.iter().filter(|b| **b).count(), 6);
+        for (v, b) in s.iter_mut().zip(&bad) {
+            if *b {
+                *v = 0.9;
+            }
+        }
+        assert_eq!(repair(&mut s, w, h, None, &bad), 6);
+        assert!(s.iter().all(|&v| v == 0.4), "{s:?}");
     }
 }

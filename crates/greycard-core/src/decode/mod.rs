@@ -179,24 +179,31 @@ pub fn may_have_headroom(path: &Path) -> bool {
 /// 2026-11-19.
 pub const HEADROOM: &str = "headroom-3";
 
-/// Whether the file at `path` may carry a `LinearizationTable`, by its
-/// name alone: a DNG, the one format whose decoder hands one over.
-/// What the keys of the pictures kept of a frame take [`LINEARIZATION`]
-/// in by, since they are made without a decode.
-pub fn may_have_linearization(path: &Path) -> bool {
+/// Whether the file at `path` is a DNG, by its name alone: what the
+/// keys of the pictures kept of a frame take [`DNG_DECODE`] in by,
+/// since they are made without a decode.
+pub fn may_be_dng(path: &Path) -> bool {
     path.extension()
         .and_then(|e| e.to_str())
         .is_some_and(|e| e.eq_ignore_ascii_case("dng"))
 }
 
-/// How a DNG's `LinearizationTable` is read, for the keys of whatever
-/// is kept of a frame [`may_have_linearization`]: raise it when that
-/// changes, and the pictures, fills, and mask bases kept of every DNG
-/// are made again, those of every other file found again as they were.
-/// The index learns of it through `keys_made_under`, as of
-/// [`HEADROOM`].
-/// 1: the table applied at decode, before the levels, 2026-11-19.
-pub const LINEARIZATION: &str = "linearization-1";
+/// How a DNG's samples are read that no other file's are (its
+/// `LinearizationTable`, and the opcodes' repairs on a monochrome
+/// plane), for the keys of whatever is kept of a frame [`may_be_dng`]:
+/// raise it when that changes, and the pictures, fills, and mask bases
+/// kept of every DNG are made again, those of every other file found
+/// again as they were. The index learns of it through
+/// `keys_made_under`, as of [`HEADROOM`].
+/// 1 (`linearization-1`): the table applied at decode, before the
+/// levels, 2026-11-19.
+/// 2: a monochrome plane's `FixBadPixelsConstant` and
+/// `FixBadPixelsList` repaired, before the masks' tap, 2026-11-24.
+pub const DNG_DECODE: &str = "dng-decode-2";
+
+/// What [`DNG_DECODE`] was called at each earlier version, 1 first:
+/// the names of the fills kept under them, for their removal.
+pub const EARLIER_DNG_DECODES: &[&str] = &["linearization-1"];
 
 /// Whether the file at `path` is of a kind [`camera_frame_path`] can
 /// find a frame in, by its name alone: what spares every other file a

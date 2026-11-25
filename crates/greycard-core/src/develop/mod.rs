@@ -1409,9 +1409,9 @@ fn apply_dng_mosaic(
 /// plane, its list's image placed so the crop's corner is at `at`: the
 /// first list's (`stored`) constant against the file's stored values,
 /// the second's against the values as they stand, scaled to 0..65535 as
-/// the SDK's 16-bit stage holds them. Answers how many were made again; a linear
-/// frame has none made, said in the log. A frame whose samples a
-/// `LinearizationTable` changed has its first list's constants made
+/// the SDK's 16-bit stage holds them. Answers how many were made again;
+/// a linear frame has none made, said in the log. A frame whose samples
+/// a `LinearizationTable` changed has its first list's constants made
 /// lists at decode, while the stored values are at hand.
 fn fix_bad_pixels(
     frame: &RawFrame,
@@ -1423,8 +1423,8 @@ fn fix_bad_pixels(
     fix: &BadPixels,
 ) -> usize {
     let pattern = match &frame.layout {
-        SensorLayout::Cfa(pattern) => pattern.shifted(crop.x, crop.y),
-        SensorLayout::Monochrome => bad_pixels::one_color(),
+        SensorLayout::Cfa(pattern) => Some(pattern.shifted(crop.x, crop.y)),
+        SensorLayout::Monochrome => None,
         SensorLayout::Linear => {
             log::warn!("DNG bad pixels left undone: the frame is linear");
             return 0;
@@ -1452,7 +1452,7 @@ fn fix_bad_pixels(
             }
         }
     }
-    let made = bad_pixels::repair(samples, width, height, &pattern, &bad);
+    let made = bad_pixels::repair(samples, width, height, pattern.as_ref(), &bad);
     log::debug!(
         "DNG bad pixels (phase {}): {} marked, {made} made again",
         fix.phase(),

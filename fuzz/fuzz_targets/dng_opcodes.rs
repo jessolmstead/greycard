@@ -1,9 +1,10 @@
 //! A DNG's opcode list, read as each of the three lists and what it
 //! asks applied to a small buffer: the gain maps and the sample maps to
-//! one plane and three, the bad photosites to a mosaic, the warps to
-//! RGB. Never a panic, and samples that start between 0 and 1 stay
-//! finite, the sample maps' within 0 and 1. The first four bytes
-//! place the buffer in the lists' image; the rest is the list.
+//! one plane and three, the bad photosites to a mosaic and to a
+//! monochrome plane, the warps to RGB. Never a panic, and samples that
+//! start between 0 and 1 stay finite, the sample maps' within 0 and 1.
+//! The first four bytes place the buffer in the lists' image; the rest
+//! is the list.
 #![no_main]
 
 use greycard_core::develop::bad_pixels::{mark_listed, repair};
@@ -45,15 +46,18 @@ fuzz_target!(|data: &[u8]| {
         }
     }
 
-    let mut mosaic = start(width * height);
     let mut bad = vec![false; width * height];
     for op in &read.mosaic {
         if let MosaicOp::BadPixels(_, fix) = op {
             mark_listed(&mut bad, width, height, at.x, at.y, fix);
         }
     }
-    repair(&mut mosaic, width, height, &CfaPattern::rggb(), &bad);
-    assert!(mosaic.iter().all(|s| s.is_finite()), "{mosaic:?}");
+    // A mosaic's, and a monochrome sensor's plane's.
+    for pattern in [Some(CfaPattern::rggb()), None] {
+        let mut mosaic = start(width * height);
+        repair(&mut mosaic, width, height, pattern.as_ref(), &bad);
+        assert!(mosaic.iter().all(|s| s.is_finite()), "{mosaic:?}");
+    }
 
     let mut rgb = start(width * height * 3);
     apply_warps(

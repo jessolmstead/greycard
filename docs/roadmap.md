@@ -85,7 +85,7 @@ the reasoning lives in `docs/notes.md`.
       shader's window sums, most likely (§668)
 - [ ] Monochrome sensors supported whole: the color tools out of the
       way on a monochrome file, a greyscale export with a grey
-      profile, the DNG's bad-pixel and vignette opcodes on one plane;
+      profile, the DNG's vignette opcodes on one plane;
       a fork's pieces welcome as pull requests (discussion 207)
 - [ ] A monochrome frame, untested: the camera match, and HDR,
       panorama, and focus merges (§668)

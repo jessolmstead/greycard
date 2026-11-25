@@ -56,6 +56,8 @@ design note behind it.
   ([§740](https://github.com/jessolmstead/greycard/blob/master/docs/notes/740-the-stacks-coarse-word-on-faint-texture.md)).
 - A focus stack keeps its reconstructed highlights, and saturated reds and blues, as an HDR merge does
   ([§743](https://github.com/jessolmstead/greycard/blob/master/docs/notes/743-the-focus-stacks-highlights-under-headroom.md)).
+- A monochrome DNG's listed bad pixels are repaired, from a contributor's pull request; every DNG's edited pictures, masks, and fills are made again once
+  ([§744](https://github.com/jessolmstead/greycard/blob/master/docs/notes/744-a-monochrome-dngs-bad-pixels.md)).
 - A focus stack can be made again with its frames denoised, from the
   Noise section or `greycard merge again --denoise`, and its file
   carries a noise profile.

@@ -63,11 +63,20 @@ pub const DEVELOP_RECIPE: u32 = 6;
 /// finish alone raises the edited pictures' recipes instead
 /// (`edited_pictures::EDITED_RECIPE` in the engine, whose test holds
 /// it to this), since this recipe also names the masks' rasters, whose
-/// print leaves the finish out. 2: the gamut op, by the engine's
-/// recipes (0x8005 and 0x8006). 3: the capture sharpen at a merge's
-/// exposed scale, by the engine's recipes (0x8007 and 0x8008): the
-/// sharpen is past the masks' tap, so no raster moves.
-pub const PROCESS_KEYED: u32 = 3;
+/// print leaves the finish out. A process that changes how a DNG alone
+/// is read raises [`greycard_core::decode::DNG_DECODE`] instead, named
+/// in [`PROCESS_BY_DNG_DECODE`], so no other file's pictures or rasters
+/// move. 2: the gamut op, by the engine's recipes (0x8005 and 0x8006).
+/// 3: the capture sharpen at a merge's exposed scale, by the engine's
+/// recipes (0x8007 and 0x8008): the sharpen is past the masks' tap, so
+/// no raster moves. 4: a monochrome DNG's bad-pixel lists, by
+/// `dng-decode-2`.
+pub const PROCESS_KEYED: u32 = 4;
+
+/// The processes re-keyed by [`greycard_core::decode::DNG_DECODE`]
+/// rather than a recipe, each with the version raised for it: the
+/// engine's recipes stay where they were for these, as its test knows.
+pub const PROCESS_BY_DNG_DECODE: &[(u32, &str)] = &[(4, "dng-decode-2")];
 
 /// The capture sharpen's guide, by version: taken into the key of an
 /// edit whose sharpen reads one ([`Edit::sharpen_reads_guide`]), so
@@ -239,30 +248,28 @@ pub fn headroom_key(key: u64, headroom: bool) -> u64 {
     u64::from_le_bytes(hash.as_bytes()[..8].try_into().expect("eight bytes"))
 }
 
-/// The key of an edit's picture on a frame that may carry a DNG
-/// `LinearizationTable` (`linearization`, by
-/// [`greycard_core::decode::may_have_linearization`] of its file):
-/// `key` with [`greycard_core::decode::LINEARIZATION`] taken in, as
-/// [`headroom_key`] takes the headroom in, so only such files'
-/// pictures are made again when how the table is read changes. Taken
-/// before [`framed_key`].
-pub fn linearization_key(key: u64, linearization: bool) -> u64 {
-    if !linearization {
+/// The key of an edit's picture on a DNG (`dng`, by
+/// [`greycard_core::decode::may_be_dng`] of its file): `key` with
+/// [`greycard_core::decode::DNG_DECODE`] taken in, as [`headroom_key`]
+/// takes the headroom in, so only DNGs' pictures are made again when
+/// how a DNG is read changes. Taken before [`framed_key`].
+pub fn dng_decode_key(key: u64, dng: bool) -> u64 {
+    if !dng {
         return key;
     }
     let mut hasher = blake3::Hasher::new();
-    hasher.update(b"greycard linearization\0");
+    hasher.update(b"greycard dng decode\0");
     hasher.update(&key.to_le_bytes());
-    hasher.update(greycard_core::decode::LINEARIZATION.as_bytes());
+    hasher.update(greycard_core::decode::DNG_DECODE.as_bytes());
     let hash = hasher.finalize();
     u64::from_le_bytes(hash.as_bytes()[..8].try_into().expect("eight bytes"))
 }
 
-/// [`headroom_key`] and [`linearization_key`] of `key`, each where the
+/// [`headroom_key`] and [`dng_decode_key`] of `key`, each where the
 /// file at `path` may need it: the decode's part of a picture's key.
 pub fn decode_key(key: u64, path: &std::path::Path) -> u64 {
     let key = headroom_key(key, greycard_core::decode::may_have_headroom(path));
-    linearization_key(key, greycard_core::decode::may_have_linearization(path))
+    dng_decode_key(key, greycard_core::decode::may_be_dng(path))
 }
 
 /// A file the develop of an edit reads outside the sidecar, as the key
@@ -400,15 +407,31 @@ impl Edit {
 mod tests {
     /// A new process renders differently, so the pictures kept under
     /// the old one must be made again: raising [`crate::PROCESS`]
-    /// without the key fails here.
+    /// without the key fails here. One re-keyed by the DNG decode names
+    /// the version raised for it, each later than the last and none past
+    /// the one in force.
     #[test]
     fn a_new_process_re_keys_the_pictures() {
         assert_eq!(
             crate::PROCESS,
             super::PROCESS_KEYED,
             "PROCESS was raised: raise DEVELOP_RECIPE (or take the process into \
-             the key) and set PROCESS_KEYED to it"
+             the key, or raise DNG_DECODE and name it in PROCESS_BY_DNG_DECODE) \
+             and set PROCESS_KEYED to it"
         );
+        let version = |v: &str| -> u32 {
+            v.strip_prefix("dng-decode-")
+                .and_then(|n| n.parse().ok())
+                .expect("dng-decode-N")
+        };
+        let now = version(greycard_core::decode::DNG_DECODE);
+        let mut last = (1, 1);
+        for &(process, decode) in super::PROCESS_BY_DNG_DECODE {
+            let decode = version(decode);
+            assert!(process > last.0 && process <= crate::PROCESS, "{process}");
+            assert!(decode > last.1 && decode <= now, "{decode}");
+            last = (process, decode);
+        }
     }
 
     use super::*;
@@ -961,31 +984,36 @@ mod tests {
         }
     }
 
-    /// The linearization's version is in the key of a DNG's pictures
-    /// and of no other file's; a CR3's takes the headroom alone.
+    /// The DNG decode's version is in the key of a DNG's pictures and
+    /// of no other file's (a CR3's takes the headroom alone), so its
+    /// raise leaves every other file's key as it was.
     #[test]
-    fn the_linearization_is_keyed_only_for_a_dng() {
-        use greycard_core::decode::may_have_linearization;
+    fn the_dng_decode_is_keyed_only_for_a_dng() {
+        use greycard_core::decode::may_be_dng;
         use std::path::Path;
         let key = key(&Edit::default(), None);
-        assert_eq!(linearization_key(key, false), key);
-        let dng = linearization_key(key, true);
+        assert_eq!(dng_decode_key(key, false), key);
+        let dng = dng_decode_key(key, true);
         assert_ne!(dng, key);
         assert_ne!(dng, headroom_key(key, true));
-        assert_eq!(
-            linearization_key(key, true),
-            dng,
-            "the same for the same key"
-        );
-        assert_ne!(linearization_key(key ^ 1, true), dng);
-        assert!(may_have_linearization(Path::new("a/L1000001.DNG")));
-        assert!(may_have_linearization(Path::new("b.dng")));
+        assert_eq!(dng_decode_key(key, true), dng, "the same for the same key");
+        assert_ne!(dng_decode_key(key ^ 1, true), dng);
+        assert!(may_be_dng(Path::new("a/L1000001.DNG")));
+        assert!(may_be_dng(Path::new("b.dng")));
         for other in ["c.CR3", "d.RAF", "e.NEF", "f.dng.gcd", "dng"] {
-            assert!(!may_have_linearization(Path::new(other)), "{other}");
+            assert!(!may_be_dng(Path::new(other)), "{other}");
         }
         assert_eq!(decode_key(key, Path::new("x.DNG")), dng);
         assert_eq!(decode_key(key, Path::new("x.cr3")), headroom_key(key, true));
         assert_eq!(decode_key(key, Path::new("x.RAF")), key);
         assert_eq!(decode_key(key, Path::new("x.nef")), key);
+        // A DNG's key is not the one `linearization-1` made, so its
+        // pictures are made again; the others' above never took it.
+        let mut hasher = blake3::Hasher::new();
+        hasher.update(b"greycard linearization\0");
+        hasher.update(&key.to_le_bytes());
+        hasher.update(b"linearization-1");
+        let before = u64::from_le_bytes(hasher.finalize().as_bytes()[..8].try_into().unwrap());
+        assert_ne!(dng, before);
     }
 }

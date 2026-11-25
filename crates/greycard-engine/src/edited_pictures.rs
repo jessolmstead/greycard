@@ -94,7 +94,8 @@ pub const REDUCED_RECIPE: u16 = 0x8008;
 /// The process the edit's recipes were last raised for, and the recipe:
 /// a new process (`greycard_edit::PROCESS`) that changes the finish
 /// alone, or the develop past the masks' tap, raises both recipes and
-/// this with it.
+/// this with it. One re-keyed by the DNG decode alone
+/// (`greycard_edit::key::PROCESS_BY_DNG_DECODE`) leaves both.
 #[cfg(test)]
 const RECIPE_FOR_PROCESS: (u32, u16) = (3, 0x8007);
 
@@ -1458,12 +1459,20 @@ pub mod tests {
     /// so a picture kept under a retired one is never read back.
     #[test]
     fn the_edits_recipes_are_new_and_apart() {
-        // Raised for this build's process (`greycard_edit::key::PROCESS_KEYED`).
-        assert_eq!(
-            RECIPE_FOR_PROCESS,
-            (greycard_edit::PROCESS, EDITED_RECIPE),
-            "a new process: raise both recipes (or DEVELOP_RECIPE) and RECIPE_FOR_PROCESS"
+        // Raised for this build's process (`greycard_edit::key::PROCESS_KEYED`),
+        // unless each process since was the DNG decode's to re-key.
+        assert_eq!(RECIPE_FOR_PROCESS.1, EDITED_RECIPE);
+        let by_decode = |p| {
+            greycard_edit::key::PROCESS_BY_DNG_DECODE
+                .iter()
+                .any(|&(q, _)| q == p)
+        };
+        assert!(
+            (RECIPE_FOR_PROCESS.0 + 1..=greycard_edit::PROCESS).all(by_decode),
+            "a new process: raise both recipes (or DEVELOP_RECIPE, or DNG_DECODE) \
+             and RECIPE_FOR_PROCESS"
         );
+        assert!(RECIPE_FOR_PROCESS.0 <= greycard_edit::PROCESS);
         assert_ne!(EDITED_RECIPE, REDUCED_RECIPE);
         for recipe in EDIT_RECIPES {
             assert_ne!(recipe & 0x8000, 0, "{recipe:#x}");
@@ -1488,16 +1497,16 @@ pub mod tests {
         assert_eq!(edited.key_of(cr3, &edit), headroom);
     }
 
-    /// A DNG's pictures are keyed with the linearization's version, as
-    /// its index row is; a CR3's and a RAF's are not.
+    /// A DNG's pictures are keyed with the DNG decode's version, as its
+    /// index row is; a CR3's and a RAF's are not.
     #[test]
-    fn a_dngs_pictures_take_the_linearization_in() {
+    fn a_dngs_pictures_take_the_dng_decode_in() {
         let edited = Edited::new(Arc::new(Mutex::new(None)));
         let edit = Edit::default();
         let raf = Path::new("not-there/a.RAF");
         let own = edited.key_known(raf, &edit);
         assert_eq!(edited.key_of(raf, &edit), own);
-        let dng = greycard_edit::key::linearization_key(own, true);
+        let dng = greycard_edit::key::dng_decode_key(own, true);
         assert_eq!(edited.key_known(Path::new("not-there/a.DNG"), &edit), dng);
         assert_eq!(edited.key_of(Path::new("not-there/a.dng"), &edit), dng);
         let cr3 = edited.key_known(Path::new("not-there/a.CR3"), &edit);

@@ -107,7 +107,8 @@ pub const VERSION: u32 = 10;
 ///
 /// Not in the pictures' key while one process exists: raising it must
 /// re-key them (`key::DEVELOP_RECIPE`, or for a change to the finish
-/// alone the engine's `edited_pictures::EDITED_RECIPE`, and
+/// alone the engine's `edited_pictures::EDITED_RECIPE`, or for one to
+/// how a DNG alone is read `greycard_core::decode::DNG_DECODE`, and
 /// `key::PROCESS_KEYED` with it, which a test holds to this).
 ///
 /// 2: the gamut op at the output in the clamp's place (the floor before
@@ -119,7 +120,11 @@ pub const VERSION: u32 = 10;
 /// frame's exposure, not 2^headroom under it, so its shadows are
 /// sharpened as the frame's are, 2026-11-24. A file with no headroom
 /// renders as at 2.
-pub const PROCESS: u32 = 3;
+///
+/// 4: a monochrome DNG's `FixBadPixelsConstant` and `FixBadPixelsList`
+/// repaired, as a mosaic's are, 2026-11-24. Any other file renders as
+/// at 3.
+pub const PROCESS: u32 = 4;
 
 /// The process a state the user makes now takes: [`PROCESS`], or in a
 /// test the one it sets for its thread.

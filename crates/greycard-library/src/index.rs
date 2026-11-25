@@ -2814,7 +2814,7 @@ fn summary_of(now: Option<&SidecarNow>, raw: &Path) -> Summary {
     // at the write (by its blend) has one too; a develop with no edit
     // to read gets the mark that says so.
     // Keyed with the headroom's version where the raw may decode with
-    // one, and the linearization's where it may carry a table, as the
+    // one, and the DNG decode's for a DNG, as the
     // engine keys what it keeps (`decode_key`). A state whose masks wait
     // on the frame's shape is no picture to key.
     let develop_key = if p.current.is_some()
@@ -8073,10 +8073,10 @@ pub(crate) mod tests {
         assert_ne!(cr3.develop_key, nef.develop_key);
     }
 
-    /// A row's key takes the linearization's version in for a DNG, as
+    /// A row's key takes the DNG decode's version in for a DNG, as
     /// the engine's does, and for a CR3 or a RAF not.
     #[test]
-    fn a_dng_rows_key_takes_the_linearization_in() {
+    fn a_dng_rows_key_takes_the_dng_decode_in() {
         let mut sidecar = greycard_edit::Sidecar::default();
         {
             let mut e = sidecar.current().clone();
@@ -8091,7 +8091,7 @@ pub(crate) mod tests {
         let row = |raw: &str| summary_from_json(&json, Path::new("x.gcd"), Some(Path::new(raw)));
         assert_eq!(
             row("x.DNG").develop_key,
-            Some(greycard_edit::key::linearization_key(own, true))
+            Some(greycard_edit::key::dng_decode_key(own, true))
         );
         assert_eq!(row("x.RAF").develop_key, Some(own));
         assert_eq!(

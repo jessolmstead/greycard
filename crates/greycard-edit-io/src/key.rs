@@ -114,8 +114,8 @@ fn contents(path: &Path) -> Option<[u8; 32]> {
 /// no crop stored ([`ASPECT_FRAME`]), the output sharpen's radius
 /// ([`OUTPUT_SHARPEN`]), the highlight fill's
 /// implementation ([`HIGHLIGHT_FILL`]), the saturation table's version
-/// ([`greycard_core::decode::HEADROOM`]), how a DNG's linearization
-/// table is read ([`greycard_core::decode::LINEARIZATION`]), the lens
+/// ([`greycard_core::decode::HEADROOM`]), how a DNG is read
+/// ([`greycard_core::decode::DNG_DECODE`]), the lens
 /// database's name as the caller gives
 /// it, and the look and profile directories as they stand (each file's
 /// name, length and modification time; not their contents, which only
@@ -176,7 +176,7 @@ pub fn keys_made_under_in(
          {ASPECT_FRAME}; {OUTPUT_SHARPEN}; {HIGHLIGHT_FILL}; {}; {}; \
          lenses {lenses:?}; files {}",
         greycard_core::decode::HEADROOM,
-        greycard_core::decode::LINEARIZATION,
+        greycard_core::decode::DNG_DECODE,
         &files.to_hex()[..16]
     )
 }
@@ -303,7 +303,7 @@ mod tests {
             OUTPUT_SHARPEN,
             HIGHLIGHT_FILL,
             greycard_core::decode::HEADROOM,
-            greycard_core::decode::LINEARIZATION,
+            greycard_core::decode::DNG_DECODE,
         ] {
             assert!(first.contains(&format!("; {part};")), "{part}: {first}");
         }
