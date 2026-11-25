@@ -23,12 +23,16 @@ the recent list wait for the submenu to close.
   collection's cut is reached through All collections..., Move to
   group's through New group... (which takes an existing group's name
   as that group), and the recent folders' through opening the folder.
-  Four have no other path: Edit in (the Settings sheet orders and
-  removes apps, it does not launch them), Back up to and Bring back
-  to, the grid header's archive button, and the rejects menu's
-  archive choices. We accept that: twenty-odd apps or archives is not
-  a setup we expect, and a crash was the alternative. No other menu
-  in the window is fed from a list without a bound.
+  Four had no other path: Edit in, Back up to and Bring back to, the
+  grid header's archive button, and the rejects menu's archive
+  choices. Each now ends, when the window cuts it, with All apps...
+  or All archives..., which takes one of the menu's rows and opens
+  All collections...'s sheet, now shared (`ChoiceSheet`), over the
+  whole list. The sheet holds the list it opened on, since the live
+  ones are refilled under it; a pick goes to the live entry of that
+  name and does what its menu item does, or nothing when the name is
+  gone. No list-fed menu leaves an entry out of reach, and no other
+  menu in the window is fed from a list without a bound.
 - *The sheet's list fast at any size.* It was a button a collection,
   and each key made a fresh model: 5,000 collections took 4 s to open
   and 7 s a key in a debug build. Rust now holds one model and narrows

@@ -416,8 +416,11 @@ pub(crate) fn show(st: &State, app: &App) {
         Side::None => (String::new(), String::new(), Vec::new()),
     };
     app.set_archive_header(header.into());
+    app.set_archive_header_verb(verb.as_str().into());
     app.set_archive_verb(verb.into());
     app.set_archive_choices(labels(st, &choices));
+    // Its own copy: the frame menu's ask overwrites `archive_choices`.
+    app.set_archive_header_names(labels(st, &choices));
     let items: Vec<slint::SharedString> = items.into_iter().map(Into::into).collect();
     app.set_archive_header_choices(ModelRc::new(VecModel::from(items)));
     rejects::show(st, app);

@@ -238,6 +238,7 @@ design note behind it.
 - A lens no longer takes the profile of another line of its maker's,
   such as an EF's for an EF-S or an FA's for a D FA*; such a picture
   now opens uncorrected until a lens is picked (issue 197).
+- Edit in and the archive menus, when too long for the window, end with All apps... or All archives..., a list to search.
 - A DNG with a linearization table, such as some DxO PureRAW files,
   no longer develops six stops dark and magenta.
 - A camera DNG that lists a tiny thumbnail first, a Leica M11's, shows

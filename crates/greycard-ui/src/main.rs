@@ -1182,6 +1182,7 @@ pub(crate) fn install_callbacks(app: &App, state: Rc<Shared>, worker: Rc<Worker>
     panel::camera_match::install(app, &state);
     roots::install(app, &state, &worker);
     panel::collections::install(app, &state, &worker);
+    panel::choices::install(app);
     panel::stacks::install(app, &state, &worker);
     panel::sort::install(app, &state, &worker);
     lightbox::install(app, &state, &worker);

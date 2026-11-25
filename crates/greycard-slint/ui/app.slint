@@ -62,6 +62,7 @@ import { CollectionsSection } from "panel/collections.slint";
 import { MetaSection } from "panel/meta.slint";
 import { CollectionSheet } from "panel/collection-sheet.slint";
 import { CollectionPickerSheet } from "panel/collection-picker-sheet.slint";
+import { ChoiceSheet } from "panel/choice-sheet.slint";
 import { KeysSheet } from "panel/keys-sheet.slint";
 
 export component App inherits Window {
@@ -932,6 +933,21 @@ export component App inherits Window {
     in-out property <bool> collection-picker-open;
     in property <[CollectionChoice]> collection-found;
     callback collection-search(string);
+    /// The whole list of a menu the window cut, as a sheet: Edit in's
+    /// All apps... ("edit-in"), and All archives... on the frame menu
+    /// ("archive"), the grid header's button ("archive-header"), and
+    /// its rejects menu ("archive-rejects"). Rust narrows the list
+    /// held as the menu showed it (`choice-hold`) to what is typed
+    /// (`choice-search`), each choice's id its place in that list; a
+    /// pick goes where the menu item of that name now goes
+    /// (`choice-place`: its place in the live list, -1 for none).
+    in-out property <bool> choice-sheet-open;
+    in-out property <string> choice-sheet-for;
+    in-out property <string> choice-sheet-title;
+    in property <[CollectionChoice]> choice-found;
+    callback choice-hold([string]);
+    callback choice-search(string);
+    callback choice-place([string], int) -> int;
     /// A search field's text after a key typed while a button beside
     /// it has the keys (`keys::typed_into`).
     pure callback key-typed-into(string, string) -> string;
@@ -961,6 +977,10 @@ export component App inherits Window {
     /// The header's menu with more than one choice: each in full
     /// ("Back up to nas (3 frames not on nas)..."), in the same order.
     in property <[string]> archive-header-choices: [];
+    /// The header's "Back up" or "Bring back", for its sheet's heading,
+    /// and its choices by name, which the sheet lists.
+    in property <string> archive-header-verb: "";
+    in property <[string]> archive-header-names: [];
     /// The header's button pressed, with the choice.
     callback archive-header-pressed(int);
     /// The frame menu's: "Back up", "Bring back" or nothing, and the
@@ -3145,6 +3165,50 @@ export component App inherits Window {
             }
         }
     }
+    // A menu's whole list asked for: the sheet up once the menu has
+    // closed, as All collections...'s is.
+    function choice-sheet-ask(what: string, title: string) {
+        root.choice-sheet-for = what;
+        root.choice-sheet-title = title;
+        // The list as the menu showed it, held: Rust refills the live
+        // lists as views and counts land, and an archive menu's is
+        // empty in a view with no side.
+        root.choice-hold(root.choice-live());
+        choice-sheet-delay.running = true;
+    }
+    choice-sheet-delay := Timer {
+        interval: 1ms;
+        running: false;
+        triggered => {
+            self.running = false;
+            keys.focus();
+            root.choice-sheet-open = true;
+        }
+    }
+    /// The list the choice sheet is over, as its menu has it now.
+    pure function choice-live() -> [string] {
+        return root.choice-sheet-for == "edit-in" ? root.edit-in-apps
+            : root.choice-sheet-for == "archive" ? root.archive-choices
+            : root.choice-sheet-for == "archive-header" ? root.archive-header-names
+            : root.archive-rejects-choices;
+    }
+    /// A choice taken from the sheet, by its place in the list held:
+    /// what the menu item with its name does now, at its place in the
+    /// live list; nothing when the live list no longer has it.
+    function choice-picked(held: int) {
+        root.choice-sheet-open = false;
+        let at = root.choice-place(root.choice-live(), held);
+        if (at < 0) { return; }
+        if (root.choice-sheet-for == "edit-in") {
+            root.menu-edit-in(at);
+        } else if (root.choice-sheet-for == "archive") {
+            root.archive-menu-picked(at);
+        } else if (root.choice-sheet-for == "archive-header") {
+            root.archive-header-pressed(at);
+        } else {
+            root.archive-rejects-asked(at);
+        }
+    }
     function frame-menu-at(row: int, x: length, y: length) {
         if (root.sheet-open()) { return; }
         root.frame-menu-asked(row);
@@ -3220,7 +3284,7 @@ export component App inherits Window {
             || root.delete-open || root.look-remove-open || root.look-rename-open || root.overwrite-open || root.archive-open || root.archive-rejects-open
             || root.time-shift-open
             || root.settings-open || root.sync-open || root.import-open || root.match-open
-            || root.root-sheet-open || root.collection-picker-open || root.collection-sheet-open || root.preset-group-sheet-open || root.preset-report-open
+            || root.root-sheet-open || root.collection-picker-open || root.choice-sheet-open || root.collection-sheet-open || root.preset-group-sheet-open || root.preset-report-open
             || root.lr-open || root.rt-open || root.keys-open;
     }
 
@@ -3313,7 +3377,8 @@ export component App inherits Window {
         + (root.archive-rejects-open ? 1 : 0) + (root.time-shift-open ? 1 : 0)
         + (root.settings-open ? 1 : 0) + (root.sync-open ? 1 : 0) + (root.import-open ? 1 : 0)
         + (root.match-open ? 1 : 0) + (root.root-sheet-open ? 1 : 0)
-        + (root.collection-picker-open ? 1 : 0) + (root.collection-sheet-open ? 1 : 0) + (root.preset-group-sheet-open ? 1 : 0)
+        + (root.collection-picker-open ? 1 : 0) + (root.choice-sheet-open ? 1 : 0)
+        + (root.collection-sheet-open ? 1 : 0) + (root.preset-group-sheet-open ? 1 : 0)
         + (root.preset-report-open ? 1 : 0) + (root.lr-open ? 1 : 0) + (root.rt-open ? 1 : 0)
         + (root.keys-open ? 1 : 0);
     property <int> sheets-were: 0;
@@ -3437,6 +3502,7 @@ export component App inherits Window {
             }
             if (chord == "Esc" && root.root-sheet-open) { root.root-sheet-open = false; return accept; }
             if (chord == "Esc" && root.collection-picker-open) { root.collection-picker-open = false; return accept; }
+            if (chord == "Esc" && root.choice-sheet-open) { root.choice-sheet-open = false; return accept; }
             if (chord == "Esc" && root.collection-sheet-open) { root.collection-sheet-open = false; return accept; }
             if (chord == "Esc" && root.preset-group-sheet-open) { root.preset-group-sheet-open = false; return accept; }
             if (chord == "Esc" && root.rejects-open) { root.rejects-answered(false); return accept; }
@@ -5806,6 +5872,11 @@ export component App inherits Window {
         delete-asked(w) => { root.delete-asked(w); }
         archive-rejects-choices: root.archive-rejects-choices;
         archive-rejects-asked(i) => { root.archive-rejects-asked(i); }
+        // All archives...'s sheets: the header's headed as the frame
+        // menu's submenu is, the rejects' with the Rejects button's words.
+        // Frame menu: {} is Back up or Bring back, over a list of archives
+        archive-all => { root.choice-sheet-ask("archive-header", @tr("{} to", root.archive-header-verb)); }
+        archive-rejects-all(title) => { root.choice-sheet-ask("archive-rejects", title); }
     }
 
     // The left pane: the navigator, then the folder open and Recently
@@ -6862,6 +6933,18 @@ export component App inherits Window {
         }
     }
 
+    // The whole list of Edit in or of an archive menu the window cut.
+    if root.choice-sheet-open: ChoiceSheet {
+        open <=> root.choice-sheet-open;
+        title: root.choice-sheet-title;
+        placeholder: root.choice-sheet-for == "edit-in" ? @tr("Search apps") : @tr("Search archives");
+        none-text: root.choice-sheet-for == "edit-in" ? @tr("No matching apps.") : @tr("No matching archives.");
+        choices: root.choice-found;
+        searched(text) => { root.choice-search(text); }
+        typed-into(text, key) => { return root.key-typed-into(text, key); }
+        picked(choice) => { root.choice-picked(choice.id.to-float()); }
+    }
+
     // The collection sheet: a name for a new collection, a smart one
     // or a renamed one, or whether to delete one.
     if root.collection-sheet-open: CollectionSheet {
@@ -7184,6 +7267,9 @@ export component App inherits Window {
         }
         collection-remove => { root.collection-menu-remove(); root.menu-done(); }
         archive(i) => { root.archive-menu-picked(i); root.menu-done(); }
+        // All archives...'s sheet is headed as the submenu is.
+        // Frame menu: {} is Back up or Bring back, over a list of archives
+        archive-all => { root.choice-sheet-ask("archive", @tr("{} to", root.archive-verb)); }
         copy => { root.menu-copy(); root.menu-done(); }
         // The sheet takes the focus itself, as the sync's does.
         paste => {
@@ -7200,6 +7286,7 @@ export component App inherits Window {
         reveal => { root.menu-reveal(); root.menu-done(); }
         edit-in-apps: root.edit-in-apps;
         edit-in(i) => { root.menu-edit-in(i); root.menu-done(); }
+        edit-in-all => { root.choice-sheet-ask("edit-in", @tr("Edit in")); }
         reset => { root.menu-reset(); root.menu-done(); }
         // The sheet takes the focus itself, as the time shift's does.
         export => {

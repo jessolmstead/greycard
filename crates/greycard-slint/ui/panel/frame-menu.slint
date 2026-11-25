@@ -9,7 +9,8 @@ import { MenuFit } from "../theme.slint";
 // was, in the window's coordinates, and `open` puts it there. Every
 // item goes through the code its key does; this file only names them.
 // A submenu fed from a list shows as many of it as the window holds
-// (`MenuFit`).
+// (`MenuFit`), and past that a last row that opens the whole list as a
+// sheet (`ChoiceSheet`).
 
 export component FrameMenu inherits Rectangle {
     /// How many frames the menu acts on, the current one among them.
@@ -40,6 +41,10 @@ export component FrameMenu inherits Rectangle {
     in property <string> archive-verb;
     in property <[string]> archive-choices;
     callback archive(int);
+    /// All archives...: the whole list as a sheet, offered when the
+    /// window cuts the submenu.
+    callback archive-all();
+    property <bool> archive-cut: root.archive-choices.length > MenuFit.rows(0);
     /// How many of the selection are in a rejects folder, and the
     /// folder above it by name, for Move back; none leaves it out.
     in property <int> back-count;
@@ -71,6 +76,10 @@ export component FrameMenu inherits Rectangle {
     /// its own, more a submenu of them, and none leaves it out.
     in property <[string]> edit-in-apps;
     callback edit-in(int);
+    /// All apps...: the whole list as a sheet, offered when the window
+    /// cuts the submenu.
+    callback edit-in-all();
+    property <bool> edit-in-cut: root.edit-in-apps.length > MenuFit.rows(0);
     /// The sync sheet over the selection, from the frame on screen:
     /// offered with more than one frame chosen, as Ctrl+Shift+S is.
     callback sync();
@@ -342,15 +351,17 @@ export component FrameMenu inherits Rectangle {
             }
             if root.edit-in-apps.length > 1: Menu {
                 title: @tr("Edit in");
-                // Past what the window holds an app is not offered here;
-                // it stays on the Settings sheet's list, and comes back
-                // as others are taken off. More apps than a window's
-                // height of rows (some 20 and more) is not a list we
-                // expect anyone to keep.
-                for i in min(root.edit-in-apps.length, MenuFit.rows(0)): MenuItem {
+                // Past what the window holds, the last row is All
+                // apps..., which opens the whole list as a sheet.
+                for i in root.edit-in-cut ? MenuFit.rows(1) : root.edit-in-apps.length: MenuItem {
                     title: root.edit-in-apps[i];
                     enabled: root.can-export;
                     activated => { root.edit-in(i); }
+                }
+                if root.edit-in-cut: MenuItem {
+                    title: @tr("All apps...");
+                    enabled: root.can-export;
+                    activated => { root.edit-in-all(); }
                 }
             }
             if root.back-count > 0: MenuItem {
@@ -367,13 +378,15 @@ export component FrameMenu inherits Rectangle {
             if root.archive-verb != "" && root.archive-choices.length > 1: Menu {
                 // Frame menu: {} is Back up or Bring back, over a list of archives
                 title: @tr("{} to", root.archive-verb);
-                // Past what the window holds an archive (or a local
-                // root) is not offered, and nothing else backs the
-                // selection up to it. Some 20 and more archives is not
-                // a library we expect; a crash was the other way.
-                for i in min(root.archive-choices.length, MenuFit.rows(0)): MenuItem {
+                // Past what the window holds, the last row is All
+                // archives..., as Edit in's is All apps....
+                for i in root.archive-cut ? MenuFit.rows(1) : root.archive-choices.length: MenuItem {
                     title: root.archive-choices[i] + "...";
                     activated => { root.archive(i); }
+                }
+                if root.archive-cut: MenuItem {
+                    title: @tr("All archives...");
+                    activated => { root.archive-all(); }
                 }
             }
         }

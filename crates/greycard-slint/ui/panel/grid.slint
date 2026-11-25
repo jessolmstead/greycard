@@ -344,6 +344,13 @@ export component GridSheet inherits Rectangle {
     in property <string> archive-text;
     in property <[string]> archive-choices;
     callback archive-pressed(int);
+    /// All archives... on either menu, past what the window holds: the
+    /// whole list as a sheet; the rejects' with the menu's button's
+    /// words for its heading.
+    callback archive-all();
+    callback archive-rejects-all(string);
+    property <bool> archive-cut: root.archive-choices.length > MenuFit.rows(0);
+    property <bool> rejects-cut: root.archive-rejects-choices.length > MenuFit.rows(5);
     /// The header's Rejects menu: CULLING's ways out for the rejects,
     /// here because the grid covers the panel. The same counts and
     /// the same callbacks as the section's, which the window forwards
@@ -535,10 +542,16 @@ export component GridSheet inherits Rectangle {
                             enabled: false;
                             Menu {
                                 // Past what the window holds, as the
-                                // frame menu's archives are: not offered.
-                                for i in min(root.archive-choices.length, MenuFit.rows(0)): MenuItem {
+                                // frame menu's archives are: the last
+                                // row is All archives..., the whole
+                                // list as a sheet.
+                                for i in root.archive-cut ? MenuFit.rows(1) : root.archive-choices.length: MenuItem {
                                     title: root.archive-choices[i];
                                     activated => { root.archive-pressed(i); }
+                                }
+                                if root.archive-cut: MenuItem {
+                                    title: @tr("All archives...");
+                                    activated => { root.archive-all(); }
                                 }
                             }
                         }
@@ -590,10 +603,15 @@ export component GridSheet inherits Rectangle {
                                 }
                                 if root.archive-rejects-choices.length > 0: MenuSeparator { }
                                 // Beside the menu's five rows above; past
-                                // them, as the archive button's are.
-                                for i in min(root.archive-rejects-choices.length, MenuFit.rows(5)): MenuItem {
+                                // them, as the archive button's are,
+                                // All archives... last.
+                                for i in root.rejects-cut ? MenuFit.rows(6) : root.archive-rejects-choices.length: MenuItem {
                                     title: root.archive-rejects-choices[i];
                                     activated => { root.archive-rejects-asked(i); }
+                                }
+                                if root.rejects-cut: MenuItem {
+                                    title: @tr("All archives...");
+                                    activated => { root.archive-rejects-all(rejects-button.text); }
                                 }
                             }
                         }

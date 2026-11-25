@@ -429,10 +429,6 @@ licenses, never bundled; a `greycard-ai` crate that core never sees.
 - [ ] A very small TIFF loses its color profile: the decoder refuses
       a profile tag larger than the picture's own bytes; read it from
       the TIFF's directory ourselves
-- [ ] A menu cut to the window says so: All apps... and All
-      archives... at the foot of Edit in and the archive menus when
-      entries were left out, opening the collections' list to search
-      (§738)
 - [ ] The collections sidebar with thousands of collections: one row
       a collection, 0.4 s a settle at 5,000 (§738)
 - [ ] A fill kept across a change under it, a lens correction among

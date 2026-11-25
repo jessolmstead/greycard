@@ -237,7 +237,7 @@ fn the_frame_menu_can_add_to_the_last_of_392_collections() {
         .mock_single_click(PointerEventButton::Left);
     settle(app);
     assert!(app.invoke_sheet_open());
-    let pane = ElementHandle::find_by_element_id(app, "CollectionPickerSheet::scroll")
+    let pane = ElementHandle::find_by_element_id(app, "ChoiceSheet::scroll")
         .next()
         .unwrap();
     let (at, size) = (pane.absolute_position(), pane.size());
@@ -1489,14 +1489,14 @@ fn open_picker(app: &App) {
 fn picker_rows(app: &App) -> Vec<(String, bool, bool)> {
     use i_slint_backend_testing::ElementHandle;
     crate::testing::settle(app);
-    let pane = ElementHandle::find_by_element_id(app, "CollectionPickerSheet::scroll")
+    let pane = ElementHandle::find_by_element_id(app, "ChoiceSheet::scroll")
         .next()
         .unwrap();
     let (top, foot) = (
         pane.absolute_position().y,
         pane.absolute_position().y + pane.size().height,
     );
-    let mut rows: Vec<_> = crate::testing::all_by_id(app, "CollectionPickerSheet::row");
+    let mut rows: Vec<_> = crate::testing::all_by_id(app, "ChoiceSheet::row");
     rows.sort_by(|a, b| a.absolute_position().y.total_cmp(&b.absolute_position().y));
     rows.iter()
         .map(|r| {
@@ -1666,7 +1666,7 @@ fn the_picker_closes_on_escape_and_takes_nothing_with_no_match() {
     assert_eq!(app.get_collection_found().row_count(), 0);
     assert!(picker_rows(app).is_empty());
     assert!(
-        ElementHandle::find_by_element_id(app, "CollectionPickerSheet::none")
+        ElementHandle::find_by_element_id(app, "ChoiceSheet::none")
             .next()
             .is_some()
     );
@@ -1924,7 +1924,8 @@ const BELOW_THE_LOWEST: f32 = 5.0 + 16.0;
 /// names each, in a tall window and in one shorter than the layout's
 /// least: Add to collection names ten, or what the window holds, with
 /// All collections... and New collection...; Edit in, which Rust does
-/// not cut, as many apps as the window holds (`MenuFit`). Each
+/// not cut, as many apps as the window holds beside All apps...
+/// (`MenuFit`). Each
 /// submenu, its frame and its shadow inside the window: 400 rows were
 /// 12,883 px.
 #[test]
@@ -1963,8 +1964,13 @@ fn the_frame_menus_lists_fit_the_window() {
             foot + BELOW_THE_LOWEST <= height,
             "Add to collection: {foot} in {height}"
         );
-        let (named, _, foot) = submenu(&app, &title("Edit in"), "App ", &[], &|_| {});
-        assert_eq!(named, fit.invoke_rows(0) as usize, "{height}");
+        let (named, others, foot) =
+            submenu(&app, &title("Edit in"), "App ", &["All apps..."], &|_| {});
+        assert_eq!(
+            (named, others),
+            (fit.invoke_rows(1) as usize, vec![1]),
+            "{height}"
+        );
         assert!(named < 400);
         assert!(
             foot + BELOW_THE_LOWEST <= height,
@@ -2040,7 +2046,8 @@ fn no_list_fed_menu_passes_the_texture_limit() {
         let (named, ..) = submenu(app, &title("Add to collection"), "Shoot ", &[], &|_| {});
         fits("Add to collection", named, 3);
         let (named, ..) = submenu(app, &title("Edit in"), "App ", &[], &|_| {});
-        fits("Edit in", named, 0);
+        // All apps... and All archives... are a row each.
+        fits("Edit in", named, 1);
         // As though the selection could go to n archives: what Rust
         // sets as the menu opens, set by the test in its place.
         {
@@ -2053,7 +2060,7 @@ fn no_list_fed_menu_passes_the_texture_limit() {
             });
         }
         let (named, ..) = submenu(app, "Back up to", "Archive ", &[], &|_| {});
-        fits("Back up to", named, 0);
+        fits("Back up to", named, 1);
 
         // The grid header's buttons.
         app.set_archive_header("Back up".into());
@@ -2061,8 +2068,8 @@ fn no_list_fed_menu_passes_the_texture_limit() {
         app.set_archive_rejects_choices(names("Rejects ", n));
         settle(app);
         for (button, prefix, own) in [
-            ("GridSheet::archive-button", "Header ", 0),
-            ("GridSheet::rejects-button", "Rejects ", 5),
+            ("GridSheet::archive-button", "Header ", 1),
+            ("GridSheet::rejects-button", "Rejects ", 6),
         ] {
             ElementHandle::find_by_element_id(app, button)
                 .next()

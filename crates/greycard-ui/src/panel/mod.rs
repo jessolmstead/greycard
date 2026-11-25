@@ -4,6 +4,7 @@ pub(crate) mod browser;
 pub(crate) mod bursts;
 pub(crate) mod camera_match;
 pub(crate) mod carried;
+pub(crate) mod choices;
 pub(crate) mod collections;
 pub(crate) mod color;
 pub(crate) mod crop;
