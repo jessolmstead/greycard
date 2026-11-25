@@ -1375,6 +1375,9 @@ clears or a tester asks for it.
       squashing one axis so a tower a strong vertical correction
       stretched is its own height again, and a shear, as darktable's
       rotate and perspective has (discussion 149, 2026-11-15)
+- [ ] An anamorphic desqueeze: the lens's squeeze typed in or picked
+      (1.33, 1.5, 1.8, 2.0), stretching one axis exactly, apart from
+      the perspective's aspect adjust (issue 212)
 - [ ] The generative remove on a card too small for it (a 4 GB card
       has Fast and Best greyed, §646), measured 2026-11-15: the fp16
       UNet holds 5.0 to 5.3 GiB on the card whatever the tile, so

@@ -10,7 +10,8 @@ lightbox, the rejects folder, and deleting frames.
 Every frame can carry:
 
 - **a rating**, 0 to 5 stars
-- **a flag**: pick, reject, or none
+- **a flag**: pick, reject, or none. A pick shows a flag on the frame's
+  tile and in the loupe, a reject a red X
 - **a color label**: red, yellow, green, blue or purple
 
 Set them with the keys, from the frame menu, or in Cull. The keys
