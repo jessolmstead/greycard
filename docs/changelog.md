@@ -48,6 +48,8 @@ design note behind it.
   aberration corrected: finer texture, no color fringes, about 1.8
   times the time
   ([§739](https://github.com/jessolmstead/greycard/blob/master/docs/notes/739-the-focus-stack-on-the-full-develop.md)).
+- A focus stack of eight frames or more keeps faint, fine texture that it used to average away
+  ([§740](https://github.com/jessolmstead/greycard/blob/master/docs/notes/740-the-stacks-coarse-word-on-faint-texture.md)).
 - A focus stack can be made again with its frames denoised, from the
   Noise section or `greycard merge again --denoise`, and its file
   carries a noise profile.

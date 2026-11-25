@@ -29,7 +29,8 @@
 //! writes a DNG, write it with [`write_dng`]. Neither has a stack of its
 //! own. The file keeps a recipe, so it is made again (`merge::again`)
 //! as a bracket and a panorama are: each frame blended where the
-//! recipe put it ([`stack::stack_camera_placed`]), nothing fitted.
+//! recipe put it ([`stack::stack_camera_placed`]), nothing fitted, each
+//! read the short way first as well when the stack's prior speaks.
 //!
 //! No frame is held: each is read when the core's merge asks for it, so
 //! a stack's memory is one frame's working set whatever the count
@@ -278,7 +279,10 @@ struct Walks {
 /// walked again to be blended, and nothing of it is kept between but
 /// its tags. Each first read is said to `progress` as a frame, then the
 /// placing, then each blend. With the places given (`options.placed`)
-/// only the blends are read and said. A developed picture is refused: it is past
+/// only the blends are read and said, unless the stack's prior speaks
+/// (a selectivity above 0 and eight frames or more placed): then the
+/// frames used are read the short way first, said as frames and the
+/// placing, to gather its evidence again. A developed picture is refused: it is past
 /// the white balance and the matrix. So is a stack the machine's
 /// available memory will not hold ([`room`]), read off the first
 /// frame's size before any other frame is decoded.
@@ -322,7 +326,9 @@ pub fn frames(
     let mut walks = Walks::default();
     let learned = options.denoiser.is_some();
     // Made again: the reference's tags and white read first, as its
-    // placing read would take them, and every read a blend.
+    // placing read would take them. Every read is a blend unless the
+    // stack's prior is gathered again, whose reads come first and are
+    // placing reads, as the first merge's were.
     if let Some(placed) = &options.placed {
         let Some(r) = known.filter(|_| placed.len() == of) else {
             bail!(
@@ -347,7 +353,6 @@ pub fn frames(
             .white_balance;
         frame.samples = Samples::U16(Vec::new());
         heads.borrow_mut()[r] = Some((frame, metadata, white));
-        blending.set(true);
         developing += t.elapsed().as_secs_f64();
     }
     let read = |k: usize| -> Result<CameraImage> {

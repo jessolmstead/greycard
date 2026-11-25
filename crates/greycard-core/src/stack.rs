@@ -110,6 +110,25 @@
 //! quality problem and the reason it is on by default. See its own
 //! note.
 //!
+//! **Faint texture.** The weights come from the full-resolution
+//! Laplacian, and where the picture has only a faint, fine texture
+//! that measure is the sensor noise's, the same in every frame: the
+//! weights spread over the whole stack and the merge averages frames
+//! focused at other depths over the texture. On the bed's eleven
+//! frames at base ISO it kept a quarter of a 1.5% texture, where the
+//! frame focused there keeps three quarters. So the placing pass also
+//! gathers, per 16 px block and counted across the stack, each frame's
+//! energy a level and two down the pyramid, where the texture stands
+//! clear of the noise; and the blend weighs each frame's three finest
+//! bands by how near that frame comes to the block's sharpest, where
+//! the sharpest stands far enough above the block's median, measured
+//! against each frame's own finest band, to be believed against pure
+//! noise. The same bed keeps 0.57 of the texture now; a flat field, where no block is believed, is averaged
+//! as it was. See `prior`. The coarser bands and the top keep the
+//! frames' own weights, so the seams and the halo are the pyramid's as
+//! below. Stacks of fewer than eight frames, and a selectivity of 0,
+//! merge as they did.
+//!
 //! What was considered and is not here: shrinking each frame's weight
 //! map by a morphological erosion the width of the blur, so that a
 //! frame is never trusted right up to the edge of where it is sharp.
@@ -143,7 +162,9 @@
 //!
 //! **Memory.** The merge's own share is the three accumulator pyramids
 //! — the weighted bands, the weights and the unweighted bands the
-//! flat-region fallback needs — and one frame's pyramid at a time.
+//! flat-region fallback needs — and one frame's pyramid at a time,
+//! with the prior's block counts beside them (about 1.6 bytes a pixel,
+//! whatever the count).
 //! Nothing else is held across frames: the luminance planes are taken
 //! and dropped as they are used, three at a time in the chain and one
 //! at a time everywhere else, and the Laplacian pyramid takes the
@@ -161,7 +182,10 @@ use crate::register::{self, Edge, Fit, Kernel, Transform};
 use crate::sharpness;
 
 #[cfg(test)]
+mod bed;
+#[cfg(test)]
 mod in_memory;
+mod prior;
 
 /// Which frame the others are put onto.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -228,6 +252,11 @@ pub struct Options {
     /// 0.0243 at 8, against 0.0319 for a single frame: at 2 the stack
     /// is still worth two and a half frames of averaging, at 8 barely
     /// one. Two is the default for that reason.
+    ///
+    /// At 0 the stack's prior (see the module's note on faint texture)
+    /// stands down too, so 0 stays the plain weighted average of the
+    /// full-resolution map; above 0 the prior weighs the finest bands
+    /// beside it.
     pub selectivity: f32,
     /// Radius the band contrast is smoothed over before the
     /// selectivity exponent, in that level's own pixels, so the
@@ -458,11 +487,19 @@ pub fn stack_camera_from<E: From<Error>>(
 /// [`stack_camera_from`] with every frame's place given rather than
 /// found: `placed[k]` is frame `k`'s transform onto frame `reference`,
 /// none for a frame left out. Nothing is scored or fitted; each frame
-/// the merge uses is read once and blended where it is put, so the
-/// picture is the one [`stack_camera_from`] made, to the bit, when the
-/// places are the ones it found. For a stack made again from what it
-/// kept. The report's scores and fits are left empty; a frame left out
-/// is [`Dropped::NoFit`].
+/// the merge uses is blended where it is put, so the picture is the one
+/// [`stack_camera_from`] made, to the bit, when the places are the ones
+/// it found. For a stack made again from what it kept.
+///
+/// Where the stack's prior has a say (a selectivity above 0 and at
+/// least `prior::MIN_FRAMES`, 8, frames placed), its evidence is
+/// gathered again as the placing pass gathered it: each frame the merge
+/// uses read in the chain's order, each read said as [`Step::Reading`]
+/// of the frames used, then [`Step::Placing`], then the blends. Such a
+/// frame is read twice, and its first read should be what the placing
+/// pass read. Otherwise each is read once, to be blended. The report's
+/// scores and fits are left empty; a frame left out is
+/// [`Dropped::NoFit`].
 pub fn stack_camera_placed<E: From<Error>>(
     reference: usize,
     placed: &[Option<Transform>],
@@ -487,6 +524,32 @@ pub fn stack_camera_placed<E: From<Error>>(
         .enumerate()
         .filter_map(|(k, t)| Some((k, (*t)?)))
         .collect();
+    // The prior as the placing pass found it: the same frames in the
+    // same order, the reference and then the chain's, each measured as
+    // read and put by its transform. With fewer placed than a median
+    // wants, [`merge_from`] gathered and threw away, so none is read.
+    let mut prior = None;
+    if options.selectivity > 0.0 && used.len() >= prior::MIN_FRAMES {
+        let mut evidence: Option<prior::Gathered> = None;
+        let order =
+            std::iter::once(reference).chain(chain_orders(n, reference).into_iter().flatten());
+        let order = order.filter_map(|k| Some((k, placed[k]?)));
+        for (i, (k, transform)) in order.enumerate() {
+            step(Step::Reading {
+                index: i + 1,
+                of: used.len(),
+            });
+            let (w, h, frame) = frames.get(k)?;
+            let lum = luminance_of(&frame, CAMERA_LUMA);
+            drop(frame);
+            let (_, blocks) = measure(&lum, w, h, options, true);
+            evidence
+                .get_or_insert_with(|| prior::Gathered::new(w, h))
+                .add(&blocks.unwrap_or_default(), &transform);
+        }
+        prior = found(evidence, used.len());
+        step(Step::Placing);
+    }
     let mut blend: Option<Blend> = None;
     for (i, &(k, transform)) in used.iter().enumerate() {
         step(Step::Blending {
@@ -494,12 +557,9 @@ pub fn stack_camera_placed<E: From<Error>>(
             of: used.len(),
         });
         let (w, h, frame) = frames.get(k)?;
-        blend.get_or_insert_with(|| Blend::new(w, h, options)).add(
-            frame,
-            transform,
-            CAMERA_LUMA,
-            options,
-        );
+        blend
+            .get_or_insert_with(|| Blend::new(w, h, options))
+            .add_measured(frame, transform, CAMERA_LUMA, options, prior.as_ref());
     }
     let blend = blend.expect("the reference is placed");
     let (width, height, levels) = (blend.width, blend.height, blend.sizes.len());
@@ -637,9 +697,23 @@ impl<E: From<Error>> Frames<'_, E> {
 /// gets whatever else happens. It is what picks the reference, and
 /// what a caller is shown.
 fn score(lum: &[f32], width: usize, height: usize, options: &Options) -> f32 {
+    measure(lum, width, height, options, false).0
+}
+
+/// The frame's score, and its blocks for the stack's prior when
+/// `gather`.
+fn measure(
+    lum: &[f32],
+    width: usize,
+    height: usize,
+    options: &Options,
+    gather: bool,
+) -> (f32, Option<Vec<prior::Blocks>>) {
     let log = register::log_plane(lum, options.register.floor_stops);
     let energy = sharpness::laplacian_energy(&log, width, height);
-    (energy.iter().map(|&e| e as f64).sum::<f64>() / energy.len() as f64).sqrt() as f32
+    let score = (energy.iter().map(|&e| e as f64).sum::<f64>() / energy.len() as f64).sqrt() as f32;
+    let blocks = gather.then(|| prior::blocks(&log, &energy, width, height));
+    (score, blocks)
 }
 
 /// The merge, its frames read rather than held.
@@ -669,6 +743,9 @@ fn merge_from<E: From<Error>>(
     let mut reads = 0usize;
 
     let sharpest = options.reference == Reference::Sharpest;
+    // The prior's evidence, only where it can be used: above a
+    // selectivity of 0, and in a stack long enough for a median.
+    let gather = options.selectivity > 0.0 && n >= prior::MIN_FRAMES;
     let reference = match options.reference {
         Reference::Middle => n / 2,
         Reference::Index(i) => {
@@ -708,7 +785,8 @@ fn merge_from<E: From<Error>>(
 
     // Each frame's luminance as the chain reaches it, scored on the way
     // unless the scoring pass has been.
-    let mut lum_of = |i: usize| -> std::result::Result<Read, E> {
+    type Measured = (usize, usize, Vec<f32>, Option<Vec<prior::Blocks>>);
+    let mut lum_of = |i: usize| -> std::result::Result<Measured, E> {
         if !sharpest {
             reads += 1;
             step(Step::Reading {
@@ -719,16 +797,38 @@ fn merge_from<E: From<Error>>(
         let (w, h, frame) = frames.get(i)?;
         let lum = luminance_of(&frame, luma);
         drop(frame);
+        let (s, blocks) = measure(&lum, w, h, options, gather);
         if !sharpest {
-            sharpness[i] = score(&lum, w, h, options);
+            sharpness[i] = s;
         }
-        Ok((w, h, lum))
+        Ok((w, h, lum, blocks))
     };
-    let (width, height, reference_lum) = lum_of(reference)?;
-    let chain = fit_chain(n, width, height, reference, &reference_lum, options, |i| {
-        lum_of(i).map(|(_, _, lum)| lum)
-    })?;
+    let (width, height, reference_lum, reference_blocks) = lum_of(reference)?;
+    // At a selectivity of 0 the merge is the plain weighted average
+    // that setting promises, and the prior is neither gathered nor
+    // used.
+    let mut evidence = gather.then(|| prior::Gathered::new(width, height));
+    if let (Some(e), Some(b)) = (&mut evidence, &reference_blocks) {
+        e.add(b, &Transform::IDENTITY);
+    }
+    drop(reference_blocks);
+    let chain = fit_chain(
+        n,
+        width,
+        height,
+        reference,
+        &reference_lum,
+        options,
+        |i| lum_of(i).map(|(_, _, lum, blocks)| (lum, blocks)),
+        |blocks, onto| {
+            if let (Some(e), Some(b)) = (&mut evidence, &blocks) {
+                e.add(b, onto);
+            }
+        },
+    )?;
     drop(reference_lum);
+    let placed = chain.dropped.iter().filter(|d| d.is_none()).count();
+    let prior = found(evidence, placed);
     if !sharpest {
         step(Step::Placing);
     }
@@ -753,7 +853,7 @@ fn merge_from<E: From<Error>>(
             of: used,
         });
         let (_, _, frame) = frames.get(report.index)?;
-        blend.add(frame, report.transform, luma, options);
+        blend.add_measured(frame, report.transform, luma, options, prior.as_ref());
     }
     let levels = blend.sizes.len();
     let (out, coverage) = blend.finish();
@@ -776,6 +876,21 @@ fn merge_from<E: From<Error>>(
 /// What [`merge_from`] gives: the size, the merged samples, and the
 /// report.
 type Merged = (usize, usize, Vec<f32>, StackReport);
+
+/// The prior from the evidence gathered, when `placed` frames are
+/// enough for a median.
+fn found(evidence: Option<prior::Gathered>, placed: usize) -> Option<prior::Prior> {
+    let prior = evidence
+        .filter(|_| placed >= prior::MIN_FRAMES)
+        .map(prior::Gathered::finish);
+    if let Some(p) = &prior {
+        log::debug!(
+            "stack: the stack's prior has a say in {:.1}% of the picture",
+            p.trusted() * 100.0
+        );
+    }
+    prior
+}
 
 /// The blend's accumulators, one frame added at a time.
 ///
@@ -849,8 +964,41 @@ impl Blend {
         }
     }
 
+    /// [`Blend::add`] with the frame's multiplier under `prior`, its
+    /// blocks taken as the placing pass took them: on the frame as read
+    /// and placed by its transform, since a warped frame's finest band
+    /// is softened by the warp, which would tilt the ratio.
+    fn add_measured(
+        &mut self,
+        frame: Vec<f32>,
+        transform: Transform,
+        luma: [f32; 3],
+        options: &Options,
+        prior: Option<&prior::Prior>,
+    ) {
+        let multiplier = prior.map(|p| {
+            let lum = luminance_of(&frame, luma);
+            let (_, blocks) = measure(&lum, self.width, self.height, options, true);
+            p.multiplier(&blocks.unwrap_or_default(), &transform)
+        });
+        self.add(
+            frame,
+            transform,
+            luma,
+            options,
+            prior.zip(multiplier.as_deref()),
+        );
+    }
+
     /// One frame, taken, in the reference's geometry by `transform`.
-    fn add(&mut self, frame: Vec<f32>, transform: Transform, luma: [f32; 3], options: &Options) {
+    fn add(
+        &mut self,
+        frame: Vec<f32>,
+        transform: Transform,
+        luma: [f32; 3],
+        options: &Options,
+        prior: Option<(&prior::Prior, &[f32])>,
+    ) {
         let (width, height) = (self.width, self.height);
         let sizes = &self.sizes;
         let levels = sizes.len();
@@ -913,14 +1061,9 @@ impl Blend {
         // luminance throughout and a working-space one in the working
         // space's.
         let lum = luminance_of(&warped, luma);
-        let map = sharpness::map(
-            &lum,
-            width,
-            height,
-            options.register.floor_stops,
-            options.sharpness_radius,
-        );
+        let log = register::log_plane(&lum, options.register.floor_stops);
         drop(lum);
+        let map = sharpness::of_plane(&log, width, height, options.sharpness_radius);
 
         let mean = (map.iter().map(|&v| v as f64).sum::<f64>() / map.len().max(1) as f64) as f32;
         let floor = mean * options.weight_floor.max(0.0);
@@ -931,10 +1074,23 @@ impl Blend {
             .collect();
         drop(map);
         drop(mask);
+        drop(log);
 
         let laplacian = laplacian_pyramid(warped, sizes, CHANNELS);
         // (`warped` is gone: it is the pyramid's base now.)
-        let gaussian = gaussian_pyramid(weight, sizes);
+        let mut gaussian = gaussian_pyramid(weight, sizes);
+        // The stack's word on this frame, at the levels where the
+        // frame's own fine energy is the noise's (see `prior`).
+        if let Some((prior, multiplier)) = prior {
+            for (k, level) in gaussian
+                .iter_mut()
+                .enumerate()
+                .take(levels - 1)
+                .take(prior::BANDS)
+            {
+                prior.apply(multiplier, level, sizes[k].0, k);
+            }
+        }
 
         for k in 0..levels {
             let (lw, lh) = sizes[k];
@@ -1057,14 +1213,16 @@ struct Chain {
 /// are held at a time beside the reference's, which both directions
 /// start from: the frame the chain has reached and the one being
 /// fitted to it.
-fn fit_chain<E>(
+#[allow(clippy::too_many_arguments)]
+fn fit_chain<E, T>(
     n: usize,
     width: usize,
     height: usize,
     reference: usize,
     reference_lum: &[f32],
     options: &Options,
-    mut lum: impl FnMut(usize) -> std::result::Result<Vec<f32>, E>,
+    mut lum: impl FnMut(usize) -> std::result::Result<(Vec<f32>, T), E>,
+    mut placed: impl FnMut(T, &Transform),
 ) -> std::result::Result<Chain, E> {
     let mut chain = Chain {
         against: vec![None; n],
@@ -1073,9 +1231,7 @@ fn fit_chain<E>(
         dropped: vec![None; n],
     };
     let limit = options.max_motion * (width as f64).hypot(height as f64);
-    let up: Vec<usize> = (reference + 1..n).collect();
-    let down: Vec<usize> = (0..reference).rev().collect();
-    for order in [up, down] {
+    for order in chain_orders(n, reference) {
         // The last frame this way whose link held, and the link that
         // got there: one focus step looks much like the next, so the
         // previous answer is most of the next one's. No plane of its
@@ -1085,7 +1241,7 @@ fn fit_chain<E>(
         let mut seed = Transform::IDENTITY;
         for i in order {
             chain.against[i] = Some(anchor);
-            let moving = lum(i)?;
+            let (moving, extra) = lum(i)?;
             match register::fit_from(
                 anchor_lum.as_deref().unwrap_or(reference_lum),
                 &moving,
@@ -1112,6 +1268,7 @@ fn fit_chain<E>(
                         });
                     } else {
                         chain.onto[i] = fit.transform.compose(&chain.onto[anchor]);
+                        placed(extra, &chain.onto[i]);
                         seed = fit.transform;
                         anchor = i;
                         anchor_lum = Some(moving);
@@ -1122,6 +1279,12 @@ fn fit_chain<E>(
         }
     }
     Ok(chain)
+}
+
+/// The order the chain reaches the frames of `n` from `reference` in:
+/// up from it, then down.
+fn chain_orders(n: usize, reference: usize) -> [Vec<usize>; 2] {
+    [(reference + 1..n).collect(), (0..reference).rev().collect()]
 }
 
 /// The level sizes, full resolution first.
@@ -2059,14 +2222,17 @@ mod tests {
         );
     }
 
-    /// Bit for bit what the merge that held every frame gave: the
-    /// samples by their bits and the report whole, across references,
-    /// selectivities, a dropped frame, and both luminance weightings.
+    /// What the merge that held every frame gave: the report whole,
+    /// across references, selectivities, a dropped frame, and both
+    /// luminance weightings, and the samples by their bits where the
+    /// stack is too short for the prior (which the held merge
+    /// predates); where it is not, they differ.
     #[test]
     fn the_merge_in_passes_is_the_merge_that_held_every_frame() {
         let (width, height) = (240usize, 180);
         let (five, _) = depth_stack(width, height, 5);
         let (mut four, _) = depth_stack(width, height, 4);
+        let (nine, _) = depth_stack(width, height, 9);
         // A frame of another scene: its link fails, and the chain goes
         // on from the last frame that held.
         four[1] = frame_of(width, height, |x, y| texture(x + 913.0, y + 377.0, 0.0));
@@ -2107,20 +2273,44 @@ mod tests {
                 },
             ),
             ("four, one dropped", &four, base),
+            ("nine, middle", &nine, base),
+            (
+                "nine, selectivity 0",
+                &nine,
+                Options {
+                    selectivity: 0.0,
+                    ..base
+                },
+            ),
         ];
         for (name, frames, options) in cases {
-            for luma in [WORKING_LUMA, CAMERA_LUMA] {
+            // The nine-frame cases ask only whether the prior speaks;
+            // one weighting is enough for that.
+            let lumas: &[[f32; 3]] = if frames.len() == 9 {
+                &[WORKING_LUMA]
+            } else {
+                &[WORKING_LUMA, CAMERA_LUMA]
+            };
+            for &luma in lumas {
                 let samples: Vec<&[f32]> = frames.iter().map(|f| f.data.as_slice()).collect();
                 let (want, want_report) =
                     in_memory::merge(&samples, width, height, luma, &options).expect("held");
                 let (got, got_report) =
                     merge(&samples, width, height, luma, &options).expect("in passes");
                 assert_eq!(got_report, want_report, "{name}");
-                assert!(
-                    got.iter()
-                        .map(|v| v.to_bits())
-                        .eq(want.iter().map(|v| v.to_bits())),
-                    "{name}: the samples differ"
+                // The held merge predates the stack's prior, which
+                // speaks from eight frames up and above a selectivity
+                // of 0; without it the samples are the same to the bit.
+                let same = got
+                    .iter()
+                    .map(|v| v.to_bits())
+                    .eq(want.iter().map(|v| v.to_bits()));
+                assert_eq!(
+                    same,
+                    got_report.used() < prior::MIN_FRAMES || options.selectivity <= 0.0,
+                    "{name}: {} frames used, the samples {}",
+                    got_report.used(),
+                    if same { "the same" } else { "differ" }
                 );
             }
         }
@@ -2176,6 +2366,105 @@ mod tests {
             said.extend((1..=n).map(|index| Step::Blending { index, of: n }));
             assert_eq!(steps, said, "{reference:?}");
         }
+    }
+
+    /// A stack long enough for the prior, made again from the places
+    /// it found: the prior's evidence read again in the chain's order,
+    /// each frame used read twice and the one dropped not at all, and
+    /// the picture the same to the bit.
+    #[test]
+    fn a_stack_placed_again_hears_its_prior_again() {
+        let (width, height) = (240usize, 180);
+        let (mut frames, _) = depth_stack(width, height, 10);
+        // A frame of another scene, dropped, and the chain goes on.
+        frames[8] = frame_of(width, height, |x, y| texture(x + 913.0, y + 377.0, 0.0));
+        let camera: Vec<CameraImage> = frames
+            .iter()
+            .map(|f| CameraImage::from_data(width, height, f.data.clone()).unwrap())
+            .collect();
+        let options = Options {
+            reference: Reference::Index(3),
+            ..Options::default()
+        };
+        assert!(options.selectivity > 0.0);
+        let (first, report) = stack_camera(&camera, &options).expect("first");
+        let used = report.used();
+        assert!(used >= prior::MIN_FRAMES && used < camera.len(), "{used}");
+        // The prior speaks: the merge that predates it gives another
+        // picture.
+        let samples: Vec<&[f32]> = camera.iter().map(|f| f.data.as_slice()).collect();
+        let (held, _) =
+            in_memory::merge(&samples, width, height, CAMERA_LUMA, &options).expect("held");
+        assert!(first.data.iter().zip(&held).any(|(a, b)| a != b));
+
+        let placed: Vec<_> = report
+            .frames
+            .iter()
+            .map(|f| f.used().then_some(f.transform))
+            .collect();
+        let mut reads = vec![0usize; camera.len()];
+        let mut order = Vec::new();
+        let mut steps = Vec::new();
+        let (again, again_report) = stack_camera_placed(
+            3,
+            &placed,
+            |k| {
+                reads[k] += 1;
+                order.push(k);
+                Ok::<_, Error>(camera[k].clone())
+            },
+            |s| steps.push(s),
+            &options,
+        )
+        .expect("again");
+        assert!(
+            again
+                .data
+                .iter()
+                .map(|v| v.to_bits())
+                .eq(first.data.iter().map(|v| v.to_bits()))
+        );
+        assert_eq!(again_report.coverage, report.coverage);
+        let twice: Vec<usize> = placed.iter().map(|p| 2 * p.is_some() as usize).collect();
+        assert_eq!(reads, twice);
+        let used_order: Vec<usize> = [3, 4, 5, 6, 7, 9, 2, 1, 0]
+            .into_iter()
+            .filter(|&k| placed[k].is_some())
+            .collect();
+        assert_eq!(order[..used], used_order[..], "the chain's order");
+        let mut said: Vec<Step> = (1..=used)
+            .map(|index| Step::Reading { index, of: used })
+            .collect();
+        said.push(Step::Placing);
+        said.extend((1..=used).map(|index| Step::Blending { index, of: used }));
+        assert_eq!(steps, said);
+
+        // At a selectivity of 0 the prior is not heard, and each frame
+        // is read once.
+        let flat = Options {
+            selectivity: 0.0,
+            ..options
+        };
+        let (first, report) = stack_camera(&camera, &flat).expect("first");
+        let placed: Vec<_> = report
+            .frames
+            .iter()
+            .map(|f| f.used().then_some(f.transform))
+            .collect();
+        let mut reads = 0;
+        let (again, _) = stack_camera_placed(
+            3,
+            &placed,
+            |k| {
+                reads += 1;
+                Ok::<_, Error>(camera[k].clone())
+            },
+            |_| {},
+            &flat,
+        )
+        .expect("again");
+        assert_eq!(first.data, again.data);
+        assert_eq!(reads, report.used());
     }
 
     /// A frame that fails to read on the second pass ends the merge

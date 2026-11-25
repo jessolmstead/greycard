@@ -1,7 +1,9 @@
 //! The merge as it was before it read its frames in passes (issue
 //! 134): every frame held at once by the caller, scored, chained, and
-//! blended from the slice. Kept verbatim as the reference the merge in
-//! `super` is proved bit-identical against.
+//! blended from the slice. Kept verbatim: the merge in `super` places
+//! the frames as it does, and blends them as it does where the stack
+//! is too short for the stack's prior (`super::prior`), which it
+//! predates. The bed (`super::bed`) measures the prior against it.
 
 use rayon::prelude::*;
 

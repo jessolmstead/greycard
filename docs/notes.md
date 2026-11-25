@@ -751,3 +751,4 @@ in its section; the roadmap and the changelog only point at it.
 - [§737. Pentax lenses found, and the lens written into an export](notes/737-pentax-lenses-found-and-the-lens-in-an-export.md) (2026-11-22)
 - [§738. Bound the Add to collection menu](notes/738-bound-the-add-to-collection-menu.md) (2026-11-24)
 - [§739. The focus stack on the full develop](notes/739-the-focus-stack-on-the-full-develop.md) (2026-11-24)
+- [§740. The stack's coarse word on faint texture](notes/740-the-stacks-coarse-word-on-faint-texture.md) (2026-11-24)
