@@ -1405,11 +1405,11 @@ fn apply_dng_mosaic(
     );
 }
 
-/// One bad-pixel opcode on the cropped, normalized mosaic, its list's
-/// image placed so the crop's corner is at `at`: the first list's
-/// (`stored`) constant against the file's stored values, the second's
-/// against the values as they stand, scaled to 0..65535 as the SDK's
-/// 16-bit stage holds them. Answers how many were made again; a linear
+/// One bad-pixel opcode on the cropped, normalized mosaic or monochrome
+/// plane, its list's image placed so the crop's corner is at `at`: the
+/// first list's (`stored`) constant against the file's stored values,
+/// the second's against the values as they stand, scaled to 0..65535 as
+/// the SDK's 16-bit stage holds them. Answers how many were made again; a linear
 /// frame has none made, said in the log. A frame whose samples a
 /// `LinearizationTable` changed has its first list's constants made
 /// lists at decode, while the stored values are at hand.
@@ -1422,11 +1422,14 @@ fn fix_bad_pixels(
     stored: bool,
     fix: &BadPixels,
 ) -> usize {
-    let SensorLayout::Cfa(pattern) = &frame.layout else {
-        log::warn!("DNG bad pixels left undone: the frame is not a mosaic");
-        return 0;
+    let pattern = match &frame.layout {
+        SensorLayout::Cfa(pattern) => pattern.shifted(crop.x, crop.y),
+        SensorLayout::Monochrome => bad_pixels::one_color(),
+        SensorLayout::Linear => {
+            log::warn!("DNG bad pixels left undone: the frame is linear");
+            return 0;
+        }
     };
-    let pattern = pattern.shifted(crop.x, crop.y);
     let mut bad = vec![false; width * height];
     match fix {
         BadPixels::List { .. } => bad_pixels::mark_listed(&mut bad, width, height, at.0, at.1, fix),
@@ -2293,6 +2296,70 @@ pub(crate) mod tests {
         for (a, b) in plain.image.data.iter().zip(&area.image.data) {
             assert!(close(*a, *b), "{a} is not {b}");
         }
+    }
+
+    /// A monochrome frame's bad photosites are made again as a mosaic's
+    /// are, each from the eight beside it: a listed one and one at the
+    /// list's constant, a float's as an integer's, and the second list's
+    /// in the active area's coordinates under a crop of odd origin.
+    #[test]
+    fn a_monochrome_dngs_bad_pixels_are_made_again() {
+        use crate::opcodes::{BadPixels, MosaicOp, OpcodeList};
+        let settings = DevelopSettings {
+            hot_pixels: None,
+            ..Default::default()
+        };
+        // Columns 0.1 apart, so the eight beside a photosite have its
+        // own level for their median.
+        let clean = mono_frame(8, 6, |_, x| 200 + 100 * x as u16);
+        let stuck = |at: &[(usize, u16)]| {
+            let mut frame = clean.clone();
+            let Samples::U16(v) = &mut frame.samples else {
+                unreachable!()
+            };
+            at.iter().for_each(|&(i, s)| v[i] = s);
+            frame
+        };
+        let listed = |row, col| BadPixels::List {
+            phase: 0,
+            points: vec![[row, col]],
+            rects: vec![],
+        };
+        let same = |frame: &RawFrame, want: &RawFrame| {
+            let (a, b) = (develop(frame, &settings), develop(want, &settings));
+            let (a, b) = (a.unwrap().image.data, b.unwrap().image.data);
+            a.iter().zip(&b).all(|(a, b)| close(*a, *b))
+        };
+        let mut frame = stuck(&[(8 + 1, 1099), (3 * 8 + 4, 1100)]);
+        frame.dng.mosaic = vec![MosaicOp::BadPixels(OpcodeList::One, listed(3, 4))];
+        assert!(!same(&frame, &clean));
+        frame.dng.mosaic.push(MosaicOp::BadPixels(
+            OpcodeList::One,
+            BadPixels::Constant {
+                value: 1099,
+                phase: 0,
+            },
+        ));
+        assert!(same(&frame, &clean));
+        let Samples::U16(v) = &frame.samples else {
+            unreachable!()
+        };
+        frame.samples = Samples::F32(v.iter().map(|&s| f32::from(s)).collect());
+        assert!(same(&frame, &clean));
+
+        let area = Some(Rect {
+            x: 1,
+            y: 1,
+            width: 6,
+            height: 5,
+        });
+        let mut frame = stuck(&[(3 * 8 + 4, 1100)]);
+        frame.dng.opcode_area = area;
+        frame.crop = area;
+        frame.dng.mosaic = vec![MosaicOp::BadPixels(OpcodeList::Two, listed(2, 3))];
+        let mut want = clean.clone();
+        want.crop = area;
+        assert!(same(&frame, &want));
     }
 
     /// The second list runs in its file order: a constant before a gain

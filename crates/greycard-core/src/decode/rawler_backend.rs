@@ -2865,6 +2865,53 @@ mod tests {
         );
     }
 
+    /// A monochrome DNG's first-list constant, read from the file: the
+    /// develop makes the stuck photosite again, as the clean file has it.
+    #[test]
+    fn a_monochrome_dngs_first_list_is_repaired() {
+        use ::rawler::dng::opcodes::{FixBadPixelsConstant, Opcode, OpcodeList};
+        use ::rawler::pixarray::PixU16;
+        use ::rawler::rawimage::{BlackLevel, WhiteLevel};
+        let (w, h) = (8usize, 6usize);
+        // Columns apart, so the eight beside a photosite have its own
+        // level for their median.
+        let clean: Vec<u16> = (0..w * h).map(|i| 700 + 300 * (i % w) as u16).collect();
+        let decoded = |stuck: &[usize]| {
+            let mut data = clean.clone();
+            stuck.iter().for_each(|&i| data[i] = 4000);
+            let mut raw = RawImage::new(
+                a_linear().camera,
+                PixU16::new_with(data, w, h),
+                1,
+                [1.0, 1.0, 1.0, f32::NAN],
+                RawPhotometricInterpretation::LinearRaw,
+                Some(BlackLevel::new(&[100u16], 1, 1, 1)),
+                Some(WhiteLevel::new(vec![4000])),
+                false,
+            );
+            raw.dng_opcodes_1 = Some(OpcodeList::new(vec![Opcode::FixBadPixelsConstant(
+                FixBadPixelsConstant {
+                    version: 0x01030000,
+                    flags: 0,
+                    constant: 4000,
+                    bayer_phase: 0,
+                },
+            )]));
+            decoded_with_table(raw, None)
+        };
+        let stuck = decoded(&[10, 29]);
+        assert_eq!(stuck.layout, SensorLayout::Monochrome);
+        assert_eq!(stuck.dng.mosaic.len(), 1);
+        let develop = |f: &RawFrame| {
+            let s = crate::develop::DevelopSettings::default();
+            crate::develop::develop(f, &s).unwrap().image.data
+        };
+        let (made, want) = (develop(&stuck), develop(&decoded(&[])));
+        for (a, b) in made.iter().zip(&want) {
+            assert!((a - b).abs() < 1e-6, "{a} is not {b}");
+        }
+    }
+
     /// A DNG with a first-list constant bad-pixel test and a table:
     /// the decode lists the photosites whose stored value is the
     /// constant (none of the table's values is), the develop repairs
