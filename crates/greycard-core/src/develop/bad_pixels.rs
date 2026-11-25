@@ -8,7 +8,8 @@
 //! that near, read from the frame's own pattern, so an X-Trans mosaic
 //! is repaired as a Bayer one is and a cluster's members never feed one
 //! another. A photosite with no good neighbor of its color in reach is
-//! left.
+//! left. On a monochrome sensor's plane every neighbor is of its color,
+//! so the good ones adjacent to it are read first.
 
 use rayon::prelude::*;
 
@@ -57,6 +58,16 @@ pub fn mark_listed(
 /// The farthest a repair reads, photosites each way.
 const MAX_REACH: usize = 4;
 
+/// A monochrome sensor's plane as a pattern: every photosite is of one
+/// color.
+pub fn one_color() -> CfaPattern {
+    CfaPattern {
+        width: 1,
+        height: 1,
+        colors: vec![CfaColor::Green],
+    }
+}
+
 /// Make every photosite `bad` flags again from its good same-color
 /// neighbors, `pattern` as seen from the buffer's corner. Answers how
 /// many were made again.
@@ -68,6 +79,11 @@ pub fn repair(
     bad: &[bool],
 ) -> usize {
     let read: &[f32] = samples;
+    let reaches: &[usize] = if pattern.colors.len() == 1 {
+        &[1, 2, MAX_REACH]
+    } else {
+        &[2, MAX_REACH]
+    };
     let fixes: Vec<(usize, f32)> = bad
         .par_iter()
         .enumerate()
@@ -75,9 +91,11 @@ pub fn repair(
         .filter_map(|(i, _)| {
             let (x, y) = (i % width, i / width);
             let color = pattern.color_at(y, x);
-            [2, MAX_REACH]
-                .into_iter()
-                .find_map(|reach| median(read, (width, height), pattern, bad, color, (x, y), reach))
+            reaches
+                .iter()
+                .find_map(|&reach| {
+                    median(read, (width, height), pattern, bad, color, (x, y), reach)
+                })
                 .map(|v| (i, v))
         })
         .collect();
@@ -228,5 +246,36 @@ mod tests {
         }
         assert_eq!(repair(&mut s, w, h, &pattern, &bad), 3);
         assert_eq!(s, before);
+    }
+
+    /// A monochrome plane's point takes the median of the eight beside
+    /// it, and a 3x3 block's center, with none good beside it, of the
+    /// sixteen round the block.
+    #[test]
+    fn a_monochrome_site_takes_the_ones_beside_it() {
+        let (w, h) = (11, 11);
+        // Rings about (5, 5): 0.5 beside it, 0.3 two out, 0.1 past that.
+        let ring = |i: usize| (i % w).abs_diff(5).max((i / w).abs_diff(5));
+        let shot: Vec<f32> = (0..w * h)
+            .map(|i| [1.0, 0.5, 0.3, 0.1, 0.1, 0.1][ring(i)])
+            .collect();
+        let center = 5 * w + 5;
+        for (size, want) in [(0, 0.5), (1, 0.3)] {
+            let mut s = shot.clone();
+            let bad: Vec<bool> = (0..w * h).map(|i| ring(i) <= size).collect();
+            let count = bad.iter().filter(|b| **b).count();
+            assert_eq!(repair(&mut s, w, h, &one_color(), &bad), count);
+            assert_eq!(s[center], want);
+            for i in (0..w * h).filter(|&i| !bad[i]) {
+                assert_eq!(s[i], shot[i]);
+            }
+        }
+        // At the corner, the three beside it: 0.2, 0.4, and 0.9.
+        let mut s = vec![0.0; 16];
+        (s[1], s[4], s[5]) = (0.2, 0.9, 0.4);
+        let mut bad = [false; 16];
+        bad[0] = true;
+        assert_eq!(repair(&mut s, 4, 4, &one_color(), &bad), 1);
+        assert_eq!(s[0], 0.4);
     }
 }
