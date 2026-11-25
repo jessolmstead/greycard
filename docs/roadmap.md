@@ -830,6 +830,10 @@ brackets and the panorama to shoot for testing are in
       one (§573)
 - [ ] The focus stack's available-memory readers run on a Mac and on
       Windows: compile-checked only (§709)
+- [ ] A focus stack's soft, low-contrast areas: where no frame is
+      clearly sharpest the bands are averaged and fine texture is
+      lost beside Helicon's; a tester's 8:1 to 20:1 stacks show it
+      (email, 2026-11-24)
 - [ ] Focus breathing in a focus stack: each frame scaled to the
       reference before the merge, the scale fitted with the alignment
       (issue 134, 2026-11-13)
