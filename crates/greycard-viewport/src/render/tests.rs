@@ -5073,6 +5073,7 @@ fn parity_planes(w: usize, h: usize) -> greycard_render::detail::DetailPlanes {
             airlight: [0.9, 0.86, 0.8],
             clip_level: 1.0,
             sharpened: true,
+            pedestal: greycard_core::develop::sharpen::BLACK_PEDESTAL,
         },
         wants: greycard_edit::DetailWants {
             texture: true,
@@ -5410,6 +5411,7 @@ fn a_masks_detail_timed_on_the_gpu() {
                 airlight: [0.9, 0.86, 0.8],
                 clip_level: 1.0,
                 sharpened: true,
+                pedestal: greycard_core::develop::sharpen::BLACK_PEDESTAL,
             },
             wants: greycard_edit::DetailWants {
                 texture: true,

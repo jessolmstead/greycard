@@ -75,26 +75,33 @@ use crate::worker::ThumbCache;
 /// `DEVELOP_RECIPE`: a change of finish is a change of the global look,
 /// which a mask's print leaves out by design (`mask_base`), though the
 /// models' preview, made through the finish, shows it.
-pub const EDITED_RECIPE: u16 = 0x8005;
+///
+/// 0x8007: the capture sharpen reads a merge's levels at its reference
+/// frame's exposure (`SharpenOptions::at_headroom`), 2026-11-24. Here
+/// and not in `DEVELOP_RECIPE`: the sharpen comes after the masks' tap,
+/// so no mask's raster moves, and raising that would make every one
+/// again.
+pub const EDITED_RECIPE: u16 = 0x8007;
 
 /// The recipe the pictures the reduced develop made are kept under
 /// (`reduced`): the edit's too, and looked up after
 /// [`EDITED_RECIPE`]'s, but made from the binned mosaic with no capture
 /// sharpen and no denoise. The open frame's develop makes the edit's
 /// pictures under [`EDITED_RECIPE`] when the frame is opened, and they
-/// take these ones' place. 0x8006 with [`EDITED_RECIPE`]'s 0x8005.
-pub const REDUCED_RECIPE: u16 = 0x8006;
+/// take these ones' place. 0x8008 with [`EDITED_RECIPE`]'s 0x8007.
+pub const REDUCED_RECIPE: u16 = 0x8008;
 
 /// The process the edit's recipes were last raised for, and the recipe:
 /// a new process (`greycard_edit::PROCESS`) that changes the finish
-/// alone raises both recipes and this with it.
+/// alone, or the develop past the masks' tap, raises both recipes and
+/// this with it.
 #[cfg(test)]
-const RECIPE_FOR_PROCESS: (u32, u16) = (2, 0x8005);
+const RECIPE_FOR_PROCESS: (u32, u16) = (3, 0x8007);
 
 /// The values the two recipes held before, never used again: a picture
 /// kept under one is never asked for.
 #[cfg(test)]
-const RETIRED_RECIPES: [u16; 4] = [0x8001, 0x8002, 0x8003, 0x8004];
+const RETIRED_RECIPES: [u16; 6] = [0x8001, 0x8002, 0x8003, 0x8004, 0x8005, 0x8006];
 
 /// Both recipes of the edit's pictures, in the order they are looked
 /// up.
@@ -1243,7 +1250,14 @@ pub fn make(
             bands = bands.framed(&edit.geometry)?;
         }
         Ok(bands
-            .fit_exact_beside(w, h, true, framed_picture, planes.meta.sharpened)
+            .fit_exact_beside(
+                w,
+                h,
+                true,
+                framed_picture,
+                planes.meta.sharpened,
+                planes.meta.pedestal,
+            )
             .unwrap_or(bands))
     });
     let detail = detail.transpose()?;

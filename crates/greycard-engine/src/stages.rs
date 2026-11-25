@@ -1385,13 +1385,16 @@ pub fn stages(
     s.keep(Keep::PreSharpen);
     // A mask's Sharpen reads the sharpen's delta, made by the global's
     // settings whether or not the global sharpens the picture.
+    // At the levels the scene was exposed at: a merge's shadows are
+    // its reference frame's, not as dark as its samples.
+    let at = |o: SharpenOptions| o.at_headroom(greycard_edit::baseline::shown(facts.headroom()));
     match (edit.sharpen.options(), wants.sharpen) {
         (Some(_), _) | (None, true) if reduced => s.skip("the capture sharpen", Skip::Reduced),
         (Some(options), masks) => s.op(Stage::Sharpen(
-            options,
+            at(options),
             if masks { Delta::Also } else { Delta::No },
         )),
-        (None, true) => s.op(Stage::Sharpen(edit.sharpen.settings(), Delta::Only)),
+        (None, true) => s.op(Stage::Sharpen(at(edit.sharpen.settings()), Delta::Only)),
         (None, false) => {}
     }
     s.keep(Keep::Developed);
@@ -1799,6 +1802,48 @@ mod tests {
         let mut old = edit.clone();
         old.light.baseline = Some(0.3);
         assert_eq!(read_at(&old, &merge), 2.3);
+    }
+
+    /// The capture sharpen reads a merge's levels at its reference
+    /// frame's exposure; any other raw's as they are, its options
+    /// untouched.
+    #[test]
+    fn the_sharpen_reads_a_merge_at_its_headroom() {
+        let scale_of = |edit: &Edit, facts: &Facts| {
+            stages(edit, &Purpose::Viewport, facts, None)
+                .ops()
+                .find_map(|o| match o {
+                    Stage::Sharpen(options, _) => Some(*options),
+                    _ => None,
+                })
+                .expect("a sharpen")
+        };
+        let merge = |headroom| Facts {
+            input: InputKind::Raw {
+                pattern: None,
+                crop: (6000, 4000),
+                tag: Orientation::Normal,
+                warp: None,
+                merged: true,
+                headroom,
+                makers: None,
+                lens_corrected: false,
+                monochrome: false,
+            },
+            ..raw(0)
+        };
+        let edit = Edit::default();
+        assert_eq!(scale_of(&edit, &raw(0)), edit.sharpen.options().unwrap());
+        assert_eq!(scale_of(&edit, &merge(0.0)).level_scale, 1.0);
+        assert_eq!(scale_of(&edit, &merge(1.5)).level_scale, 1.5f32.exp2());
+        // At the headroom the finish shows it at, as the export's
+        // sharpen reads it, not the tag's to the last digit.
+        let tag = 1.5537f32;
+        let shown = greycard_render::finish::Baseline::DEFAULT
+            .with_headroom(tag)
+            .headroom();
+        assert_eq!(shown, 1.55);
+        assert_eq!(scale_of(&edit, &merge(tag)).level_scale, shown.exp2());
     }
 
     /// Under a camera profile's own tone curve its look table is read

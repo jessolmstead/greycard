@@ -319,6 +319,7 @@ fn with_sharpen(
     };
     let mark = |mut p: DetailPlanes| {
         p.meta.sharpened = s.sharpened;
+        p.meta.pedestal = s.options.pedestal();
         Arc::new(p)
     };
     match planes {

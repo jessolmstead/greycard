@@ -77,10 +77,12 @@ struct Params {
     count: [u32; 2],
     offset: u32,
     floor_pedestal: f32,
+    level_scale: f32,
+    pad: [u32; 3],
     kernel: [[f32; 4]; 4],
 }
 
-const _: () = assert!(std::mem::size_of::<Params>() == 160);
+const _: () = assert!(std::mem::size_of::<Params>() == 176);
 
 /// The atlas's size, per plane: how many padded tiles are worked at
 /// once. Larger is fewer batches; 96 MB is under a hundredth of a
@@ -959,8 +961,9 @@ impl Context {
             half,
             taps: kernel.len() as u32,
             clip_level,
-            pedestal: reference::BLACK_PEDESTAL,
-            floor_pedestal: reference::BLACK_PEDESTAL * reference::FLOOR_PEDESTAL,
+            pedestal: options.pedestal(),
+            floor_pedestal: options.pedestal() * reference::FLOOR_PEDESTAL,
+            level_scale: options.level_scale,
             kernel: deconv,
             ..Default::default()
         };
@@ -1607,8 +1610,9 @@ mod tests {
         assert_eq!(offset_of!(Params, count), 80);
         assert_eq!(offset_of!(Params, offset), 88);
         assert_eq!(offset_of!(Params, floor_pedestal), 92);
-        assert_eq!(offset_of!(Params, kernel), 96);
-        assert_eq!(std::mem::size_of::<Params>(), 160);
+        assert_eq!(offset_of!(Params, level_scale), 96);
+        assert_eq!(offset_of!(Params, kernel), 112);
+        assert_eq!(std::mem::size_of::<Params>(), 176);
     }
 
     /// The budget is well under the shortest watchdog we know of,

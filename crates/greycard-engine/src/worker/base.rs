@@ -170,7 +170,10 @@ impl FrameKept {
         self.kept.planes_for(
             &wants,
             edit.detail.options().filter(|_| wants.haze),
-            &edit.sharpen.settings(),
+            &edit
+                .sharpen
+                .settings()
+                .at_headroom(greycard_edit::baseline::shown(self.facts.headroom())),
         )
     }
 

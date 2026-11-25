@@ -114,6 +114,32 @@ pub struct SharpenOptions {
     /// Stop a patch's iterations when any pixel's luminance in it drops
     /// under half its blended start, before a halo goes dark.
     pub stop_early: bool,
+    /// What the picture's levels are multiplied by to read as the
+    /// scene was exposed: what the threshold's and the blend's L* and
+    /// the pedestal are taken at. One for every file but a merge of
+    /// ours with headroom, which stores its samples that many times
+    /// under its reference frame's ([`SharpenOptions::at_headroom`]);
+    /// read at its own levels, a merge's shadows were taken for darker
+    /// than its reference's and sharpened less.
+    pub level_scale: f32,
+}
+
+impl SharpenOptions {
+    /// These options on a file whose samples are `stops` under the
+    /// scene's exposure: a merge's headroom, zero for any other file,
+    /// which keeps the options as they are.
+    pub fn at_headroom(self, stops: f32) -> Self {
+        Self {
+            level_scale: stops.exp2(),
+            ..self
+        }
+    }
+
+    /// The pedestal in the picture's own levels: [`BLACK_PEDESTAL`] at
+    /// the exposed scale. Shared.
+    pub fn pedestal(&self) -> f32 {
+        BLACK_PEDESTAL / self.level_scale
+    }
 }
 
 impl Default for SharpenOptions {
@@ -123,6 +149,7 @@ impl Default for SharpenOptions {
             iterations: DEFAULT_ITERATIONS,
             contrast: Threshold::Auto,
             stop_early: true,
+            level_scale: 1.0,
         }
     }
 }
@@ -264,7 +291,7 @@ pub fn sharpen_with_mask(
     clip_level: f32,
 ) -> (SharpenStats, Vec<f32>) {
     let d = deconvolved(image, guide, options, measured, clip_level);
-    scale(image, &d.luminance, &d.sharpened);
+    scale(image, &d.luminance, &d.sharpened, d.pedestal);
     (d.stats, d.blend)
 }
 
@@ -279,7 +306,7 @@ pub fn sharpen_with_delta(
     clip_level: f32,
 ) -> (SharpenStats, Vec<f32>, Vec<f32>) {
     let d = deconvolved(image, guide, options, measured, clip_level);
-    scale(image, &d.luminance, &d.sharpened);
+    scale(image, &d.luminance, &d.sharpened, d.pedestal);
     let deltas = d.deltas();
     (d.stats, d.blend, deltas)
 }
@@ -306,12 +333,13 @@ pub fn delta(old: f32, new: f32) -> f32 {
 }
 
 /// `stops` of a sharpen's [`delta`] put on a pixel as the sharpen puts
-/// its factor on, every channel scaled about the pedestal's negative:
-/// one of them on the picture before the sharpen is the sharpen, minus
-/// one on the sharpened picture is the picture before it. Shared.
+/// its factor on, every channel scaled about the negative of
+/// `pedestal`, the sharpen's ([`SharpenOptions::pedestal`]): one of
+/// them on the picture before the sharpen is the sharpen, minus one on
+/// the sharpened picture is the picture before it. Shared.
 #[inline]
-pub fn apply_delta(px: [f32; 3], stops: f32) -> [f32; 3] {
-    let k = BLACK_PEDESTAL;
+pub fn apply_delta(px: [f32; 3], stops: f32, pedestal: f32) -> [f32; 3] {
+    let k = pedestal;
     let factor = stops.exp2();
     px.map(|c| (c + k) * factor - k)
 }
@@ -323,6 +351,8 @@ struct Deconvolved {
     /// The luminance on its pedestal, before and after.
     luminance: Vec<f32>,
     sharpened: Vec<f32>,
+    /// The pedestal they are on, in the picture's levels.
+    pedestal: f32,
 }
 
 impl Deconvolved {
@@ -361,7 +391,8 @@ fn deconvolved(
             "a guide of another size than the picture"
         );
     }
-    let k = BLACK_PEDESTAL;
+    let k = options.pedestal();
+    let e = options.level_scale;
     let mut luminance = vec![0f32; n];
     let mut lstar = vec![0f32; n];
     let mut clip = vec![1f32; n];
@@ -375,7 +406,7 @@ fn deconvolved(
         .for_each(|((((y, l), c), px), at)| {
             let raw = LUMA[0] * px[0] + LUMA[1] * px[1] + LUMA[2] * px[2];
             *y = raw.max(0.0) + k;
-            *l = l_star(LUMA[0] * at[0] + LUMA[1] * at[1] + LUMA[2] * at[2]);
+            *l = l_star((LUMA[0] * at[0] + LUMA[1] * at[1] + LUMA[2] * at[2]) * e);
             if px[0] >= clip_level || px[1] >= clip_level || px[2] >= clip_level {
                 *c = 0.0;
             }
@@ -402,6 +433,7 @@ fn deconvolved(
         blend,
         luminance,
         sharpened,
+        pedestal: k,
     }
 }
 
@@ -410,8 +442,7 @@ fn deconvolved(
 /// channel, and an equal step in each channel where it is not. A
 /// channel under the pedestal's negative stays there, scaled away from
 /// it by a factor that the pedestal keeps near one.
-fn scale(image: &mut WorkingImage, luminance: &[f32], sharpened: &[f32]) {
-    let k = BLACK_PEDESTAL;
+fn scale(image: &mut WorkingImage, luminance: &[f32], sharpened: &[f32], k: f32) {
     image
         .data
         .par_chunks_mut(3)
@@ -747,7 +778,7 @@ fn deconvolve_in_tiles(
     let half = k.len() / 2;
     let border = border_for(half, options.iterations);
     let full = tile + 2 * border;
-    let pedestal = BLACK_PEDESTAL;
+    let pedestal = options.pedestal();
     let mut out = luminance.to_vec();
     out.par_chunks_mut(w * tile)
         .enumerate()
@@ -978,6 +1009,7 @@ mod tests {
             iterations: 20,
             contrast: Threshold::Fixed(0.02),
             stop_early: true,
+            level_scale: 1.0,
         };
         let (stats, mask) = sharpen_with_mask(&mut image, None, &options, None, 10.0);
         assert_eq!(mask.len(), w * h);
@@ -1006,6 +1038,7 @@ mod tests {
             iterations: 20,
             contrast: Threshold::Fixed(0.02),
             stop_early: true,
+            level_scale: 1.0,
         };
         let stats = sharpen(&mut image, &options, None, 10.0);
         let after = slope(&image, h / 2);
@@ -1158,8 +1191,8 @@ mod tests {
         let (mut on, mut off) = (0f32, 0f32);
         for (i, &d) in delta.iter().enumerate() {
             let px = |im: &WorkingImage| [im.data[i * 3], im.data[i * 3 + 1], im.data[i * 3 + 2]];
-            let a = apply_delta(px(&before), d);
-            let b = apply_delta(px(&sharpened), -d);
+            let a = apply_delta(px(&before), d, BLACK_PEDESTAL);
+            let b = apply_delta(px(&sharpened), -d, BLACK_PEDESTAL);
             for c in 0..3 {
                 on = on.max((a[c] - sharpened.data[i * 3 + c]).abs());
                 off = off.max((b[c] - before.data[i * 3 + c]).abs());
@@ -1312,6 +1345,7 @@ mod tests {
             iterations: 20,
             contrast: Threshold::Fixed(0.02),
             stop_early: true,
+            level_scale: 1.0,
         };
         let whole = deconvolve_in_tiles(&luminance, &blend, w, h, 1.0, &options, 256);
         let old = deconvolve_in_tiles(&luminance, &blend, w, h, 1.0, &options, 32);
@@ -1514,5 +1548,127 @@ mod tests {
         assert!(radius(&clipped).unwrap() > r[1] * 1.5);
         // Flat: nothing to measure at all.
         assert_eq!(radius(&vec![0.2; w * h]), None);
+    }
+
+    /// A scene from deep shadow to highlight: steps of a stop and a
+    /// half, 80 pixels wide, with a grain on them, crossed by bands of blurred bars, so the
+    /// automatic threshold has flat patches to read and the blend has
+    /// edges at every level.
+    fn ramp_scene(w: usize, h: usize) -> WorkingImage {
+        let mut seed = 0x9E37_79B9_u32;
+        let mut grain = || {
+            seed ^= seed << 13;
+            seed ^= seed >> 17;
+            seed ^= seed << 5;
+            (seed as f32 / u32::MAX as f32) - 0.5
+        };
+        let mut lum: Vec<f32> = (0..w * h)
+            .map(|i| {
+                let (x, y) = (i % w, i / w);
+                if y % 96 < 24 && (x / 5) % 2 == 0 {
+                    0.35
+                } else {
+                    1.0
+                }
+            })
+            .collect();
+        // Bars blurred across, by a small box.
+        let sharp = lum.clone();
+        for y in 0..h {
+            for x in 1..w - 1 {
+                lum[y * w + x] =
+                    (sharp[y * w + x - 1] + 2.0 * sharp[y * w + x] + sharp[y * w + x + 1]) / 4.0;
+            }
+        }
+        let mut image = WorkingImage::new(w, h);
+        for (i, px) in image.data.chunks_mut(3).enumerate() {
+            let level = 0.002 * (1.5 * ((i % w) / 80) as f32).exp2();
+            for (c, v) in px.iter_mut().enumerate() {
+                let tint = [1.1, 1.0, 0.8][c];
+                *v = level * lum[i] * tint * (1.0 + 0.1 * grain());
+            }
+        }
+        image
+    }
+
+    /// `scene` stored `stops` under itself, as a merge with that much
+    /// headroom stores its samples.
+    fn stored_under(scene: &WorkingImage, stops: f32) -> WorkingImage {
+        let mut merged = scene.clone();
+        let e = stops.exp2();
+        merged.data.iter_mut().for_each(|v| *v /= e);
+        merged
+    }
+
+    /// A merge with headroom sharpens as its reference frame does: the
+    /// threshold, the blend, and the picture read at the exposed scale.
+    /// Two stops is a power of two, under which every step of the
+    /// sharpen scales exactly, so the two are the same to the bit; at
+    /// a stop and a half, to the rounding. Read at its own levels, the
+    /// merge's shadows were sharpened less.
+    #[test]
+    fn a_merge_with_headroom_sharpens_as_its_reference_frame() {
+        let (w, h) = (480, 288);
+        let scene = ramp_scene(w, h);
+        let options = SharpenOptions {
+            radius: Radius::Fixed(0.8),
+            ..Default::default()
+        };
+        let mut reference = scene.clone();
+        let want = sharpen(&mut reference, &options, None, f32::INFINITY);
+        assert!(want.blend_mean > 0.05 && want.blend_mean < 0.95, "{want:?}");
+
+        let mut merged = stored_under(&scene, 2.0);
+        let got = sharpen(&mut merged, &options.at_headroom(2.0), None, f32::INFINITY);
+        assert_eq!(got, want);
+        let back: Vec<f32> = merged.data.iter().map(|v| v * 4.0).collect();
+        assert_eq!(back, reference.data, "two stops of headroom, to the bit");
+
+        let stops = 1.55f32;
+        let e = stops.exp2();
+        let mut merged = stored_under(&scene, stops);
+        let got = sharpen(
+            &mut merged,
+            &options.at_headroom(stops),
+            None,
+            f32::INFINITY,
+        );
+        assert_eq!(got.threshold, want.threshold);
+        assert!((got.blend_mean - want.blend_mean).abs() < 1e-5, "{got:?}");
+        let worst = merged
+            .data
+            .iter()
+            .zip(&reference.data)
+            .map(|(m, r)| (m * e - r).abs() / r.abs().max(BLACK_PEDESTAL))
+            .fold(0f32, f32::max);
+        assert!(worst < 1e-4, "{worst:.3e} apart at {stops} stops");
+
+        // At its own levels the same merge is sharpened less where it
+        // is dark: what this test exists for.
+        let mut unread = stored_under(&scene, stops);
+        let wrong = sharpen(&mut unread, &options, None, f32::INFINITY);
+        assert!(
+            wrong.blend_mean < want.blend_mean - 0.01,
+            "{wrong:?} against {want:?}"
+        );
+    }
+
+    /// A file with no headroom keeps the options and the pedestal as
+    /// they were, to the bit, and so its picture: a scale of one is a
+    /// multiply and a divide by one.
+    #[test]
+    fn no_headroom_leaves_the_sharpen_as_it_was() {
+        let options = SharpenOptions::default();
+        let at = options.at_headroom(0.0);
+        assert_eq!(at, options);
+        assert_eq!(at.level_scale.to_bits(), 1.0f32.to_bits());
+        assert_eq!(at.pedestal().to_bits(), BLACK_PEDESTAL.to_bits());
+        let scene = ramp_scene(240, 192);
+        let (mut a, mut b) = (scene.clone(), scene.clone());
+        let sa = sharpen_with_delta(&mut a, None, &options, Some(0.7), 2.0);
+        let sb = sharpen_with_delta(&mut b, None, &at, Some(0.7), 2.0);
+        assert_eq!(sa, sb);
+        assert_eq!(a.data, b.data);
+        assert_ne!(a.data, scene.data, "it sharpened");
     }
 }

@@ -820,9 +820,18 @@ brackets and the panorama to shoot for testing are in
 
 - [ ] Next: the re-merge's rename over an open file tried on Windows
       with §558's retry in `promote` (§541, §543)
-- [ ] A focus stack's reconstructed highlights: clipped until the
-      capture sharpen reads a file with headroom at the scene's
-      levels (§739)
+- [ ] A focus stack's reconstructed highlights: clipped still; the
+      capture sharpen now reads a file with headroom at the scene's
+      levels (§739, §741)
+- [ ] Clarity on a merge with headroom: its shadow fade reads the
+      file's levels and starts early (weight 0.62 against 1.0 five
+      stops under grey at 1.55 stops); decide where the highlight
+      fade sits with it (§741)
+- [ ] Dehaze on a merge with headroom: the guide's epsilon is off by
+      the headroom squared (69 times on a 3 stop HDR merge), so the
+      transmission is softer and halos wider (§741)
+- [ ] A luminance range mask on a merge with headroom: lightness
+      reads under the reference frame's, 0.49 of it at 3 stops (§741)
 - [ ] A focus stack of X-Trans frames tested: the synthetic DNG
       writer writes Bayer only (§739)
 - [ ] The focus stack's available-memory readers run on a Mac and on

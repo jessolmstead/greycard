@@ -114,7 +114,12 @@ pub const VERSION: u32 = 10;
 /// the per channel curve, the look table read at its cube, the rail, the
 /// bound, and the roll at held Oklab hue), 2026-11-22. AgX's rail with
 /// no camera profile's curve renders as at 1.
-pub const PROCESS: u32 = 2;
+///
+/// 3: the capture sharpen reads a merge's levels at its reference
+/// frame's exposure, not 2^headroom under it, so its shadows are
+/// sharpened as the frame's are, 2026-11-24. A file with no headroom
+/// renders as at 2.
+pub const PROCESS: u32 = 3;
 
 /// The process a state the user makes now takes: [`PROCESS`], or in a
 /// test the one it sets for its thread.

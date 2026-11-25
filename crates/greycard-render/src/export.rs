@@ -386,6 +386,7 @@ impl Sharpen {
             iterations,
             contrast: sharpen::Threshold::Auto,
             stop_early: true,
+            level_scale: 1.0,
         })
     }
 }
@@ -630,8 +631,15 @@ pub fn render_framed(
                 "the export",
             )
         });
-    let mut detail_fitted = detail
-        .and_then(|(d, meta)| d.fit(settings.long_edge, sample.is_some(), image, meta.sharpened));
+    let mut detail_fitted = detail.and_then(|(d, meta)| {
+        d.fit(
+            settings.long_edge,
+            sample.is_some(),
+            image,
+            meta.sharpened,
+            meta.pedestal,
+        )
+    });
     let sample_fitted = match &detail_fitted {
         Some(d) => d.sample.clone(),
         None => sample.and_then(|s| fit(s, settings.long_edge).map(std::sync::Arc::new)),
@@ -644,7 +652,13 @@ pub fn render_framed(
     let mut sampled = sample_fitted.as_deref().or(sample);
     let image = match fit(image, settings.long_edge) {
         Some(mut f) => {
-            if let Some(options) = settings.sharpen.options() {
+            // At the scene's exposure, as the capture sharpen reads a
+            // merge's levels.
+            if let Some(options) = settings
+                .sharpen
+                .options()
+                .map(|o| o.at_headroom(kind.headroom()))
+            {
                 if reads && sampled.is_none() {
                     unsharpened = f.clone();
                     sampled = Some(&unsharpened);
@@ -652,16 +666,20 @@ pub fn render_framed(
                 // The picture on the sharpen's other side, output
                 // sharpened alike, so the masks' Sharpen of one reaches
                 // it after this step as before it.
-                let sharpened = detail.is_some_and(|(_, m)| m.sharpened);
+                let (sharpened, pedestal) = detail.map_or((false, options.pedestal()), |(_, m)| {
+                    (m.sharpened, m.pedestal)
+                });
                 let other = detail_fitted
                     .as_ref()
                     .and_then(|d| d.sharpen.as_ref())
                     .filter(|d| (d.width, d.height) == (f.width, f.height))
-                    .map(|d| crate::detail::other_side(&f, d, sharpened));
+                    .map(|d| crate::detail::other_side(&f, d, sharpened, pedestal));
                 sharpen::sharpen(&mut f, &options, None, clip_level);
                 if let (Some(mut other), Some(d)) = (other, detail_fitted.as_mut()) {
                     sharpen::sharpen(&mut other, &options, None, clip_level);
-                    d.sharpen = Some(crate::detail::delta_between(&f, &other, sharpened));
+                    d.sharpen = Some(crate::detail::delta_between(
+                        &f, &other, sharpened, pedestal,
+                    ));
                 }
             }
             fitted = f;

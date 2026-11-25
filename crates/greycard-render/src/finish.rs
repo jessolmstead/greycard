@@ -181,6 +181,7 @@ impl Baseline {
     }
 
     /// A merge's headroom, in stops; nothing for any other file.
+    /// [`greycard_edit::baseline::shown`] of the file's own.
     pub fn headroom(self) -> f32 {
         f32::from(self.headroom) / 100.0
     }

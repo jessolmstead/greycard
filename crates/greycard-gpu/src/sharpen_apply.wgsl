@@ -28,6 +28,8 @@ struct Params {
     count: vec2<u32>,
     offset: u32,
     floor_pedestal: f32,
+    // What the levels are read at, `SharpenOptions::level_scale`.
+    level_scale: f32,
     kernel: array<vec4<f32>, 4>,
 }
 

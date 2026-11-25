@@ -28,6 +28,8 @@ struct Params {
     offset: u32,
     // The pedestal times `FLOOR_PEDESTAL`, for the early stop's floor.
     floor_pedestal: f32,
+    // What the levels are read at, `SharpenOptions::level_scale`.
+    level_scale: f32,
     kernel: array<vec4<f32>, 4>,
 }
 

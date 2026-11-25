@@ -137,6 +137,14 @@ pub fn headroom(frame: &greycard_core::RawFrame) -> f32 {
     frame.dng.merged.as_ref().map_or(0.0, |m| m.headroom_stops)
 }
 
+/// A merge's `headroom` as the render shows the merge brighter by it:
+/// in hundredths of a stop, as the finish's baseline keeps it. What
+/// the capture sharpen and the export's sharpen read a merge's levels
+/// at, so the two read one scale, the one the picture is shown at.
+pub fn shown(headroom: f32) -> f32 {
+    f32::from((headroom * 100.0).round() as i16) / 100.0
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

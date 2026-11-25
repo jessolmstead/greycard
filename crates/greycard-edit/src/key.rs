@@ -64,8 +64,10 @@ pub const DEVELOP_RECIPE: u32 = 6;
 /// (`edited_pictures::EDITED_RECIPE` in the engine, whose test holds
 /// it to this), since this recipe also names the masks' rasters, whose
 /// print leaves the finish out. 2: the gamut op, by the engine's
-/// recipes (0x8005 and 0x8006).
-pub const PROCESS_KEYED: u32 = 2;
+/// recipes (0x8005 and 0x8006). 3: the capture sharpen at a merge's
+/// exposed scale, by the engine's recipes (0x8007 and 0x8008): the
+/// sharpen is past the masks' tap, so no raster moves.
+pub const PROCESS_KEYED: u32 = 3;
 
 /// The capture sharpen's guide, by version: taken into the key of an
 /// edit whose sharpen reads one ([`Edit::sharpen_reads_guide`]), so

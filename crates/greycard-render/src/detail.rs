@@ -27,7 +27,7 @@ use greycard_core::develop::local_contrast::{
     self, CLARITY_GAIN, LocalContrastOptions, STRUCTURE_GAIN, TEXTURE_GAIN, Wanted, clip_fade,
     local_contrast_with_bands,
 };
-use greycard_core::develop::sharpen::apply_delta;
+use greycard_core::develop::sharpen::{BLACK_PEDESTAL, apply_delta};
 use greycard_core::image::WorkingImage;
 use greycard_edit::DetailWants;
 use half::f16;
@@ -48,6 +48,10 @@ pub struct DetailMeta {
     /// picture never sharpened, its summed share is held at zero from
     /// below, so a negative one does nothing.
     pub sharpened: bool,
+    /// The pedestal the sharpen's delta was made on and is put on
+    /// about, in the picture's levels (`SharpenOptions::pedestal`): a
+    /// merge's is under the others' by its headroom.
+    pub pedestal: f32,
 }
 
 /// The bands of a developed picture, at its size: Texture's band,
@@ -220,6 +224,7 @@ impl DetailPlanes {
                 airlight,
                 clip_level,
                 sharpened: true,
+                pedestal: BLACK_PEDESTAL,
             },
             wants,
         })
@@ -239,6 +244,7 @@ impl DetailPlanes {
                 airlight: [1.0; 3],
                 clip_level,
                 sharpened: true,
+                pedestal: BLACK_PEDESTAL,
             },
             wants: DetailWants {
                 sharpen: true,
@@ -297,6 +303,7 @@ impl DetailPlanes {
                     airlight: [1.0; 3],
                     clip_level,
                     sharpened: true,
+                    pedestal: BLACK_PEDESTAL,
                 },
                 wants: wants(DetailWants::default()),
             },
@@ -619,7 +626,7 @@ impl BandImages {
     }
 
     /// [`Self::fit_exact`] beside `picture`, these planes' picture
-    /// (`sharpened` or not), the range masks' picture only
+    /// (`sharpened` or not, about `pedestal`), the range masks' picture only
     /// `with_sample`: the sharpen's delta is the one between the
     /// picture and the picture on the sharpen's other side, both
     /// resampled ([`fitted_delta`]), and is not resampled itself. A
@@ -632,11 +639,12 @@ impl BandImages {
         with_sample: bool,
         picture: &WorkingImage,
         sharpened: bool,
+        pedestal: f32,
     ) -> Option<Self> {
         let beside = (picture.width, picture.height) == self.size;
         let mut fitted = self.fit_exact_with(w, h, with_sample, !beside)?;
         if let Some(delta) = self.sharpen.as_ref().filter(|_| beside) {
-            fitted.sharpen = Some(fitted_delta(picture, delta, sharpened, w, h));
+            fitted.sharpen = Some(fitted_delta(picture, delta, sharpened, pedestal, w, h));
         }
         Some(fitted)
     }
@@ -650,9 +658,10 @@ impl BandImages {
         with_sample: bool,
         picture: &WorkingImage,
         sharpened: bool,
+        pedestal: f32,
     ) -> Option<Self> {
         let (w, h) = crate::export::fit_size(self.width(), self.height(), long_edge)?;
-        self.fit_exact_beside(w, h, with_sample, picture, sharpened)
+        self.fit_exact_beside(w, h, with_sample, picture, sharpened, pedestal)
     }
 }
 
@@ -676,7 +685,14 @@ impl BandImages {
 /// sharpen's own, where the resized pictures differ by a color too at a
 /// saturated edge. Each luminance is resized as soon as it is made, so
 /// one plane of the picture's size is held at a time.
-fn fitted_delta(picture: &WorkingImage, delta: &Plane, sharpened: bool, w: u32, h: u32) -> Plane {
+fn fitted_delta(
+    picture: &WorkingImage,
+    delta: &Plane,
+    sharpened: bool,
+    pedestal: f32,
+    w: u32,
+    h: u32,
+) -> Plane {
     let side = side(sharpened);
     let fit = |p: Vec<f32>| {
         crate::export::fit_exact_plane(&p, picture.width, picture.height, w, h).unwrap_or(p)
@@ -685,16 +701,19 @@ fn fitted_delta(picture: &WorkingImage, delta: &Plane, sharpened: bool, w: u32, 
     let there = fit(pixels
         .par_iter()
         .zip(delta.data.par_iter())
-        .map(|(p, &d)| on_pedestal(p) * (side * d).exp2())
+        .map(|(p, &d)| on_pedestal(p, pedestal) * (side * d).exp2())
         .collect());
-    let here = fit(pixels.par_iter().map(|p| on_pedestal(p)).collect());
+    let here = fit(pixels
+        .par_iter()
+        .map(|p| on_pedestal(p, pedestal))
+        .collect());
     Plane {
         width: w as usize,
         height: h as usize,
         data: here
             .par_iter()
             .zip(there.par_iter())
-            .map(|(&a, &b)| stops_between(a, b, side))
+            .map(|(&a, &b)| stops_between(a, b, side, pedestal))
             .collect(),
     }
 }
@@ -705,29 +724,37 @@ fn side(sharpened: bool) -> f32 {
     if sharpened { -1.0 } else { 1.0 }
 }
 
-/// A pixel's luminance on the sharpen's pedestal, which a delta scales.
-fn on_pedestal(p: &[f32]) -> f32 {
-    use greycard_core::develop::sharpen::{BLACK_PEDESTAL, LUMA};
-    LUMA[0] * p[0] + LUMA[1] * p[1] + LUMA[2] * p[2] + BLACK_PEDESTAL
+/// A pixel's luminance on the sharpen's `pedestal`, which a delta
+/// scales.
+fn on_pedestal(p: &[f32], pedestal: f32) -> f32 {
+    use greycard_core::develop::sharpen::LUMA;
+    LUMA[0] * p[0] + LUMA[1] * p[1] + LUMA[2] * p[2] + pedestal
 }
 
 /// The delta from luminance `here` to `there`, both on the pedestal
 /// and held at it from below, in stops the way [`side`] goes.
-fn stops_between(here: f32, there: f32, side: f32) -> f32 {
-    use greycard_core::develop::sharpen::BLACK_PEDESTAL;
-    side * (there.max(BLACK_PEDESTAL) / here.max(BLACK_PEDESTAL)).log2()
+fn stops_between(here: f32, there: f32, side: f32, pedestal: f32) -> f32 {
+    side * (there.max(pedestal) / here.max(pedestal)).log2()
 }
 
-/// `picture` taken to the sharpen's other side by `delta`, at its
-/// size: the picture a mask's Sharpen of one reaches.
-pub(crate) fn other_side(picture: &WorkingImage, delta: &Plane, sharpened: bool) -> WorkingImage {
+/// `picture` taken to the sharpen's other side by `delta` about
+/// `pedestal`, at its size: the picture a mask's Sharpen of one
+/// reaches.
+pub(crate) fn other_side(
+    picture: &WorkingImage,
+    delta: &Plane,
+    sharpened: bool,
+    pedestal: f32,
+) -> WorkingImage {
     let side = side(sharpened);
     let mut other = picture.clone();
     other
         .data
         .par_chunks_mut(3)
         .zip(delta.data.par_iter())
-        .for_each(|(p, &d)| p.copy_from_slice(&apply_delta([p[0], p[1], p[2]], side * d)));
+        .for_each(|(p, &d)| {
+            p.copy_from_slice(&apply_delta([p[0], p[1], p[2]], side * d, pedestal))
+        });
     other
 }
 
@@ -739,6 +766,7 @@ pub(crate) fn delta_between(
     picture: &WorkingImage,
     other: &WorkingImage,
     sharpened: bool,
+    pedestal: f32,
 ) -> Plane {
     let side = side(sharpened);
     Plane {
@@ -748,7 +776,14 @@ pub(crate) fn delta_between(
             .data
             .par_chunks(3)
             .zip(other.data.par_chunks(3))
-            .map(|(a, b)| stops_between(on_pedestal(a), on_pedestal(b), side))
+            .map(|(a, b)| {
+                stops_between(
+                    on_pedestal(a, pedestal),
+                    on_pedestal(b, pedestal),
+                    side,
+                    pedestal,
+                )
+            })
             .collect(),
     }
 }
@@ -834,7 +869,7 @@ pub fn apply(px: [f32; 3], bands: [f32; 5], k: [f32; 5], meta: &DetailMeta) -> [
     let mut px = px;
     let share = if meta.sharpened { k[4] } else { k[4].max(0.0) };
     if share != 0.0 && bands[4] != 0.0 {
-        px = apply_delta(px, share * bands[4]);
+        px = apply_delta(px, share * bands[4], meta.pedestal);
     }
     for (gain, band) in [(k[0], bands[0]), (k[1], bands[1]), (k[3], bands[3])] {
         if gain != 0.0 {
@@ -1721,7 +1756,9 @@ mod tests {
         for (from, to, sharpened_here) in [(&sharpened, &image, true), (&image, &sharpened, false)]
         {
             let bands = planes.to_image();
-            let fitted = bands.fit(Some(40), false, from, sharpened_here).unwrap();
+            let fitted = bands
+                .fit(Some(40), false, from, sharpened_here, BLACK_PEDESTAL)
+                .unwrap();
             let (w, h) = (fitted.width() as u32, fitted.height() as u32);
             let delta = &fitted.sharpen.as_ref().unwrap().data;
             let a = crate::export::fit_exact(from, w, h).unwrap();
@@ -1947,5 +1984,64 @@ mod tests {
         // Structure's lane is nothing, and no picture of it is made.
         assert!(planes.data.chunks(4).all(|p| p[3] == f16::ZERO));
         assert!(planes.to_image().structure.is_none());
+    }
+
+    /// A mask's Sharpen on a merge with headroom puts the delta on
+    /// about the merge's own pedestal, the one the delta was made on:
+    /// the merge then moves as its reference frame does. Two stops is
+    /// a power of two, so the two are the same to the bit; about the
+    /// others' pedestal the dark pixels moved apart.
+    #[test]
+    fn a_merges_sharpen_delta_is_put_on_about_its_own_pedestal() {
+        use greycard_core::develop::sharpen::SharpenOptions;
+        let e = 4.0f32;
+        let meta = |pedestal| DetailMeta {
+            airlight: [1.0; 3],
+            clip_level: f32::INFINITY,
+            sharpened: true,
+            pedestal,
+        };
+        let merged_pedestal = SharpenOptions::default().at_headroom(2.0).pedestal();
+        let (bands, k) = ([0.0, 0.0, 0.0, 0.0, 0.4], [0.0, 0.0, 0.0, 0.0, 1.0]);
+        let mut apart = 0f32;
+        for px in [
+            [0.002, 0.001, 0.0005],
+            [0.05, 0.04, 0.03],
+            [0.6, 0.5, 0.4],
+            [-0.0008, 0.0003, 0.001],
+        ] {
+            let scene = apply(px, bands, k, &meta(BLACK_PEDESTAL));
+            let merged = apply(px.map(|v| v / e), bands, k, &meta(merged_pedestal));
+            assert_eq!(merged.map(|v| v * e), scene, "{px:?}");
+            let others = apply(px.map(|v| v / e), bands, k, &meta(BLACK_PEDESTAL));
+            for (o, s) in others.iter().zip(scene) {
+                apart = apart.max((o * e - s).abs());
+            }
+        }
+        assert!(apart > 1e-4, "{apart}");
+        // Taken to the other side, and the delta read back between the
+        // two, at the merge's levels.
+        let picture = WorkingImage {
+            width: 2,
+            height: 1,
+            data: vec![0.002, 0.001, 0.0005, 0.05, 0.04, 0.03],
+        };
+        let delta = Plane {
+            width: 2,
+            height: 1,
+            data: vec![0.4, -0.3],
+        };
+        let merged = WorkingImage {
+            data: picture.data.iter().map(|v| v / e).collect(),
+            ..picture.clone()
+        };
+        let other = other_side(&picture, &delta, true, BLACK_PEDESTAL);
+        let merged_other = other_side(&merged, &delta, true, merged_pedestal);
+        let back: Vec<f32> = merged_other.data.iter().map(|v| v * e).collect();
+        assert_eq!(back, other.data);
+        assert_eq!(
+            delta_between(&merged, &merged_other, true, merged_pedestal).data,
+            delta_between(&picture, &other, true, BLACK_PEDESTAL).data
+        );
     }
 }

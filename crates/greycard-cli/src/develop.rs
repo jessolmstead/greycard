@@ -347,6 +347,7 @@ pub(crate) fn run(args: DevelopArgs) -> Result<()> {
                 None => sharpen::Threshold::Auto,
             },
             stop_early: true,
+            level_scale: 1.0,
         }),
     };
     let settings = DevelopSettings {
@@ -1166,7 +1167,12 @@ fn run_develop(
         detail,
         after.dehaze,
         targets.dehaze_map.as_deref(),
-        after.sharpen,
+        // A merge's levels read as its reference frame's.
+        after.sharpen.map(|o| {
+            o.at_headroom(greycard_edit::baseline::shown(
+                greycard_edit::baseline::headroom(&frame),
+            ))
+        }),
         developed.sharpen_radius,
         developed.clip_level,
     )?;
@@ -1849,6 +1855,7 @@ mod tests {
             // what the flattest patch of a synthetic frame measures.
             contrast: sharpen::Threshold::Fixed(0.0),
             stop_early: true,
+            level_scale: 1.0,
         };
 
         let mut got = source.clone();
@@ -1915,6 +1922,7 @@ mod tests {
             iterations: sharpen::DEFAULT_ITERATIONS,
             contrast: sharpen::Threshold::Fixed(0.0),
             stop_early: true,
+            level_scale: 1.0,
         };
         let dehazing = DehazeOptions { amount: 0.6 };
         let mut got = source.clone();
@@ -1964,6 +1972,7 @@ mod tests {
             iterations: sharpen::DEFAULT_ITERATIONS,
             contrast: sharpen::Threshold::Fixed(0.0),
             stop_early: true,
+            level_scale: 1.0,
         };
         let mut got = source.clone();
         let shot = Shot::default();
@@ -2039,6 +2048,7 @@ mod tests {
             iterations: sharpen::DEFAULT_ITERATIONS,
             contrast: sharpen::Threshold::Fixed(0.0),
             stop_early: true,
+            level_scale: 1.0,
         };
 
         let sharpened = dir.join("sharpened.tiff");

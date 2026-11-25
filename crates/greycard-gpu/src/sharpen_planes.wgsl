@@ -29,7 +29,7 @@ struct Params {
     taps: u32,
     threshold: f32,
     clip_level: f32,
-    // What the luminance is raised by, `BLACK_PEDESTAL`.
+    // What the luminance is raised by, `SharpenOptions::pedestal`.
     pedestal: f32,
     // A grid of tiles for the threshold search: where it starts, its
     // step, its tile's side, and how many along each axis.
@@ -39,6 +39,8 @@ struct Params {
     count: vec2<u32>,
     offset: u32,
     floor_pedestal: f32,
+    // What the levels are read at, `SharpenOptions::level_scale`.
+    level_scale: f32,
     // The kernel's taps, up to sixteen: a deconvolution kernel whole,
     // or the blend blur's one side, the center first.
     kernel: array<vec4<f32>, 4>,
@@ -114,7 +116,7 @@ fn prepare(@builtin(global_invocation_id) gid: vec3<u32>) {
     let px = textureLoad(rgb, at, 0).rgb;
     let y = LUMA.x * px.x + LUMA.y * px.y + LUMA.z * px.z;
     textureStore(lum, at, vec4<f32>(max(y, 0.0) + p.pedestal, 0.0, 0.0, 0.0));
-    textureStore(lstar, at, vec4<f32>(l_star(y), 0.0, 0.0, 0.0));
+    textureStore(lstar, at, vec4<f32>(l_star(y * p.level_scale), 0.0, 0.0, 0.0));
     var clip = 1.0;
     if px.x >= p.clip_level || px.y >= p.clip_level || px.z >= p.clip_level {
         clip = 0.0;
@@ -132,7 +134,7 @@ fn guide_lstar(@builtin(global_invocation_id) gid: vec3<u32>) {
     let at = vec2<i32>(gid.xy);
     let px = textureLoad(rgb, at, 0).rgb;
     let y = LUMA.x * px.x + LUMA.y * px.y + LUMA.z * px.z;
-    textureStore(lstar, at, vec4<f32>(l_star(y), 0.0, 0.0, 0.0));
+    textureStore(lstar, at, vec4<f32>(l_star(y * p.level_scale), 0.0, 0.0, 0.0));
 }
 
 var<workgroup> scratch: array<f32, 256>;

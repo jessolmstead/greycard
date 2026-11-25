@@ -415,6 +415,75 @@ fn a_guided_sharpen_matches_the_reference() {
     );
 }
 
+/// A merge with headroom, its samples a stop and a half and more under
+/// its reference frame's: the device reads its levels at the exposed
+/// scale as the reference does (the threshold's and the blend's L*,
+/// the pedestal, and the early stop's floor), plain, guided, and with
+/// the delta, and the scale moves what both make.
+#[test]
+fn a_merge_with_headroom_matches_the_reference() {
+    let Some(ctx) = context() else {
+        return;
+    };
+    let stops = 1.55f32;
+    let e = stops.exp2();
+    let guide = {
+        let mut g = drawn_picture(Scene::Busy, 5, 431, 317);
+        g.data.iter_mut().for_each(|v| *v /= e);
+        g
+    };
+    let mut image = guide.clone();
+    let mut rng = Rng::new(13, 0);
+    for v in &mut image.data {
+        *v *= 1.0 + 0.05 * (rng.unit() - 0.5);
+    }
+    for contrast in [Threshold::Auto, Threshold::Fixed(0.3)] {
+        let plain = SharpenOptions {
+            contrast,
+            ..Default::default()
+        };
+        let options = plain.at_headroom(stops);
+        let (cpu, _) = check(
+            &ctx,
+            "headroom",
+            &image,
+            &options,
+            Some(0.8),
+            2.0,
+            TOLERANCE,
+        );
+        let (own, _) = sharpen_with_mask(&mut image.clone(), None, &plain, Some(0.8), 2.0);
+        assert_ne!(
+            (cpu.threshold, cpu.blend_mean),
+            (own.threshold, own.blend_mean),
+            "the scale moves the sharpen"
+        );
+        check_guided(
+            &ctx,
+            "headroom, guided",
+            &image,
+            Some(&guide),
+            &options,
+            Some(0.8),
+            2.0,
+            TOLERANCE,
+        );
+        let mut cpu = image.clone();
+        let (_, _, cpu_delta) =
+            reference::sharpen_with_delta(&mut cpu, None, &options, Some(0.8), 2.0);
+        let mut gpu = image.clone();
+        let (_, _, gpu_delta) = ctx
+            .sharpen_image_with_delta(&mut gpu, &options, Some(0.8), 2.0, true)
+            .expect("the GPU sharpen runs");
+        let worst = cpu_delta
+            .iter()
+            .zip(&gpu_delta)
+            .map(|(a, b)| (a - b).abs())
+            .fold(0f32, f32::max);
+        assert!(worst <= TOLERANCE, "{worst:.3e} stops apart");
+    }
+}
+
 /// A synthetic picture, tiles partly off its edge, a fixed radius and
 /// threshold, and a clipped patch the mask must leave alone.
 #[test]
@@ -428,6 +497,7 @@ fn a_synthetic_picture_matches_the_reference() {
         iterations: 20,
         contrast: Threshold::Fixed(0.02),
         stop_early: true,
+        level_scale: 1.0,
     };
     let (cpu, _) = check(&ctx, "fixed", &image, &options, None, 2.0, TOLERANCE);
     assert!(cpu.clipped > 0.0 && cpu.blend_mean > 0.1, "{cpu:?}");
@@ -495,6 +565,7 @@ fn the_delta_matches_the_reference_sharpened_or_not() {
         iterations: 20,
         contrast: Threshold::Fixed(0.02),
         stop_early: true,
+        level_scale: 1.0,
     };
     for apply in [true, false] {
         let mut cpu = image.clone();
@@ -543,6 +614,7 @@ fn the_full_float_picture_is_the_reference_s() {
         iterations: 20,
         contrast: Threshold::Auto,
         stop_early: true,
+        level_scale: 1.0,
     };
     let uploaded = ctx.upload(&image).expect("the upload");
     for (apply, with_delta) in [(true, false), (true, true), (false, true)] {
@@ -699,6 +771,7 @@ fn a_noisy_black_matches_the_reference() {
                 radius: Radius::Fixed(1.2),
                 iterations: 40,
                 stop_early: false,
+                level_scale: 1.0,
             },
         ),
         (
@@ -755,6 +828,7 @@ fn a_black_at_rest_stops_where_the_reference_does() {
             iterations,
             contrast: Threshold::Fixed(0.0),
             stop_early: true,
+            level_scale: 1.0,
         };
         for clip in [0.98, 8.0] {
             check(
@@ -1153,6 +1227,7 @@ fn draw(r: &mut Rng) -> Drawn {
             iterations,
             contrast,
             stop_early,
+            level_scale: 1.0,
         },
         measured,
         clip_level,

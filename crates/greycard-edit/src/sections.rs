@@ -656,6 +656,7 @@ impl Sharpen {
                 Threshold::Fixed(self.threshold)
             },
             stop_early: true,
+            level_scale: 1.0,
         }
     }
 }

@@ -109,7 +109,15 @@ enum Sensor {
     /// Bayer mosaic of [`SKY`]: the learned highlight fill's regions,
     /// one in hl-2's size gate and one under it.
     Highlights,
+    /// The chart as a merge of ours with [`MERGE_HEADROOM`] stops of
+    /// headroom stores it: its samples that much under the Bayer
+    /// frame's, and the merge's tag saying so, so the develop reads
+    /// its levels at the exposure it opens at.
+    Merged,
 }
+
+/// The merged frame's headroom, in stops.
+const MERGE_HEADROOM: f32 = 1.5;
 
 /// The sky frame's size: its glow's clipped region is deep enough to
 /// sit within hl-2's size gate, where its fill fades out, so hl-1 and
@@ -251,6 +259,16 @@ const CASES: &[Case] = &[
     large("highlights", Sensor::Highlights),
     large("highlight-fill-hl-1", Sensor::Highlights),
     large("highlight-fill-hl-2", Sensor::Highlights),
+    Case {
+        sensor: Sensor::Merged,
+        ..full("merge-headroom")
+    },
+    // A mask's Sharpen at +100 on the merge: its delta put on about
+    // the merge's own pedestal.
+    Case {
+        sensor: Sensor::Merged,
+        ..full("merge-headroom-mask")
+    },
     // Written as older schemas wrote them, so each migration step that
     // keeps a look runs: version 1's denoise switch, version 4's crop
     // on a turned frame (its step that waits on the frame's shape),
@@ -433,6 +451,11 @@ fn frame(sensor: Sensor) -> RawFrame {
         Sensor::Patches => (CfaPattern::rggb(), patches, 8.0),
         Sensor::Aberrated => (CfaPattern::rggb(), texture, 1.0),
         Sensor::Highlights => (CfaPattern::rggb(), sky, 1.0),
+        Sensor::Merged => (CfaPattern::rggb(), chart, 1.0),
+    };
+    let under = match sensor {
+        Sensor::Merged => f64::from(MERGE_HEADROOM).exp2(),
+        _ => 1.0,
     };
     let (w, h) = sensor.size();
     // Each color's magnification about the center, on the aberrated
@@ -455,7 +478,7 @@ fn frame(sensor: Sensor) -> RawFrame {
                 .sum::<f64>()
                 / 16.0;
             let hot = sensor == Sensor::Patches && HOT.contains(&(x, y));
-            let signal = light / AS_SHOT[c] * range * if hot { 4.0 } else { 1.0 };
+            let signal = light / AS_SHOT[c] * range * if hot { 4.0 } else { 1.0 } / under;
             let sd = iso * (signal * 1.5 + 400.0).sqrt();
             let v = BLACK + signal + sd * noise((y * w + x) as u64);
             samples.push(v.round().clamp(0.0, WHITE) as u16);
@@ -481,7 +504,14 @@ fn frame(sensor: Sensor) -> RawFrame {
         crop: None,
         orientation: Orientation::Normal,
         shot: Default::default(),
-        dng: Default::default(),
+        dng: greycard_core::raw::DngTags {
+            merged: (sensor == Sensor::Merged).then(|| greycard_core::merge::Tag {
+                kind: "hdr".into(),
+                headroom_stops: MERGE_HEADROOM,
+                ..Default::default()
+            }),
+            ..Default::default()
+        },
     }
 }
 

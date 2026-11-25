@@ -497,8 +497,8 @@ impl Renderer {
         // Negated over a picture never sharpened, where the shader
         // holds a mask's share at zero from below.
         let pedestal = match (&planes.sharpen, planes.meta.sharpened) {
-            (Some(_), true) => greycard_core::develop::sharpen::BLACK_PEDESTAL,
-            (Some(_), false) => -greycard_core::develop::sharpen::BLACK_PEDESTAL,
+            (Some(_), true) => planes.meta.pedestal,
+            (Some(_), false) => -planes.meta.pedestal,
             (None, _) => 0.0,
         };
         let a = planes.meta.airlight;
