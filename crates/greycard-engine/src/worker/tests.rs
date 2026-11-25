@@ -7195,6 +7195,11 @@ fn a_set_short_by_the_engines_own_sets_waits_for_nothing() {
         std::thread::sleep(std::time::Duration::from_millis(10));
     }
     assert_eq!(set.tally().exported, 3, "{:?}", set.tally().failed);
+    // The worker notes a frame's waits after the tally counts it.
+    while worker.waits_by_test().len() < 3 {
+        assert!(started.elapsed() < wait, "the last frame's waits noted");
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
     assert_eq!(worker.waits_by_test(), [0, 0, 0]);
     assert_eq!(
         calls.load(std::sync::atomic::Ordering::Relaxed),
@@ -7262,6 +7267,10 @@ fn a_set_short_of_the_card_waits_once() {
         std::thread::sleep(std::time::Duration::from_millis(10));
     }
     assert_eq!(set.tally().failed.len(), 3, "no frame's removals made");
+    while worker.waits_by_test().len() < 3 {
+        assert!(started.elapsed() < wait, "the last frame's waits noted");
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
     let waits = worker.waits_by_test();
     let first = waits[0];
     // Nothing of the worker's to give back, so the frame is not tried

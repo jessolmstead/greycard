@@ -811,6 +811,8 @@ mod tests {
         // and the delete's tombstone (§724).
         s.delete_version(&id).unwrap();
         let mut before = developed();
+        // The head's time is the clock's, and a second may have turned.
+        before.line.head_at = s.line.head_at.clone();
         before.removed = s.removed.clone();
         assert!(before.removed.contains_key(&id));
         assert_eq!(s.to_json(), before.to_json());
