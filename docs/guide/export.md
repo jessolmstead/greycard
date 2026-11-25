@@ -37,7 +37,7 @@ clear in hand.
 | **Long edge** | **Full**, **4096**, **2048**, **1024**, **Custom** | Full | The size of the picture's longer side, in pixels. An export is never made larger than the picture. |
 | **Pixels** | a number | 1600 | Shown with **Custom**. The sheet shows the size that comes out, such as 1600 × 1067. |
 | **Sharpen** | **Off**, **Low**, **Standard**, **High** | Standard | Sharpens the picture after it is made smaller, since shrinking softens it. It does nothing at **Full** size, and the label is dimmed then. |
-| **Color** | **sRGB**, **Display P3**, **Rec.2020**, **Adobe RGB** | sRGB | sRGB for the web and most screens. Display P3 for recent phones and Macs. Rec.2020 for the widest color. Adobe RGB for a print lab or a workflow that asks for it; it has its own gamma, and the file's profile says so. |
+| **Color** | **sRGB**, **Display P3**, **Rec.2020**, **Adobe RGB**, **Gray Gamma 2.2**, **Dot Gain 20%** | sRGB | sRGB for the web and most screens. Display P3 for recent phones and Macs. Rec.2020 for the widest color. Adobe RGB for a print lab or a workflow that asks for it; it has its own gamma, and the file's profile says so. The last two write one grey channel; see [Grey](#grey). |
 | **Embed profile** | on or off | on | Writes the color profile into the file, so other programs show its colors correctly. Leave it on. |
 | **Metadata** | **All**, **No edit**, **None** | All | What the file says about where it came from. See below. |
 | **Subfolder** | a folder name | empty | Where the file goes. See [Where the files go](#where-the-files-go). |
@@ -46,6 +46,21 @@ clear in hand.
 | **Watermark** | **Off**, **Text**, **Image** | Off | A mark laid over the picture. See [Watermark](#watermark). |
 | **Border** | **Off**, four colors, **Match** | Off | A band of color around the picture. See [Border](#border). |
 | **Folder** | **Choose...** | the last folder chosen | Where **Export** writes, at the foot of the sheet. See [Where the files go](#where-the-files-go). |
+
+### Grey
+
+**Gray Gamma 2.2** and **Dot Gain 20%** write a picture with no color
+as a greyscale JPEG, PNG, or TIFF under a grey profile. Dot Gain 20% is
+for print.
+
+A picture with color anywhere is written in sRGB instead, so toning is
+never lost. Grain counts: it is lightly tinted. So does a watermark in
+color. A WebP is always in sRGB here, since the format has no greyscale
+form.
+
+**Edit in** writes sRGB when a grey space is chosen. greycard itself
+does not read a grey profile yet, so a grey export opened in it shows
+shifted tones.
 
 ### Metadata
 

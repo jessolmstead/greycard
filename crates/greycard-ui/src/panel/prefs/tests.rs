@@ -1193,6 +1193,38 @@ fn the_export_rows_are_the_export_sheets_own() {
     open_editing(&app);
     assert_eq!(row_shows(&app, "format-row"), crate::tr!("TIFF 16-bit"));
     assert_eq!(row_shows(&app, "space-row"), "Rec.2020");
+    // The grey spaces are the same choice, on a row of their own.
+    for space in crate::export::Space::GREY {
+        click_row(&app, "grey-row", space.name());
+        assert_eq!(kept().shared.export.space, space.name());
+        assert_eq!(row_shows(&app, "space-row"), "");
+    }
+    app.set_settings_open(false);
+    app.set_export_open(true);
+    crate::testing::click_segment(&app, "ExportSheet::grey-row", "Gray Gamma 2.2");
+    assert_eq!(kept().shared.export.space, "Gray Gamma 2.2");
+    // Edit in hands over color, which reads back as it was.
+    let edit_in = crate::panel::edit_in::settings_for(&app);
+    assert_eq!(edit_in.space, crate::export::Space::Srgb);
+    crate::testing::click_segment(&app, "ExportSheet::space-row", "sRGB");
+    assert_eq!(kept().shared.export.space, "sRGB");
+    // The keys reach a row that holds no current option: from the row
+    // above into the grey one, through it, and back. An arrow on the way
+    // moves whatever else has the keys, and the color row's within it.
+    use crate::testing::press;
+    use slint::platform::Key;
+    let space = || app.get_export_space();
+    let round = |wanted: &str| {
+        (0..80).any(|_| {
+            press(&app, Key::Tab);
+            press(&app, Key::RightArrow);
+            space() == wanted
+        })
+    };
+    assert!(round("Gray Gamma 2.2"));
+    press(&app, Key::RightArrow);
+    assert_eq!(space(), "Dot Gain 20%");
+    assert!(round("sRGB"));
 }
 
 /// The sheet's text field `id`: clicked into, emptied, `text`

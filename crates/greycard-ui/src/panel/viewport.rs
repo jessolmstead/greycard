@@ -1349,8 +1349,10 @@ pub(crate) fn sync_display(
     // The output space is the export sheet's, and the table takes it
     // to the monitor, through the proof when one is on. The
     // monitor's profile is the panel's.
-    let space =
-        export::Space::from_name(app.get_export_space().as_str()).unwrap_or(export::Space::Srgb);
+    // A grey space is shown as the sRGB a picture in color takes.
+    let space = export::Space::from_name(app.get_export_space().as_str())
+        .unwrap_or(export::Space::Srgb)
+        .in_color();
     renderer.set_output(space.matrix());
     let proof = app.get_proofing().then(|| proof_settings(app)).flatten();
     let (monitor, from) = monitor_settings(app, monitors);

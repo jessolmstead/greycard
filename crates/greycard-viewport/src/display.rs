@@ -82,7 +82,7 @@ impl ProofProfile {
         if key.is_empty() {
             return None;
         }
-        Some(match Space::from_name(key) {
+        Some(match Space::ALL.into_iter().find(|s| s.name() == key) {
             Some(s) => ProofProfile::Space(s),
             None => ProofProfile::File(PathBuf::from(key)),
         })

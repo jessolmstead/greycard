@@ -71,9 +71,13 @@ impl Color {
 
     /// As `fill`, with a neutral's level (given for the sRGB curve)
     /// recoded for the picture's own curve by `recode`.
-    pub fn fill_in<T: Channel>(self, pixels: &[T], recode: impl Fn(f32) -> f32) -> [T; 3] {
+    pub fn fill_in<T: Channel, const N: usize>(
+        self,
+        pixels: &[T],
+        recode: impl Fn(f32) -> f32,
+    ) -> [T; N] {
         match self.level() {
-            Some(l) => [T::from_f32(recode(l) * T::MAX); 3],
+            Some(l) => [T::from_f32(recode(l) * T::MAX); N],
             None => mean(pixels),
         }
     }
@@ -117,45 +121,57 @@ impl Border {
         recode: impl Fn(f32) -> f32,
     ) -> (Vec<T>, u32, u32) {
         let band = self.pixels(width, height);
-        let color = self.color.fill_in(pixels, recode);
-        let out = add(pixels, width, height, band, color);
+        // Three channels, or the one of a grey picture.
+        let out = if pixels.len() == width as usize * height as usize {
+            let color: [T; 1] = self.color.fill_in(pixels, recode);
+            add(pixels, width, height, band, color)
+        } else {
+            let color: [T; 3] = self.color.fill_in(pixels, recode);
+            add(pixels, width, height, band, color)
+        };
         (out, width + 2 * band, height + 2 * band)
     }
 }
 
-/// The mean of interleaved RGB `pixels`, channel by channel, in their
-/// own values; black for no pixels.
-pub fn mean<T: Channel>(pixels: &[T]) -> [T; 3] {
-    let n = (pixels.len() / 3) as f64;
+/// The mean of interleaved `pixels` of `N` channels, channel by
+/// channel, in their own values; black for no pixels.
+pub fn mean<T: Channel, const N: usize>(pixels: &[T]) -> [T; N] {
+    let n = (pixels.len() / N) as f64;
     if n == 0.0 {
-        return [T::from_f32(0.0); 3];
+        return [T::from_f32(0.0); N];
     }
-    let mut sum = [0f64; 3];
-    for px in pixels.as_chunks::<3>().0 {
-        for c in 0..3 {
+    let mut sum = [0f64; N];
+    for px in pixels.as_chunks::<N>().0 {
+        for c in 0..N {
             sum[c] += px[c].to_f32() as f64;
         }
     }
     sum.map(|s| T::from_f32((s / n) as f32))
 }
 
-/// Interleaved RGB `pixels`, `width` by `height`, inside a band `band`
-/// pixels wide of `color` on every side: the result is
+/// Interleaved `pixels` of `N` channels, `width` by `height`, inside a
+/// band `band` pixels wide of `color` on every side: the result is
 /// `width + 2 band` by `height + 2 band`, the picture centered in it
 /// and untouched.
-pub fn add<T: Channel>(pixels: &[T], width: u32, height: u32, band: u32, color: [T; 3]) -> Vec<T> {
+pub fn add<T: Channel, const N: usize>(
+    pixels: &[T],
+    width: u32,
+    height: u32,
+    band: u32,
+    color: [T; N],
+) -> Vec<T> {
     let (w, h, b) = (width as usize, height as usize, band as usize);
-    debug_assert_eq!(pixels.len(), w * h * 3);
+    debug_assert_eq!(pixels.len(), w * h * N);
     let ow = w + 2 * b;
     let oh = h + 2 * b;
-    let mut out = Vec::with_capacity(ow * oh * 3);
+    let mut out = Vec::with_capacity(ow * oh * N);
     let fill = |out: &mut Vec<T>, n: usize| {
         for _ in 0..n {
             out.extend_from_slice(&color);
         }
     };
     fill(&mut out, ow * b);
-    for row in pixels.chunks_exact(w * 3).take(h) {
+    for row in pixels.chunks_exact(w * N).take(h) {
         fill(&mut out, b);
         out.extend_from_slice(row);
         fill(&mut out, b);

@@ -299,15 +299,19 @@ pub(crate) fn offer(app: &App, edit_in: &mut EditIn) {
 }
 
 /// The export Edit in writes: the sheet's defaults as TIFF 16-bit, in
-/// the color space and with the metadata the sheet holds.
+/// the color space and with the metadata the sheet holds. A grey space
+/// is sRGB here: what the app saves is read back, and a picture's grey
+/// profile is not (`greycard_core::picture`).
 pub(crate) fn settings_for(app: &App) -> crate::export::Settings {
-    Sheet {
+    let mut settings = Sheet {
         format: Format::Tiff.name().into(),
         space: app.get_export_space().into(),
         metadata: app.get_export_metadata().into(),
         ..Sheet::default()
     }
-    .settings()
+    .settings();
+    settings.space = settings.space.in_color();
+    settings
 }
 
 /// The stem the file is written under: its source's and "-edit"; a

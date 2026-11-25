@@ -427,7 +427,14 @@ export component ExportSheet inherits Rectangle {
                             spacing: Theme.space-2;
                             // Export sheet: the color profile row
                             color-words := Text { accessible-role: none; text: @tr("Color"); width: root.label-column; overflow: elide; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
-                            space-row := Segmented { name: color-words.text; options: ["sRGB", "Display P3", "Rec.2020", "Adobe RGB"]; current <=> root.export-space; }
+                            space-row := Segmented { name: color-words.text; options: ["sRGB", "Display P3", "Rec.2020", "Adobe RGB"]; enters: true; current <=> root.export-space; }
+                        }
+                        // The same choice's grey spaces, which the row above
+                        // has no room for.
+                        HorizontalLayout {
+                            spacing: Theme.space-2;
+                            Rectangle { width: root.label-column; }
+                            grey-row := Segmented { name: color-words.text; options: ["Gray Gamma 2.2", "Dot Gain 20%"]; enters: true; current <=> root.export-space; }
                         }
                         Toggle {
                             label: @tr("Embed profile");
