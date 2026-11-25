@@ -443,7 +443,7 @@ impl Merge {
                         };
                         (
                             r.out,
-                            0.0,
+                            r.headroom_stops,
                             r.seconds,
                             warnings,
                             focus::edit_for_stack(&edit),

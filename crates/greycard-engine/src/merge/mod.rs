@@ -1292,6 +1292,7 @@ pub fn again(
                 denoiser,
                 ca,
                 uncompressed: stacked.uncompressed,
+                reconstruct: stacked.reconstructed,
                 placed: Some(stacked.placed),
                 ..focus::Options::default()
             },

@@ -10,19 +10,24 @@
 //! through the stage list as the HDR merge's frames are walked
 //! (`Purpose::MergeInput`): the edit's demosaic for the sensor, hot
 //! pixels, the CA corrected by one fit made on the reference, the
-//! highlights clipped as a bracket's frames but its darkest are, and
+//! highlights reconstructed as a bracket's darkest frame's are, and
 //! the learned denoiser in the demosaic's place when asked. What the
-//! merge keeps is what a frame developed by the editor holds, up to the
-//! reference's clip.
+//! merge keeps is what a frame developed by the editor holds.
 //!
-//! The highlights are not reconstructed: what a reconstruction keeps
-//! over the clip a file can hold only under headroom, its samples
-//! stored that many stops darker, and the capture sharpen reads a file
-//! with headroom as darker than it is (its threshold and its pedestal
-//! are on absolute levels): on a real stack it then took a quarter to a
-//! third of the fine texture the walk gained. Once the sharpen reads
-//! such a file at its scene's levels, the stack can keep its
-//! reconstructed highlights.
+//! The file holds what is over 1 after the white balance under
+//! headroom, as a bracket's and a panorama's do: the merge's brightest
+//! sample after the white balance ([`core_merge::headroom`]), its
+//! samples stored divided by it and its tag saying the stops, so the
+//! develop's clip after the gains does not bite and the finish shows
+//! the file at the reference's exposure. That is what the
+//! reconstruction keeps over the sensor's clip, and also a saturated
+//! red or blue that nothing clipped but that its gain lifts over 1:
+//! such a color now renders as the frame's own develop renders it,
+//! where the file before cut it at 1. A stack with nothing over 1
+//! after the white balance has no headroom and is the file it was. A
+//! stack whose recipe
+//! does not say its highlights were reconstructed (one made before they
+//! were) is made again as it was made, clipped.
 //!
 //! The command line's `greycard stack` and the window's Merge to Focus
 //! stack both run [`frames`]; the window, and the command line when it
@@ -97,6 +102,10 @@ pub struct Options {
     /// placed or fitted, each is blended where it was put. The
     /// reference is then `Reference::Index`.
     pub placed: Option<Vec<Option<Transform>>>,
+    /// Whether each frame's highlights are reconstructed and what is
+    /// over the clip kept under headroom; off only for a stack made
+    /// again whose recipe says they were clipped.
+    pub reconstruct: bool,
 }
 
 impl Default for Options {
@@ -113,6 +122,7 @@ impl Default for Options {
             denoiser: None,
             ca: CaFits::Once,
             placed: None,
+            reconstruct: true,
         }
     }
 }
@@ -230,8 +240,14 @@ pub fn register_settings(frame: &RawFrame) -> DevelopSettings {
 /// The frames merged, not yet written.
 pub struct Stacked {
     /// Camera RGB, the white balance divided back out, held to the
-    /// reference's clip.
+    /// brightest the frames' walks made (the clip, with nothing
+    /// reconstructed over it).
     pub merged: CameraImage,
+    /// What the file's samples are stored divided by: the merge's
+    /// brightest sample after the white balance, 1 when nothing is over
+    /// 1 after it (a saturated color its gain lifts over 1 asks for
+    /// headroom as a reconstructed highlight does).
+    pub headroom: f32,
     /// The reference frame, its samples let go: its tags are the
     /// file's.
     pub frame: RawFrame,
@@ -259,7 +275,6 @@ pub struct Stacked {
 
 /// What the blending pass keeps between its reads: the reference's CA
 /// fit, made once, its noise, and what the walks said.
-#[derive(Default)]
 struct Walks {
     /// The reference's fit: none until it is walked, then what it made
     /// (none on a frame the correction does not measure).
@@ -269,6 +284,9 @@ struct Walks {
     skipped: Vec<Option<LearnedSkipped>>,
     warnings: Vec<String>,
     seconds: f64,
+    /// The brightest sample of every frame blended, and never under 1:
+    /// what the merge is held to.
+    top: f32,
 }
 
 /// `files`, in focus order, merged under `options`, each walked under
@@ -323,7 +341,15 @@ pub fn frames(
     let scored = Cell::new(false);
     let known = reference_of(of, options.reference);
     let mut chained: Option<usize> = None;
-    let mut walks = Walks::default();
+    let mut walks = Walks {
+        fit: None,
+        noise: None,
+        denoised: false,
+        skipped: Vec::new(),
+        warnings: Vec::new(),
+        seconds: 0.0,
+        top: 1.0,
+    };
     let learned = options.denoiser.is_some();
     // Made again: the reference's tags and white read first, as its
     // placing read would take them. Every read is a blend unless the
@@ -391,7 +417,7 @@ pub fn frames(
             .context("the reference's tags were not read")?;
         let input = |k: usize, ca: MergeCa, denoiser| MergeInput {
             white: (k != reference).then_some(white),
-            reconstruct: false,
+            reconstruct: options.reconstruct,
             denoiser,
             ca,
             lens: Vec::new(),
@@ -449,6 +475,16 @@ pub fn frames(
         }
         walks.denoised |= f.denoised;
         walks.skipped.push(f.learned_skipped);
+        if options.reconstruct {
+            use rayon::prelude::*;
+            let brightest = f
+                .rgb
+                .par_iter()
+                .copied()
+                .filter(|v| v.is_finite())
+                .reduce(|| 1.0, f32::max);
+            walks.top = walks.top.max(brightest);
+        }
         let elapsed = t.elapsed().as_secs_f64();
         developing += elapsed;
         walks.seconds += elapsed;
@@ -497,15 +533,28 @@ pub fn frames(
         .into_inner()
         .swap_remove(report.reference)
         .expect("every frame is read in the first pass");
-    // Held to the reference's clip, as the file stores it: a finer
-    // demosaic overshoots a clipped edge, and rings under black.
+    // Held to what the frames held: the pyramid's blend overshoots an
+    // edge, and rings under black. With nothing reconstructed over the
+    // clip, or the highlights clipped, that is the clip, as the file
+    // stored a stack before it kept its highlights.
+    let top = walks.top;
     {
         use rayon::prelude::*;
         merged
             .data
             .par_iter_mut()
-            .for_each(|v| *v = v.clamp(0.0, 1.0));
+            .for_each(|v| *v = v.clamp(0.0, top));
     }
+    // The headroom a bracket's and a panorama's file take: the
+    // brightest sample after the white balance, so neither the file's
+    // white nor the develop's clip after the gains bites. Nothing over
+    // 1 after the white balance keeps none; a stack made again clipped
+    // keeps none, as before.
+    let headroom = if options.reconstruct {
+        core_merge::headroom(&merged, balance.coefficients_f32())
+    } else {
+        1.0
+    };
     // The reference's noise, not less: where the frames are equally
     // sharp the blend averages them and the noise is less, but where
     // the detail is, each band comes from one frame and so does its
@@ -513,7 +562,7 @@ pub fn frames(
     // sharpen's floor) want it right in the detail; over the flat
     // regions it overstates, which smooths what has nothing to lose.
     let noise = walks.noise.unwrap_or(Noise::ASSUMED);
-    let noise_profile = core_merge::noise_profile(&[(1.0, noise)], 1.0);
+    let noise_profile = core_merge::noise_profile(&[(1.0, noise)], headroom);
     let names: Vec<String> = files.iter().map(|f| name_of(f)).collect();
     let (heads, wholes) = hashes(&sources);
     let denoised = walks.denoised;
@@ -522,7 +571,7 @@ pub fn frames(
         frames: names.clone(),
         reference: report.reference,
         denoised,
-        headroom_stops: 0.0,
+        headroom_stops: headroom.log2(),
         lens_corrected: false,
         heads,
         wholes,
@@ -543,16 +592,19 @@ pub fn frames(
                 max_residual: options.max_residual,
                 placed,
                 uncompressed: options.uncompressed,
+                reconstructed: options.reconstruct,
             }),
         }),
     };
     log::info!(
         "stack: {of} frames read in {developing:.1} s, {:.1} s of it the blends' walks; \
-         merged in {merging:.1} s",
-        walks.seconds
+         merged in {merging:.1} s; {:.2} stops of headroom",
+        walks.seconds,
+        headroom.log2()
     );
     Ok(Stacked {
         merged,
+        headroom,
         frame,
         metadata,
         balance,
@@ -642,7 +694,7 @@ pub fn write_dng<W: std::io::Write + std::io::Seek>(
         metadata: Some(&stacked.metadata),
         preview: Some(&preview),
         software: Some(concat!("greycard ", env!("CARGO_PKG_VERSION"))),
-        headroom: None,
+        headroom: (stacked.headroom > 1.0).then_some(stacked.headroom),
     };
     write_linear_merged_dng(
         out,
@@ -665,6 +717,9 @@ pub struct Report {
     pub stack: StackReport,
     pub names: Vec<String>,
     pub noise_profile: [f64; 2],
+    /// The stops the samples were stored under the reference's scale
+    /// by: 0 with nothing over 1 after the white balance.
+    pub headroom_stops: f32,
     /// Whether the frames were denoised.
     pub denoised: bool,
     /// The seconds each part took, in order.
@@ -728,6 +783,7 @@ pub fn stack(
         stack: stacked.report,
         names: stacked.names,
         noise_profile: stacked.noise_profile,
+        headroom_stops: stacked.headroom.log2(),
         denoised: stacked.tag.denoised,
         seconds,
         warnings: stacked.warnings,
@@ -772,15 +828,21 @@ mod tests {
         dir
     }
 
-    /// `n` frames of one scene, as a focus stack's are of one subject.
+    /// `n` frames of one scene, as a focus stack's are of one subject:
+    /// its brightest eighth over the clip.
     fn frames_of(dir: &Path, n: usize, seed: u64) -> Vec<PathBuf> {
+        frames_at(dir, n, seed, 0.25)
+    }
+
+    /// [`frames_of`] with the scene times `gain`.
+    fn frames_at(dir: &Path, n: usize, seed: u64, gain: f32) -> Vec<PathBuf> {
         let (w, h) = (192, 128);
         (0..n)
             .map(|k| {
                 let p = dir.join(format!("IMG_{k}.dng"));
                 write_raw(
                     &p,
-                    mosaic(w, h, 0.25, Noise::ASSUMED, seed + k as u64),
+                    mosaic(w, h, gain, Noise::ASSUMED, seed + k as u64),
                     w,
                     h,
                     (1, 100),
@@ -820,7 +882,9 @@ mod tests {
     /// The stack is its steps done by hand, bit for bit: each frame
     /// placed from its short develop, and blended as the HDR merge's
     /// walk develops it, at the reference's white and with the
-    /// reference's CA fit, held to its clip.
+    /// reference's CA fit, its highlights reconstructed, held to the
+    /// brightest the walks made and stored under the headroom its
+    /// brightest balanced sample asks.
     #[test]
     fn the_stack_places_the_short_develop_and_blends_the_walk() {
         let dir = scratch("by-hand");
@@ -848,7 +912,7 @@ mod tests {
         let sources = Files(&files);
         let input = |k: usize, ca: MergeCa, white| MergeInput {
             white: (k != r).then_some(white),
-            reconstruct: false,
+            reconstruct: true,
             denoiser: None,
             ca,
             lens: Vec::new(),
@@ -889,13 +953,22 @@ mod tests {
         )
         .unwrap();
         assert_eq!(report, got.report);
+        let top = walked
+            .iter()
+            .flat_map(|f| f.data.iter().copied())
+            .fold(1.0f32, f32::max);
+        assert!(top > 1.0, "the frames reconstruct nothing over the clip");
         for v in &mut merged.data {
-            *v = v.clamp(0.0, 1.0);
+            *v = v.clamp(0.0, top);
         }
         assert!(
             bits(&merged.data) == bits(&got.merged.data),
             "the stack is not its steps by hand"
         );
+        let headroom = core_merge::headroom(&merged, first.gains);
+        assert!(headroom > 1.0);
+        assert_eq!(got.headroom.to_bits(), headroom.to_bits());
+        assert_eq!(got.tag.headroom_stops, headroom.log2());
         // The walk is not the short develop: the merge of the short
         // develops alone, what a stack was, is another picture.
         let (short, _) = stack::stack_camera(&quick, &stack::Options::default()).unwrap();
@@ -1064,8 +1137,9 @@ mod tests {
     /// The written stack is a merge of ours: its tag says a stack, its
     /// reference, and the recipe (the CA fitted once, no tier, the
     /// core's options, each frame's transform), and its `NoiseProfile`
-    /// is the reference's own noise as its walk measured it, the file
-    /// holding no headroom. The file develops at that noise.
+    /// is the reference's own noise as its walk measured it, at the
+    /// headroom the file is stored under. The file develops at that
+    /// noise, and its tag and its baseline say the headroom.
     #[test]
     fn a_stacks_file_carries_its_recipe_and_the_references_noise() {
         let dir = scratch("tag");
@@ -1076,7 +1150,11 @@ mod tests {
         assert_eq!((tag.kind.as_str(), tag.reference), ("stack", 1));
         assert_eq!(tag.frames, ["IMG_0.dng", "IMG_1.dng", "IMG_2.dng"]);
         assert!(!tag.denoised);
-        assert_eq!(tag.headroom_stops, 0.0);
+        assert!(report.headroom_stops > 0.0);
+        assert!((tag.headroom_stops - report.headroom_stops).abs() < 1e-4);
+        assert_eq!(greycard_edit::baseline::headroom(&back), tag.headroom_stops);
+        let baseline = back.dng.baseline_exposure.expect("a baseline");
+        assert!((baseline - report.headroom_stops).abs() < 1e-4);
         assert_eq!(
             tag.heads,
             files
@@ -1103,6 +1181,7 @@ mod tests {
                 .map(|f| Some(f.transform))
                 .collect::<Vec<_>>()
         );
+        assert!(s.reconstructed);
 
         let (r, _, _) = walk_frame(
             &Files(&files),
@@ -1110,7 +1189,7 @@ mod tests {
             &Edit::default(),
             MergeInput {
                 white: None,
-                reconstruct: false,
+                reconstruct: true,
                 denoiser: None,
                 ca: MergeCa::Make,
                 lens: Vec::new(),
@@ -1119,8 +1198,10 @@ mod tests {
             &mut NoModels,
         )
         .unwrap();
-        let want = core_merge::noise_profile(&[(1.0, r.noise)], 1.0);
-        assert_eq!(report.noise_profile, want);
+        let want = core_merge::noise_profile(&[(1.0, r.noise)], report.headroom_stops.exp2());
+        for (got, want) in report.noise_profile.iter().zip(&want) {
+            assert!((got / want - 1.0).abs() < 1e-5, "{got} against {want}");
+        }
         let noise = back.dng.noise_profile.expect("a noise profile");
         for c in 0..3 {
             assert!(
@@ -1165,6 +1246,9 @@ mod tests {
         let tag = |p: &Path| greycard_core::decode::merge_tag_path(p).unwrap().unwrap();
         let first = tag(&report.out);
         assert_eq!(first.reference, report.stack.reference);
+        // Its highlights reconstructed, under headroom: made again, the
+        // same.
+        assert!(first.headroom_stops > 0.0);
         let size = std::fs::metadata(&report.out).unwrap().len();
 
         let heard = std::cell::RefCell::new(Vec::new());
@@ -1217,6 +1301,275 @@ mod tests {
             .filter(|n| n.starts_with('.') || n.ends_with("-1.dng"))
             .collect();
         assert!(left.is_empty(), "{left:?}");
+        greycard_core::testing::remove_dir_retry(&dir);
+    }
+
+    /// Where the green clipped and red and blue did not, the stack
+    /// keeps what the reconstruction recovers over the clip: green a
+    /// quarter as far from the scene as the clip leaves it (0.05 against
+    /// 0.18 in the camera's units). The file holds it
+    /// under the headroom its tag and its baseline say, to the 16-bit
+    /// step.
+    #[test]
+    fn a_stack_keeps_its_reconstructed_highlights_over_the_clip() {
+        let dir = scratch("over");
+        let files = frames_of(&dir, 3, 20);
+        let got = frames(
+            &files,
+            &Edit::default(),
+            &Options::default(),
+            &mut NoModels,
+            &|_: Step| {},
+        )
+        .expect("a stack");
+        let (w, h) = (got.merged.width, got.merged.height);
+        let truth = |x: usize, y: usize, c: usize| {
+            greycard_core::merge::testing::scene(x, y, c, w, h) * 0.25
+        };
+        // Inside a margin, and away from the patches' edges, where the
+        // reconstruction's neighbors are of another reflectance.
+        let (mut kept, mut clipped, mut n) = (0.0f64, 0.0f64, 0usize);
+        for y in 8..h - 8 {
+            for x in 8..w - 8 {
+                let g = truth(x, y, 1);
+                let edge = (x % 23) < 2 || (x % 23) > 20 || (y % 19) < 2 || (y % 19) > 16;
+                if edge || !(1.05..1.3).contains(&g) || truth(x, y, 2) > 0.9 {
+                    continue;
+                }
+                let v = got.merged.data[(y * w + x) * 3 + 1];
+                kept += f64::from(v - g).powi(2);
+                clipped += f64::from(1.0 - g).powi(2);
+                n += 1;
+            }
+        }
+        assert!(n > 200, "{n} pixels");
+        let (kept, clipped) = ((kept / n as f64).sqrt(), (clipped / n as f64).sqrt());
+        println!("{n} px: kept {kept:.4}, clipped {clipped:.4}");
+        assert!(
+            kept < 0.5 * clipped,
+            "the stack's green is {kept:.3} from the scene, the clip's {clipped:.3}"
+        );
+        assert!(got.merged.data.iter().any(|&v| v > 1.05));
+
+        let out = dir.join("over.dng");
+        {
+            let mut file = std::fs::File::create(&out).unwrap();
+            write_dng(&mut file, &got, true).unwrap();
+        }
+        let back = greycard_core::decode::decode_path(&out).unwrap();
+        let stops = got.headroom.log2();
+        assert!(stops > 0.0);
+        let baseline = back.dng.baseline_exposure.expect("a baseline");
+        assert!((baseline - stops).abs() < 1e-4, "{baseline} {stops}");
+        let tag = back.dng.merged.as_ref().expect("our tag");
+        assert!((tag.headroom_stops - stops).abs() < 1e-4);
+        let step = got.headroom / 65535.0;
+        for (s, v) in back.samples.to_f32().iter().zip(&got.merged.data) {
+            assert!((s / 65535.0 * got.headroom - v).abs() <= step, "{s} {v}");
+        }
+        greycard_core::testing::remove_dir_retry(&dir);
+    }
+
+    /// A stack with nothing over 1 after the white balance (nothing near
+    /// the sensor's clip, no color its gain lifts over 1) reconstructs
+    /// nothing, keeps no headroom, and stores the samples it stored with
+    /// its highlights clipped, to the bit.
+    #[test]
+    fn a_stack_with_nothing_over_white_is_the_file_it_was() {
+        let dir = scratch("under");
+        let files = frames_at(&dir, 3, 30, 1.0 / 64.0);
+        let made = |reconstruct: bool, name: &str| {
+            stacked(
+                &files,
+                &Options {
+                    reconstruct,
+                    uncompressed: true,
+                    out: Some(dir.join(name)),
+                    ..Options::default()
+                },
+            )
+        };
+        let kept = made(true, "kept.dng");
+        let clipped = made(false, "clipped.dng");
+        assert_eq!(kept.headroom_stops, 0.0);
+        let read = |p: &Path| greycard_core::decode::decode_path(p).unwrap();
+        let (a, b) = (read(&kept.out), read(&clipped.out));
+        assert!(bits(&a.samples.to_f32()) == bits(&b.samples.to_f32()));
+        assert_eq!(a.dng.baseline_exposure, None);
+        assert_eq!(b.dng.baseline_exposure, None);
+        let (ta, tb) = (a.dng.merged.unwrap(), b.dng.merged.unwrap());
+        assert_eq!((ta.headroom_stops, tb.headroom_stops), (0.0, 0.0));
+        assert_eq!(kept.noise_profile, clipped.noise_profile);
+        let reconstructed =
+            |t: &greycard_core::merge::Tag| match &t.recipe.as_ref().unwrap().geometry {
+                Geometry::Stack(s) => s.reconstructed,
+                _ => panic!("a stack"),
+            };
+        assert!(reconstructed(&ta) && !reconstructed(&tb));
+        greycard_core::testing::remove_dir_retry(&dir);
+    }
+
+    /// A saturated red that nothing clipped but that its gain lifts over
+    /// 1 asks for headroom: the frames reconstruct nothing (the merge is
+    /// the clipped stack's, to the bit), and the file keeps the red,
+    /// which the develop cut at 1 when the stack stored it without
+    /// headroom.
+    #[test]
+    fn a_color_over_white_after_its_gain_keeps_its_headroom() {
+        let dir = scratch("red");
+        let (w, h) = (192, 128);
+        // Red at 0.7 of the sensor's clip under a red gain of 2 (the
+        // fixture's as-shot white): 1.4 after the white balance.
+        let light = |x: usize, y: usize, c: usize| {
+            let t = 0.9 + 0.1 * ((x as f32 * 0.6).sin() * (y as f32 * 0.4).cos());
+            let red = (48..144).contains(&x) && (32..96).contains(&y);
+            t * if red {
+                [0.7, 0.2, 0.15][c]
+            } else {
+                [0.15, 0.3, 0.2][c]
+            }
+        };
+        let files: Vec<PathBuf> = (0..3)
+            .map(|k| {
+                let p = dir.join(format!("IMG_{k}.dng"));
+                write_raw(
+                    &p,
+                    mosaic_of(w, h, 1.0, Noise::ASSUMED, 10 + k as u64, light),
+                    w,
+                    h,
+                    (1, 100),
+                    "Stack",
+                );
+                p
+            })
+            .collect();
+        let merged = |reconstruct: bool| {
+            frames(
+                &files,
+                &Edit::default(),
+                &Options {
+                    reconstruct,
+                    ..Options::default()
+                },
+                &mut NoModels,
+                &|_: Step| {},
+            )
+            .expect("a stack")
+        };
+        let (kept, clipped) = (merged(true), merged(false));
+        assert!(bits(&kept.merged.data) == bits(&clipped.merged.data));
+        assert_eq!(clipped.headroom, 1.0);
+        assert!(kept.headroom > 1.3, "{}", kept.headroom);
+        // What the develop reads of each file, at the scale the finish
+        // shows it: the brightest balanced sample.
+        let developed = |s: &Stacked, name: &str| {
+            let out = dir.join(name);
+            {
+                let mut file = std::fs::File::create(&out).unwrap();
+                write_dng(&mut file, s, true).unwrap();
+            }
+            let back = greycard_core::decode::decode_path(&out).unwrap();
+            let shown = greycard_edit::baseline::headroom(&back).exp2();
+            let prepared =
+                greycard_core::develop::prepare(&back, &DevelopSettings::default(), false).unwrap();
+            prepared.samples.iter().copied().fold(0.0f32, f32::max) * shown
+        };
+        let (new, old) = (
+            developed(&kept, "kept.dng"),
+            developed(&clipped, "clipped.dng"),
+        );
+        assert!(old <= 1.0 + 1e-4, "the clipped file's red reads {old}");
+        assert!(new > 1.3, "the file with headroom reads {new}");
+        greycard_core::testing::remove_dir_retry(&dir);
+    }
+
+    /// A stack whose recipe does not say its highlights were
+    /// reconstructed, as one made before they were, is made again as it
+    /// was made: clipped, no headroom, the same samples. Made fresh,
+    /// the same frames keep their highlights.
+    #[test]
+    fn a_clipped_stack_made_again_stays_clipped() {
+        let dir = scratch("again-clipped");
+        let files = frames_of(&dir, 3, 85);
+        let report = stacked(
+            &files,
+            &Options {
+                reconstruct: false,
+                uncompressed: true,
+                ..Options::default()
+            },
+        );
+        let read = |p: &Path| greycard_core::decode::decode_path(p).unwrap();
+        let before = read(&report.out);
+        let first = before.dng.merged.clone().unwrap();
+        assert_eq!(first.headroom_stops, 0.0);
+        assert!(
+            !String::from_utf8_lossy(&first.to_bytes()).contains("highlights="),
+            "a clipped stack's recipe says nothing of its highlights, as before"
+        );
+        let super::super::Again::Stack(again) = super::super::again(
+            &report.out,
+            &super::super::Overrides::default(),
+            &Edit::default(),
+            &mut NoModels,
+            &|_: Step| {},
+        )
+        .unwrap() else {
+            panic!("a stack");
+        };
+        assert_eq!(again.headroom_stops, 0.0);
+        let after = read(&report.out);
+        assert_eq!(after.dng.merged, Some(first));
+        assert!(bits(&after.samples.to_f32()) == bits(&before.samples.to_f32()));
+        let fresh = stacked(
+            &files,
+            &Options {
+                out: Some(dir.join("fresh.dng")),
+                ..Options::default()
+            },
+        );
+        assert!(fresh.headroom_stops > 0.0);
+        greycard_core::testing::remove_dir_retry(&dir);
+    }
+
+    /// A stack of nine, where the stack's prior speaks, made again from
+    /// its recipe: the prior gathered again from the short reads, the
+    /// frames blended with their highlights reconstructed, the same
+    /// file to the sample, under the same headroom.
+    #[test]
+    fn a_stack_of_nine_made_again_under_headroom_is_the_same_file() {
+        let dir = scratch("again-nine");
+        let files = frames_of(&dir, 9, 120);
+        let report = stacked(
+            &files,
+            &Options {
+                uncompressed: true,
+                ..Options::default()
+            },
+        );
+        assert!(report.stack.used() >= 8, "{:#?}", report.stack.frames);
+        assert!(report.headroom_stops > 0.0);
+        let read = |p: &Path| greycard_core::decode::decode_path(p).unwrap();
+        let before = read(&report.out);
+        let heard = std::cell::RefCell::new(Vec::new());
+        let super::super::Again::Stack(again) = super::super::again(
+            &report.out,
+            &super::super::Overrides::default(),
+            &Edit::default(),
+            &mut NoModels,
+            &|s: Step| heard.borrow_mut().push(s),
+        )
+        .unwrap() else {
+            panic!("a stack");
+        };
+        assert!(
+            heard.borrow().contains(&Step::Placing),
+            "the prior is gathered again"
+        );
+        assert_eq!(again.headroom_stops, report.headroom_stops);
+        let after = read(&report.out);
+        assert_eq!(after.dng.merged, before.dng.merged);
+        assert!(bits(&after.samples.to_f32()) == bits(&before.samples.to_f32()));
         greycard_core::testing::remove_dir_retry(&dir);
     }
 
@@ -1409,6 +1762,311 @@ mod tests {
         assert!(e.to_string().contains("close other programs"), "{e}");
         assert_eq!(*heard.borrow(), [Step::Frame { index: 1, of: 2 }]);
         assert!(!dir.join("IMG_0 stack.dng").exists());
+        greycard_core::testing::remove_dir_retry(&dir);
+    }
+
+    /// The area two discs of radii `r1` and `r2` share, `d` apart.
+    fn lens_area(d: f64, r1: f64, r2: f64) -> f64 {
+        use std::f64::consts::PI;
+        if d >= r1 + r2 {
+            return 0.0;
+        }
+        if d <= (r1 - r2).abs() {
+            return PI * r1.min(r2).powi(2);
+        }
+        let a = ((d * d + r1 * r1 - r2 * r2) / (2.0 * d * r1)).clamp(-1.0, 1.0);
+        let b = ((d * d + r2 * r2 - r1 * r1) / (2.0 * d * r2)).clamp(-1.0, 1.0);
+        let k = ((-d + r1 + r2) * (d + r1 - r2) * (d - r1 + r2) * (d + r1 + r2)).max(0.0);
+        r1 * r1 * a.acos() + r2 * r2 * b.acos() - 0.5 * k.sqrt()
+    }
+
+    /// A focus stack of `n` frames at one exposure: a textured ground
+    /// whose depth runs across the frame, and in the middle a blown
+    /// specular, a disc of `r0` px at `peak` times the clip, at the
+    /// depth frame `n / 2` is focused on. Frame `k` sees the ground
+    /// under a Gaussian of 0.7 px a step of focus from it, and the
+    /// specular through a pillbox of 2.5 px a step: each frame's blown
+    /// area is larger and its reconstruction its own. The light of frame
+    /// `k` at a pixel and channel, in the sensor's units.
+    fn specular_scene(
+        k: usize,
+        n: usize,
+        (w, h): (usize, usize),
+        r0: f64,
+        peak: f64,
+    ) -> impl Fn(usize, usize, usize) -> f32 {
+        let focus = (n / 2) as f64;
+        let steps = (k as f64 - focus).abs();
+        let b = (2.5 * steps).max(0.35);
+        let (cx, cy) = ((w / 2) as f64, (h / 2) as f64);
+        // Periods of 3 to 21 px, each its own way.
+        let waves: [(f64, f64, f64); 5] = [
+            (3.1, 0.3, 0.0),
+            (5.2, 1.9, 1.1),
+            (8.3, 0.9, 2.3),
+            (13.0, 2.6, 0.7),
+            (21.0, 1.4, 1.9),
+        ];
+        move |x, y, c| {
+            let (fx, fy) = (x as f64, y as f64);
+            let depth = (n - 1) as f64 * fx / (w - 1) as f64;
+            let sigma = 0.7 * (k as f64 - depth).abs();
+            let mut t = 0.5;
+            for (period, angle, phase) in waves {
+                let f = 1.0 / period;
+                let fade = (-2.0 * std::f64::consts::PI.powi(2) * sigma * sigma * f * f).exp();
+                let u = fx * angle.cos() + fy * angle.sin();
+                t += 0.08 * fade * (std::f64::consts::TAU * f * u + phase).sin();
+            }
+            let ground = 0.3 * t * [0.55, 1.0, 0.7][c];
+            let r = ((fx - cx).powi(2) + (fy - cy).powi(2)).sqrt();
+            let spot = peak * lens_area(r, r0, b) / (std::f64::consts::PI * b * b);
+            (ground + spot * [0.9, 1.0, 0.8][c]) as f32
+        }
+    }
+
+    /// Balanced luminance of camera RGB `rgb` at a pixel.
+    fn balanced_luma(rgb: &[f32], i: usize, gains: [f32; 3]) -> f64 {
+        let p = &rgb[i * 3..i * 3 + 3];
+        f64::from(0.25 * p[0] * gains[0] + 0.5 * p[1] * gains[1] + 0.25 * p[2] * gains[2])
+    }
+
+    /// The mean of `rgb`'s balanced luminance over rings 1 px wide
+    /// about `(cx, cy)`, out to `to`.
+    fn radial(rgb: &[f32], w: usize, h: usize, gains: [f32; 3], to: usize) -> Vec<f64> {
+        let (cx, cy) = ((w / 2) as f64, (h / 2) as f64);
+        let mut sum = vec![0.0f64; to];
+        let mut n = vec![0usize; to];
+        for y in 0..h {
+            for x in 0..w {
+                let r = ((x as f64 - cx).powi(2) + (y as f64 - cy).powi(2)).sqrt() as usize;
+                if r < to {
+                    sum[r] += balanced_luma(rgb, y * w + x, gains);
+                    n[r] += 1;
+                }
+            }
+        }
+        sum.iter()
+            .zip(&n)
+            .map(|(s, &n)| s / n.max(1) as f64)
+            .collect()
+    }
+
+    /// Where a radial profile leaves 1 after the white balance: the
+    /// blown disc's radius.
+    fn blown_radius(profile: &[f64]) -> usize {
+        profile.iter().rposition(|&v| v >= 1.0).map_or(0, |r| r + 1)
+    }
+
+    /// The radii, inside `to`, at which the log of a profile falls
+    /// fastest: its edges, the steepest first, each a local maximum of
+    /// the slope at least a tenth of a stop a pixel.
+    fn edges(profile: &[f64], to: usize) -> Vec<(usize, f64)> {
+        let slope: Vec<f64> = profile
+            .windows(2)
+            .map(|p| (p[0].max(1e-6) / p[1].max(1e-6)).log2())
+            .collect();
+        let mut out: Vec<(usize, f64)> = (1..slope.len().min(to) - 1)
+            .filter(|&r| slope[r] >= 0.1 && slope[r] >= slope[r - 1] && slope[r] >= slope[r + 1])
+            .map(|r| (r, slope[r]))
+            .collect();
+        out.sort_by(|a, b| b.1.total_cmp(&a.1));
+        out
+    }
+
+    /// A crop of camera RGB `rgb` about the middle, balanced, at
+    /// `stops` of exposure, clipped and gamma'd for a look.
+    fn crop_png(
+        rgb: &[f32],
+        w: usize,
+        h: usize,
+        gains: [f32; 3],
+        side: usize,
+        stops: f32,
+    ) -> image::RgbImage {
+        let (x0, y0) = (w / 2 - side / 2, h / 2 - side / 2);
+        let scale = stops.exp2();
+        image::RgbImage::from_fn(side as u32, side as u32, |x, y| {
+            let i = (y0 + y as usize) * w + x0 + x as usize;
+            let px = |c: usize| {
+                let v = (rgb[i * 3 + c] * gains[c] * scale).clamp(0.0, 1.0);
+                (v.powf(1.0 / 2.2) * 255.0).round() as u8
+            };
+            image::Rgb([px(0), px(1), px(2)])
+        })
+    }
+
+    /// A measurement, not a check: a constant-exposure stack of nine
+    /// with a blown specular whose defocus grows away from its focused
+    /// frame, merged clipped (as before), with its highlights
+    /// reconstructed (now), and at a selectivity of 0, against the
+    /// focused frame's own walk. Prints the blown disc's radius, the
+    /// edges of each radial profile, the dark halo outside the disc,
+    /// and which frame each ring of the merge is nearest; with
+    /// `GREYCARD_SYNTHETIC_OUT` set, writes crops there.
+    #[test]
+    #[ignore = "a measurement: a blown specular through the stack"]
+    fn synthetic_blown_specular_stack() {
+        let dir = scratch("specular");
+        let (w, h, n) = (320usize, 240usize, 9usize);
+        let (r0, peak) = (8.0, 6.0);
+        let files: Vec<PathBuf> = (0..n)
+            .map(|k| {
+                let p = dir.join(format!("IMG_{k}.dng"));
+                let light = specular_scene(k, n, (w, h), r0, peak);
+                write_raw(
+                    &p,
+                    mosaic_of(w, h, 1.0, Noise::ASSUMED, 300 + k as u64, light),
+                    w,
+                    h,
+                    (1, 100),
+                    "Stack",
+                );
+                p
+            })
+            .collect();
+        let run = |reconstruct: bool, selectivity: f32| {
+            frames(
+                &files,
+                &Edit::default(),
+                &Options {
+                    reconstruct,
+                    selectivity,
+                    ..Options::default()
+                },
+                &mut NoModels,
+                &|_: Step| {},
+            )
+            .expect("a stack")
+        };
+        let selectivity = Options::default().selectivity;
+        let old = run(false, selectivity);
+        let new = run(true, selectivity);
+        let flat = run(true, 0.0);
+        assert_eq!(new.report.used(), n, "{:#?}", new.report.frames);
+        let gains = new.balance.coefficients_f32();
+        let reference = new.report.reference;
+        let white = gains.map(f64::from);
+        let sources = Files(&files);
+        let walk = |k: usize, reconstruct: bool| {
+            walk_frame(
+                &sources,
+                k,
+                &Edit::default(),
+                MergeInput {
+                    white: (k != reference).then_some(white),
+                    reconstruct,
+                    denoiser: None,
+                    ca: MergeCa::Off,
+                    lens: Vec::new(),
+                },
+                None,
+                &mut NoModels,
+            )
+            .unwrap()
+            .0
+            .rgb
+        };
+        let focused = walk(n / 2, true);
+        let focused_clipped: Vec<f32> = walk(n / 2, false).iter().map(|v| v.min(1.0)).collect();
+        let each: Vec<Vec<f32>> = (0..n).map(|k| walk(k, true)).collect();
+        let to = 60;
+        let profile = |rgb: &[f32]| radial(rgb, w, h, gains, to);
+        let rows: Vec<(&str, Vec<f64>)> = vec![
+            ("clipped merge (before)", profile(&old.merged.data)),
+            ("reconstructed merge (now)", profile(&new.merged.data)),
+            ("reconstructed, selectivity 0", profile(&flat.merged.data)),
+            ("focused frame, reconstructed", profile(&focused)),
+            ("focused frame, clipped", profile(&focused_clipped)),
+        ];
+        let frames_profiles: Vec<Vec<f64>> = each.iter().map(|f| profile(f)).collect();
+        let ground = |p: &[f64]| p[45..to].iter().sum::<f64>() / (to - 45) as f64;
+        println!(
+            "headroom: before {:.2} stops, now {:.2} stops",
+            old.headroom.log2(),
+            new.headroom.log2()
+        );
+        println!(
+            "| result | blown radius px | peak | edges (radius: stops/px) | darkest ring / ground |"
+        );
+        println!("|---|---|---|---|---|");
+        for (name, p) in &rows {
+            let r = blown_radius(p);
+            let g = ground(p);
+            let dark = p[r.max(1)..40]
+                .iter()
+                .copied()
+                .fold(f64::INFINITY, f64::min);
+            let e: Vec<String> = edges(p, 40)
+                .iter()
+                .take(4)
+                .map(|(r, s)| format!("{r}: {s:.2}"))
+                .collect();
+            println!(
+                "| {name} | {r} | {:.2} | {} | {:.3} |",
+                p[0],
+                e.join(", "),
+                dark / g
+            );
+        }
+        println!(
+            "frames' blown radii: {:?}",
+            frames_profiles
+                .iter()
+                .map(|p| blown_radius(p))
+                .collect::<Vec<_>>()
+        );
+        let nearest = |p: &[f64], r: usize| {
+            (0..n)
+                .min_by(|&a, &b| {
+                    (frames_profiles[a][r] - p[r])
+                        .abs()
+                        .total_cmp(&(frames_profiles[b][r] - p[r]).abs())
+                })
+                .unwrap()
+        };
+        for (name, p) in rows.iter().take(3) {
+            let line: Vec<String> = (0..30)
+                .step_by(2)
+                .map(|r| format!("{r}:{}", nearest(p, r)))
+                .collect();
+            println!("nearest frame by radius, {name}: {}", line.join(" "));
+        }
+        for (name, p) in rows.iter().take(3) {
+            let diff: Vec<String> = (0..30)
+                .step_by(2)
+                .map(|r| format!("{r}:{:+.2}", p[r] - rows[3].1[r]))
+                .collect();
+            println!("against the focused frame, {name}: {}", diff.join(" "));
+        }
+        if let Ok(out) = std::env::var("GREYCARD_SYNTHETIC_OUT") {
+            let out = PathBuf::from(out);
+            std::fs::create_dir_all(&out).unwrap();
+            let side = 112;
+            let shots: [(&str, &[f32]); 4] = [
+                ("clipped-merge", &old.merged.data),
+                ("reconstructed-merge", &new.merged.data),
+                ("reconstructed-selectivity-0", &flat.merged.data),
+                ("focused-frame", &focused),
+            ];
+            for stops in [0.0f32, -3.0] {
+                let mut sheet = image::RgbImage::new(side as u32 * 4 + 6, side as u32);
+                for (i, (_, rgb)) in shots.iter().enumerate() {
+                    let c = crop_png(rgb, w, h, gains, side, stops);
+                    image::imageops::replace(&mut sheet, &c, (i * (side + 2)) as i64, 0);
+                }
+                let name = format!(
+                    "synthetic-clipped-reconstructed-sel0-focused-{}ev.png",
+                    stops as i32
+                );
+                sheet.save(out.join(name)).unwrap();
+            }
+            for k in [0, 2, n / 2] {
+                crop_png(&each[k], w, h, gains, side, -3.0)
+                    .save(out.join(format!("synthetic-frame-{k}--3ev.png")))
+                    .unwrap();
+            }
+        }
         greycard_core::testing::remove_dir_retry(&dir);
     }
 }

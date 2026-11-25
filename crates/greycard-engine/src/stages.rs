@@ -73,9 +73,10 @@ pub struct MergeInput {
     /// white. The merge divides the gains back out, so only the
     /// demosaic and the reconstruction see them.
     pub white: Option<[f64; 3]>,
-    /// Whether the highlights are reconstructed, on the darkest frame
-    /// alone: where every frame clipped, its reconstruction is the
-    /// merge's. Every other frame's clipped samples are dropped.
+    /// Whether the highlights are reconstructed: on a bracket's darkest
+    /// frame alone, where every frame clipped, its reconstruction is the
+    /// merge's, and every other frame's clipped samples are dropped; on
+    /// every frame of a panorama and a focus stack.
     pub reconstruct: bool,
     /// The learned denoiser in the demosaic's place, when the merge
     /// asks for it.

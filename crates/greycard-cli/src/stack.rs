@@ -475,6 +475,7 @@ mod tests {
         let balance = &demosaiced.white_balance;
         let stacked = || Stacked {
             merged: merged.clone(),
+            headroom: 1.0,
             frame: frame.clone(),
             metadata: greycard_core::decode::rawler_backend::RawMetadata::default(),
             balance: *balance,

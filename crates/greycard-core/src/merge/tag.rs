@@ -119,6 +119,11 @@ pub struct Stacked {
     /// Whether the samples were stored uncompressed rather than as
     /// lossless JPEG.
     pub uncompressed: bool,
+    /// Whether the frames' highlights were reconstructed and what was
+    /// over the clip kept under the headroom. A stack written before
+    /// they were reads without, and is made again clipped, as it was
+    /// made.
+    pub reconstructed: bool,
 }
 
 /// One frame of a bracket onto its reference.
@@ -438,6 +443,9 @@ impl Recipe {
                 if stacked.uncompressed {
                     fact("samples", "uncompressed".into());
                 }
+                if stacked.reconstructed {
+                    fact("highlights", "reconstructed".into());
+                }
                 for (k, t) in stacked.placed.iter().enumerate() {
                     match t {
                         Some(t) => fact("shift", format!("{k} {}", join(&t.m))),
@@ -478,6 +486,7 @@ struct Read {
     residual: Option<f32>,
     dropped: Vec<usize>,
     uncompressed: bool,
+    reconstructed: bool,
 }
 
 /// One value a frame, in the frames' order: none unless each of the
@@ -561,6 +570,10 @@ impl Read {
             "samples" => {
                 self.uncompressed = value == "uncompressed";
                 value == "uncompressed"
+            }
+            "highlights" => {
+                self.reconstructed = value == "reconstructed";
+                value == "reconstructed"
             }
             "crop" => numbers::<4, usize>(value, ' ')
                 .map(|[x, y, width, height]| {
@@ -672,6 +685,7 @@ impl Read {
                         .collect::<Option<Vec<_>>>()
                         .ok_or_else(|| every("shift= or dropped"))?,
                     uncompressed: self.uncompressed,
+                    reconstructed: self.reconstructed,
                 })
             }
             k => return Err(format!("merge={k}")),
@@ -1057,11 +1071,24 @@ mod tests {
                         None,
                     ],
                     uncompressed: true,
+                    reconstructed: true,
                 }),
             }),
         };
         assert_eq!(Tag::parse(&tag.to_bytes()), Some(tag.clone()));
         let full = String::from_utf8(tag.to_bytes()).unwrap();
+        assert!(full.contains("\nhighlights=reconstructed\n"), "{full}");
+        // A stack written before its highlights were kept reads as
+        // clipped, what it was, and its headroom as none.
+        let before = full
+            .replace("highlights=reconstructed\n", "")
+            .replace("headroom=0.7500\n", "headroom=0.0000\n");
+        let back = Tag::parse(before.as_bytes()).unwrap();
+        assert_eq!(back.headroom_stops, 0.0);
+        let Some(Geometry::Stack(s)) = back.recipe.map(|r| r.geometry) else {
+            panic!("a stack's recipe");
+        };
+        assert!(!s.reconstructed);
         let short = full.replace("dropped=2\n", "");
         let back = Tag::parse(short.as_bytes()).unwrap();
         assert_eq!(back.recipe, None);

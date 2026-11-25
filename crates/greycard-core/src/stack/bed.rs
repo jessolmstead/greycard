@@ -1178,4 +1178,124 @@ mod tests {
             println!("  merge {before:.2} s before, {after:.2} s after");
         }
     }
+
+    /// A measurement: what the stack's prior says where a blown
+    /// specular sits. The bed's stack with a disc of 8 px at six times
+    /// the ground, focused with frame `k0`, seen by frame `k` through a
+    /// pillbox of 2.5 px a step from it. The evidence is gathered from
+    /// the frames held to 1, as the placing pass's short develop holds
+    /// them; the multipliers from the frames over 1, as a walk that
+    /// reconstructs hands them to the blend. Prints the most trust any
+    /// block near the disc has at each level, and the spread of the
+    /// frames' multipliers there.
+    #[test]
+    #[ignore = "a measurement: the prior at a blown specular"]
+    fn bed_blown_specular_prior() {
+        let shot = Shot::default();
+        let (w, h) = (shot.width, shot.height);
+        let (cx, cy) = (w as f64 / 2.0, h as f64 / 2.0);
+        let depth = shot.depth(cx, cy);
+        let k0 = (0..shot.frames)
+            .min_by(|&a, &b| {
+                (shot.focus(a) - depth)
+                    .abs()
+                    .total_cmp(&(shot.focus(b) - depth).abs())
+            })
+            .unwrap();
+        let disc = |d: f64, r1: f64, r2: f64| {
+            use std::f64::consts::PI;
+            if d >= r1 + r2 {
+                return 0.0;
+            }
+            if d <= (r1 - r2).abs() {
+                return PI * r1.min(r2).powi(2);
+            }
+            let a = ((d * d + r1 * r1 - r2 * r2) / (2.0 * d * r1)).clamp(-1.0, 1.0);
+            let b = ((d * d + r2 * r2 - r1 * r1) / (2.0 * d * r2)).clamp(-1.0, 1.0);
+            let k = ((-d + r1 + r2) * (d + r1 - r2) * (d - r1 + r2) * (d + r1 + r2)).max(0.0);
+            r1 * r1 * a.acos() + r2 * r2 * b.acos() - 0.5 * k.sqrt()
+        };
+        let lit = |held: bool| -> Vec<WorkingImage> {
+            shot.frames()
+                .into_iter()
+                .enumerate()
+                .map(|(k, mut f)| {
+                    let b = (2.5 * (k as f64 - k0 as f64).abs()).max(0.35);
+                    for y in 0..h {
+                        for x in 0..w {
+                            let r = ((x as f64 - cx).powi(2) + (y as f64 - cy).powi(2)).sqrt();
+                            let spot = 6.0 * 0.4 * disc(r, 8.0, b) / (std::f64::consts::PI * b * b);
+                            let i = (y * w + x) * 3;
+                            for v in &mut f.data[i..i + 3] {
+                                *v += spot as f32;
+                                if held {
+                                    *v = v.min(1.0);
+                                }
+                            }
+                        }
+                    }
+                    f
+                })
+                .collect()
+        };
+        let plain = shot.frames();
+        let held = lit(true);
+        let over = lit(false);
+        let side = super::super::prior::SIDE as f64;
+        let cols = w.div_ceil(super::super::prior::SIDE);
+        let centre = |b: usize| {
+            (
+                ((b % cols) as f64 + 0.5) * side,
+                ((b / cols) as f64 + 0.5) * side,
+            )
+        };
+        let away = |b: usize| {
+            let (x, y) = centre(b);
+            ((x - cx).powi(2) + (y - cy).powi(2)).sqrt()
+        };
+        let near: Vec<usize> = (0..cols * h.div_ceil(super::super::prior::SIDE))
+            .filter(|&b| away(b) <= 48.0)
+            .collect();
+        println!(
+            "focused frame {k0}; blocks within 48 px of the disc: {}",
+            near.len()
+        );
+        for (name, evidence, blend) in [
+            ("no specular", &plain, &plain),
+            ("specular, blended held to 1 (before)", &held, &held),
+            ("specular, blended over 1 (now)", &held, &over),
+        ] {
+            let prior = gather(evidence);
+            let trust: Vec<String> = [16.0, 32.0, 48.0]
+                .iter()
+                .map(|&r| format!("{r}: {:?}", prior.trust_near((cx, cy), r)))
+                .collect();
+            let multipliers: Vec<Vec<f32>> = blocks_of(blend)
+                .iter()
+                .map(|b| prior.multiplier(b, &Transform::IDENTITY))
+                .collect();
+            // Each block's frame with the largest multiplier, where it
+            // picks one at all.
+            let picks: Vec<String> = near
+                .iter()
+                .filter_map(|&b| {
+                    let (lo, hi, k) = multipliers.iter().enumerate().fold(
+                        (f32::MAX, 0.0f32, 0usize),
+                        |(lo, hi, k), (i, m)| {
+                            (lo.min(m[b]), hi.max(m[b]), if m[b] > hi { i } else { k })
+                        },
+                    );
+                    (hi / lo > 1.5).then(|| format!("{:.0}px:{k}", away(b)))
+                })
+                .collect();
+            println!(
+                "{name}: trust (most, blocks) a level within {}",
+                trust.join("; ")
+            );
+            println!(
+                "  blocks picking a frame (distance: frame): {}",
+                picks.join(" ")
+            );
+        }
+    }
 }

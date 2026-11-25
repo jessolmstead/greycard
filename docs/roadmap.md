@@ -810,9 +810,12 @@ brackets and the panorama to shoot for testing are in
 
 - [ ] Next: the re-merge's rename over an open file tried on Windows
       with §558's retry in `promote` (§541, §543)
-- [ ] A focus stack's reconstructed highlights: clipped still; the
-      capture sharpen now reads a file with headroom at the scene's
-      levels (§739, §741)
+- [ ] A blown specular in a focus stack: the defocused frames' wider
+      disc edges are taken for detail, by the weights and by the
+      prior, ringing it with contours and a ground half as bright
+      (§743)
+- [ ] A focus stack's highlights tried on real frames at one
+      exposure with a blown area (§743)
 - [ ] Clarity on a merge with headroom: its shadow fade reads the
       file's levels and starts early (weight 0.62 against 1.0 five
       stops under grey at 1.55 stops); decide where the highlight

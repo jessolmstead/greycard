@@ -477,6 +477,28 @@ impl Prior {
             .collect()
     }
 
+    /// Per level, the most trust any block whose center lies within
+    /// `radius` px of `(cx, cy)` has, and how many such blocks there
+    /// are: for a measurement of what the prior says about one place.
+    #[cfg(test)]
+    pub fn trust_near(&self, (cx, cy): (f64, f64), radius: f64) -> Vec<(f32, usize)> {
+        let side = SIDE as f64;
+        let near: Vec<usize> = (0..self.columns * self.rows)
+            .filter(|b| {
+                let (bx, by) = ((b % self.columns) as f64, (b / self.columns) as f64);
+                let (x, y) = ((bx + 0.5) * side, (by + 0.5) * side);
+                ((x - cx).powi(2) + (y - cy).powi(2)).sqrt() <= radius
+            })
+            .collect();
+        self.levels
+            .iter()
+            .map(|l| {
+                let most = near.iter().map(|&b| l.trust[b]).fold(0.0f32, f32::max);
+                (most, near.len())
+            })
+            .collect()
+    }
+
     /// A frame's multiplier per block, from that frame's blocks in its
     /// own geometry, placed by `onto` as the placing pass placed them.
     pub fn multiplier(&self, frame: &[Blocks], onto: &Transform) -> Vec<f32> {
