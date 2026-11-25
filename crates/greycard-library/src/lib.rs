@@ -95,6 +95,18 @@ pub enum Error {
     NeedsRebuild(PathBuf),
 }
 
+impl Error {
+    /// The library file the error's words name, if they do.
+    pub fn path(&self) -> Option<&Path> {
+        match self {
+            Error::NotALibrary(path)
+            | Error::NeedsRebuild(path)
+            | Error::NewerSchema { path, .. } => Some(path),
+            _ => None,
+        }
+    }
+}
+
 pub type Result<T> = std::result::Result<T, Error>;
 
 /// The schema this build writes. A library at an older version is
@@ -1279,6 +1291,7 @@ impl Library {
         if let Some(dir) = path.parent().filter(|d| !d.as_os_str().is_empty()) {
             std::fs::create_dir_all(dir)?;
         }
+        refuse_newer(path)?;
         let conn = Connection::open(path)?;
         Self::prepare(conn, path.to_path_buf(), false)
     }
@@ -1287,6 +1300,7 @@ impl Library {
     /// index, which under write-ahead logging never waits for it.
     /// The file has to be there.
     pub fn open_read_only(path: &Path) -> Result<Library> {
+        refuse_newer(path)?;
         let conn = Connection::open_with_flags(
             path,
             OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
@@ -1304,6 +1318,7 @@ impl Library {
         read_only: bool,
         handler: fn(i32) -> bool,
     ) -> Result<Library> {
+        refuse_newer(path)?;
         let mut conn = if read_only {
             Connection::open_with_flags(
                 path,
@@ -1326,6 +1341,7 @@ impl Library {
     /// older library is refused as `NeedsRebuild`, for the window to
     /// bring up. Waits at most `busy` for the file's lock.
     pub fn open_current(path: &Path, busy: std::time::Duration) -> Result<Library> {
+        refuse_newer(path)?;
         let conn = Connection::open_with_flags(
             path,
             OpenFlags::SQLITE_OPEN_READ_WRITE | OpenFlags::SQLITE_OPEN_NO_MUTEX,
@@ -2785,6 +2801,35 @@ impl Library {
     }
 }
 
+/// A later build's library, told from the file's header before any
+/// connection is made: a connection, even one that only reads, leaves
+/// a `-wal` and a `-shm` beside a write-ahead file, and the later
+/// build's file is not this one's to touch. Whatever the header does
+/// not settle (no file, a short one, not SQLite, another program's
+/// id, a version this build takes) is left to [`State::judge`] under
+/// a connection, as is a header behind a log that holds a later
+/// version.
+fn refuse_newer(path: &Path) -> Result<()> {
+    use std::io::Read;
+    let mut head = [0u8; 100];
+    let read = std::fs::File::open(path).and_then(|mut f| f.read_exact(&mut head));
+    if read.is_err() || &head[..16] != b"SQLite format 3\0" {
+        return Ok(());
+    }
+    // The header's user version and application id, big-endian.
+    let field =
+        |at: usize| i32::from_be_bytes([head[at], head[at + 1], head[at + 2], head[at + 3]]);
+    let found = field(60);
+    if field(68) == APPLICATION_ID && found > SCHEMA_VERSION {
+        return Err(Error::NewerSchema {
+            path: path.to_path_buf(),
+            found,
+            ours: SCHEMA_VERSION,
+        });
+    }
+    Ok(())
+}
+
 /// What a SQLite file says it is, read at one moment.
 struct State {
     app_id: i32,
@@ -3173,6 +3218,56 @@ mod tests {
             .unwrap();
         assert_eq!(version, SCHEMA_VERSION + 1);
         drop(conn);
+        greycard_core::testing::remove_dir_retry(&dir);
+    }
+
+    /// A later build's library, refused by every way in: not a byte of
+    /// it moves, and no `-wal` or `-shm` is left beside it.
+    #[test]
+    fn a_newer_library_is_refused_without_a_byte_moved() {
+        let dir = crate::index::tests::scratch("newer-untouched");
+        let path = dir.join("library.sqlite");
+        {
+            let lib = Library::open(&path).unwrap();
+            lib.conn
+                .pragma_update(None, "user_version", SCHEMA_VERSION + 1)
+                .unwrap();
+        }
+        let listing = || {
+            let mut names: Vec<String> = std::fs::read_dir(&dir)
+                .unwrap()
+                .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+                .collect();
+            names.sort();
+            names
+        };
+        let before = (std::fs::read(&path).unwrap(), listing());
+        assert_eq!(before.1, ["library.sqlite"]);
+        type Open<'a> = &'a dyn Fn(&Path) -> Result<Library>;
+        let opens: [(&str, Open); 5] = [
+            ("open", &|p| Library::open(p)),
+            ("open_read_only", &|p| Library::open_read_only(p)),
+            ("open_with_busy", &|p| {
+                Library::open_with_busy(p, false, |_| false)
+            }),
+            ("open_with_busy read-only", &|p| {
+                Library::open_with_busy(p, true, |_| false)
+            }),
+            ("open_current", &|p| {
+                Library::open_current(p, std::time::Duration::ZERO)
+            }),
+        ];
+        for (how, open) in opens {
+            match open(&path) {
+                Err(Error::NewerSchema { found, ours, .. }) => {
+                    assert_eq!((found, ours), (SCHEMA_VERSION + 1, SCHEMA_VERSION), "{how}");
+                }
+                other => panic!("{how}: {:?}", other.map(|_| ())),
+            }
+            let after = (std::fs::read(&path).unwrap(), listing());
+            assert!(after.0 == before.0, "{how}: the file's bytes moved");
+            assert_eq!(after.1, before.1, "{how}");
+        }
         greycard_core::testing::remove_dir_retry(&dir);
     }
 

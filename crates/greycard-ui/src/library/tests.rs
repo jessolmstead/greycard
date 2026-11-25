@@ -615,10 +615,138 @@ fn a_panic_on_the_indexer_thread_is_a_failure_the_window_hears() {
     })
     .expect("the indexer starts");
     match rx.recv_timeout(Duration::from_secs(20)) {
-        Ok(Told::Failed(message)) => assert!(message.contains("a bug"), "{message}"),
+        Ok(Told::Failed {
+            message, notice, ..
+        }) => {
+            assert!(message.contains("a bug"), "{message}");
+            assert_eq!(notice, format!("No library index: {message}"));
+        }
         other => panic!("{other:?}"),
     }
     indexer.stop(Duration::from_secs(20));
+    crate::testing::remove_dir_retry(&dir);
+}
+
+/// Any library that would not open is said for the session: a
+/// folder opened after clears the row's error, and the failure stays.
+#[test]
+fn a_library_that_would_not_open_is_said_through_a_folder_opened() {
+    use crate::testing::{state_for, window};
+    let app = window(0);
+    let (state, _worker) = state_for(&app, Vec::new());
+    told(
+        &app,
+        Told::failed("library database: file is not a database".into()),
+    );
+    let notice = "No library index: library database: file is not a database";
+    assert_eq!(app.get_filter_facet_note().as_str(), notice);
+    // As a folder's open does.
+    state.borrow_mut().views.index_error = None;
+    crate::panel::cull::show_filter(&state.borrow(), &app);
+    assert_eq!(app.get_filter_facet_note().as_str(), notice);
+}
+
+/// A later build's library, opened as the window opens it: refused
+/// with not a byte of it moved and nothing left beside it, the log
+/// told everything, and the header saying why before where, the path
+/// once and last, so a narrow bar cuts the path and keeps the reason.
+/// The roots are still listed.
+#[test]
+fn a_newer_library_is_said_reason_first_and_left_as_it_was() {
+    use i_slint_backend_testing::ElementHandle;
+
+    use crate::testing::{settle, state_for, window};
+    let dir = scratch("newer");
+    let (data, root) = (dir.join("data"), dir.join("archive"));
+    std::fs::create_dir_all(&root).unwrap();
+    let db = data.join("library.sqlite");
+    drop(Library::open(&db).unwrap());
+    let ours = greycard_library::SCHEMA_VERSION;
+    let conn = rusqlite::Connection::open(&db).unwrap();
+    conn.pragma_update(None, "user_version", ours + 1).unwrap();
+    drop(conn);
+    let listing = || {
+        let mut names: Vec<String> = std::fs::read_dir(&data)
+            .unwrap()
+            .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+            .collect();
+        names.sort();
+        names
+    };
+    let before = (std::fs::read(&db).unwrap(), listing());
+    assert_eq!(before.1, ["library.sqlite"]);
+
+    let (tx, rx) = std::sync::mpsc::channel();
+    let indexer = Indexer::start(db.clone(), move |told| {
+        let _ = tx.send(told);
+    })
+    .expect("the indexer starts");
+    let failed = rx.recv_timeout(Duration::from_secs(20)).unwrap();
+    indexer.stop(Duration::from_secs(20));
+    let after = (std::fs::read(&db).unwrap(), listing());
+    assert!(after.0 == before.0, "the library's bytes moved");
+    assert_eq!(after.1, before.1, "beside the library");
+    let Told::Failed { message, notice } = failed else {
+        panic!("{failed:?}");
+    };
+    // The log keeps the schema numbers; the path is named once in each.
+    let path = db.display().to_string();
+    assert!(
+        message.contains(&format!("is schema {}", ours + 1))
+            && message.contains(&format!("({ours})")),
+        "{message}"
+    );
+    assert_eq!(message.matches(&path).count(), 1, "{message}");
+    assert_eq!(
+        notice,
+        format!(
+            "The library index is from a newer greycard and was left alone. Use that \
+             version, or close greycard and rename the file to start a new one: {path}"
+        )
+    );
+    assert_eq!(notice.matches(&path).count(), 1, "{notice}");
+
+    let app = window(0);
+    let (state, _worker) = state_for(&app, Vec::new());
+    state.borrow_mut().views.library.roots.add(&root).unwrap();
+    told(
+        &app,
+        Told::Failed {
+            message,
+            notice: notice.clone(),
+        },
+    );
+    assert_eq!(app.get_filter_facet_note().as_str(), notice.as_str());
+    // A folder opened clears the row's error, as a pass's; this stays.
+    state.borrow_mut().views.index_error = None;
+    crate::panel::cull::show_filter(&state.borrow(), &app);
+    assert_eq!(app.get_filter_facet_note().as_str(), notice.as_str());
+    crate::roots::show(&state.borrow(), &app);
+    assert_eq!(
+        app.get_library_roots().row_count(),
+        1,
+        "the roots still listed"
+    );
+    // The header's note, at a bar narrower than it: cut to the bar's
+    // width, so what goes is the path at its end.
+    app.set_filter_bar(true);
+    app.set_grid_open(true);
+    app.window().set_size(slint::LogicalSize::new(700.0, 600.0));
+    settle(&app);
+    let notes: Vec<ElementHandle> =
+        ElementHandle::find_by_element_id(&app, "FacetChips::note-text").collect();
+    assert!(!notes.is_empty(), "the header's note");
+    let widest_row = ElementHandle::find_by_element_id(&app, "FacetChips::flick")
+        .map(|f| f.size().width)
+        .fold(0.0f32, f32::max);
+    for note in notes {
+        let width = note.size().width;
+        assert!(
+            width > 0.0 && width <= widest_row + 0.5,
+            "the note {width} wide, the row {widest_row}"
+        );
+    }
+    drop(state);
     crate::testing::remove_dir_retry(&dir);
 }
 

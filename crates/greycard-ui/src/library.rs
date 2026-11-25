@@ -150,8 +150,10 @@ pub(crate) enum Told {
     /// The library is open, at this path; the window may read it.
     Opened(PathBuf),
     /// It could not be opened, or the thread died, and nothing more
-    /// will be indexed this session.
-    Failed(String),
+    /// will be indexed this session: what went wrong, for the log,
+    /// and the window's words for it, which stay in the facets' row
+    /// through every folder opened after.
+    Failed { message: String, notice: String },
     /// A pass is `done` files of `total` into the folders asked for.
     Progress {
         generation: u64,
@@ -211,6 +213,42 @@ pub(crate) enum Told {
         generation: Option<u64>,
         first: bool,
     },
+}
+
+impl Told {
+    /// A failure said as the log has it, after "No library index".
+    pub(crate) fn failed(message: String) -> Told {
+        let notice = tr!("No library index: {message}", message = message);
+        Told::Failed { message, notice }
+    }
+
+    /// The library at `path` would not open. A later build's is said
+    /// reason first and the path last, once, so a narrow window cuts
+    /// the path and not why; any other names the path once too.
+    fn not_opened(path: &Path, e: &greycard_library::Error) -> Told {
+        let message = with_path(path, e);
+        if !matches!(e, greycard_library::Error::NewerSchema { .. }) {
+            return Told::failed(message);
+        }
+        Told::Failed {
+            notice: tr!(
+                "The library index is from a newer greycard and was left alone. \
+                 Use that version, or close greycard and rename the file to start a new one: \
+                 {path}",
+                path = path.display()
+            ),
+            message,
+        }
+    }
+}
+
+/// The library's error at `path`, the path named once: before the
+/// error's words, unless they name it themselves.
+fn with_path(path: &Path, e: &greycard_library::Error) -> String {
+    match e.path() {
+        Some(_) => e.to_string(),
+        None => format!("{}: {e}", path.display()),
+    }
 }
 
 /// The indexer's thread, and the way to ask it things.
@@ -681,7 +719,7 @@ fn run(
         serve(path, waiting, told, &waits, &guard)
     }));
     if let Err(payload) = held {
-        told(Told::Failed(tr!(
+        told(Told::failed(tr!(
             "the indexer panicked: {}",
             crate::worker::panic_message(payload.as_ref())
         )));
@@ -1036,7 +1074,7 @@ fn serve(
     let mut lib = match Library::open(&path) {
         Ok(lib) => lib,
         Err(e) => {
-            told(Told::Failed(format!("{}: {e}", path.display())));
+            told(Told::not_opened(&path, &e));
             return;
         }
     };
@@ -1843,7 +1881,7 @@ pub(crate) fn open_reader(st: &mut State, app: &App) {
             crate::sync::refresh_note(st, app);
         }
         Err(e) => {
-            tracing::warn!("library index {}: {e}", path.display());
+            tracing::warn!("library index {}", with_path(&path, &e));
             st.views.index_error = Some(READER_UNAVAILABLE.to_string());
         }
     }
@@ -2326,7 +2364,12 @@ pub(crate) fn facet_ranges(st: &State) -> Vec<FacetRange> {
 /// has its kind's row before the index has a row of its own — and,
 /// with no rows at all, that the files have no EXIF to count.
 pub(crate) fn facet_note(st: &State, rows: bool) -> String {
-    if let Some(e) = &st.views.index_error {
+    if let Some(e) = st
+        .views
+        .index_error
+        .as_ref()
+        .or(st.views.index_failed.as_ref())
+    {
         // READER_UNAVAILABLE is kept in English, to be compared; any
         // other error is in the window's words already.
         return if e == READER_UNAVAILABLE {
@@ -2569,7 +2612,7 @@ pub(crate) fn told(app: &App, told: Told) {
                 }
             }
         }
-        Told::Failed(message) => {
+        Told::Failed { message, notice } => {
             tracing::warn!("no library index: {message}");
             let mut st = state.borrow_mut();
             st.views.index = None;
@@ -2583,7 +2626,10 @@ pub(crate) fn told(app: &App, told: Told) {
             let last = st.launch.last_folder.take();
             let last = last.filter(|_| wanted.is_some() && st.files.is_empty());
             st.views.index_progress = None;
-            st.views.index_error = Some(tr!("No library index: {message}", message = message));
+            // Said for the session: a folder opened clears the row's
+            // error, and no pass will come to say this again.
+            st.views.index_error = None;
+            st.views.index_failed = Some(notice);
             st.launch.awaiting_index = false;
             crate::panel::cull::show_filter(&st, app);
             app.window().request_redraw();

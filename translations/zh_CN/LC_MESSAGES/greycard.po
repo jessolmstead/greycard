@@ -1616,42 +1616,42 @@ msgid "excluded"
 msgstr "已排除"
 
 #. Filter bar: the rating row
-#: crates/greycard-slint/ui/panel/filter.slint:446
+#: crates/greycard-slint/ui/panel/filter.slint:467
 msgid "Stars"
 msgstr "星级"
 
 #. Filter bar: the rating's two modes
-#: crates/greycard-slint/ui/panel/filter.slint:454
+#: crates/greycard-slint/ui/panel/filter.slint:475
 msgid "exactly"
 msgstr "恰好"
 
 #. Filter bar: the rating's two modes
-#: crates/greycard-slint/ui/panel/filter.slint:454
+#: crates/greycard-slint/ui/panel/filter.slint:475
 msgid "or more"
 msgstr "及以上"
 
 #. Filter bar: the flag row
-#: crates/greycard-slint/ui/panel/filter.slint:517
+#: crates/greycard-slint/ui/panel/filter.slint:538
 msgid "Flag"
 msgstr "旗标"
 
 #. Filter bar: the label row
-#: crates/greycard-slint/ui/panel/filter.slint:561
+#: crates/greycard-slint/ui/panel/filter.slint:582
 msgid "Label"
 msgstr "色标"
 
 #. Filter bar's search hint; camera: and iso>= stay English
-#: crates/greycard-slint/ui/panel/filter.slint:675
+#: crates/greycard-slint/ui/panel/filter.slint:696
 msgid "Name, keyword, or camera:R6 iso>=3200"
 msgstr "名称、关键字或 camera:R6 iso>=3200"
 
 #. Filter bar: frames shown of the frames in the folder
-#: crates/greycard-slint/ui/panel/filter.slint:712
+#: crates/greycard-slint/ui/panel/filter.slint:733
 msgid "{} of {}"
 msgstr "{} / {}"
 
 #. Filter bar: save the filter as a smart collection
-#: crates/greycard-slint/ui/panel/filter.slint:722
+#: crates/greycard-slint/ui/panel/filter.slint:743
 msgid "Save..."
 msgstr "保存..."
 
@@ -4001,44 +4001,50 @@ msgstr "已在浏览器中打开指南"
 msgid "no browser would open: the guide is at {url}"
 msgstr "无法打开浏览器：指南位于 {url}"
 
-#: crates/greycard-ui/src/library.rs:685
-msgid "the indexer panicked: {}"
-msgstr "索引程序崩溃：{}"
-
-#: crates/greycard-ui/src/library.rs:1505
-#: crates/greycard-ui/src/library.rs:1639
-msgid "the passes' connection to the library could not be had"
-msgstr "处理过程无法连接到图库"
-
-#: crates/greycard-ui/src/library.rs:1855
-msgid "The library index could not be read"
-msgstr "无法读取图库索引"
-
-#: crates/greycard-ui/src/library.rs:2341
-msgid "Indexing the folder: {done} of {total}"
-msgstr "正在为文件夹编入索引：{done}/{total}"
-
-#: crates/greycard-ui/src/library.rs:2347
-msgid "No camera, lens or date in these files' EXIF"
-msgstr "这些文件的 EXIF 中没有相机、镜头或日期"
-
-#: crates/greycard-ui/src/library.rs:2348
-msgid "Opening the library index"
-msgstr "正在打开图库索引"
-
-#: crates/greycard-ui/src/library.rs:2586
+#: crates/greycard-ui/src/library.rs:221
 msgid "No library index: {message}"
 msgstr "没有图库索引：{message}"
 
-#: crates/greycard-ui/src/library.rs:2650
+#: crates/greycard-ui/src/library.rs:235
+msgid ""
+"The library index is from a newer greycard and was left alone. Use that "
+"version, or close greycard and rename the file to start a new one: {path}"
+msgstr ""
+
+#: crates/greycard-ui/src/library.rs:723
+msgid "the indexer panicked: {}"
+msgstr "索引程序崩溃：{}"
+
+#: crates/greycard-ui/src/library.rs:1543
+#: crates/greycard-ui/src/library.rs:1677
+msgid "the passes' connection to the library could not be had"
+msgstr "处理过程无法连接到图库"
+
+#: crates/greycard-ui/src/library.rs:1893
+msgid "The library index could not be read"
+msgstr "无法读取图库索引"
+
+#: crates/greycard-ui/src/library.rs:2384
+msgid "Indexing the folder: {done} of {total}"
+msgstr "正在为文件夹编入索引：{done}/{total}"
+
+#: crates/greycard-ui/src/library.rs:2390
+msgid "No camera, lens or date in these files' EXIF"
+msgstr "这些文件的 EXIF 中没有相机、镜头或日期"
+
+#: crates/greycard-ui/src/library.rs:2391
+msgid "Opening the library index"
+msgstr "正在打开图库索引"
+
+#: crates/greycard-ui/src/library.rs:2696
 msgid "Library index busy; trying again ({e})"
 msgstr "图库索引忙；正在重试（{e}）"
 
-#: crates/greycard-ui/src/library.rs:2670
+#: crates/greycard-ui/src/library.rs:2716
 msgid "Library index unavailable: {e}"
 msgstr "图库索引不可用：{e}"
 
-#: crates/greycard-ui/src/library.rs:2752
+#: crates/greycard-ui/src/library.rs:2798
 msgid "{name} isn't reachable; showing its last indexed frames"
 msgstr "{name} 无法访问；显示上次编入索引的照片"
 
@@ -5180,19 +5186,19 @@ msgstr ""
 msgid "nothing to open"
 msgstr "没有可打开的内容"
 
-#: crates/greycard-ui/src/panel/browser.rs:3525
+#: crates/greycard-ui/src/panel/browser.rs:3526
 msgid "{word}; hidden by the filter"
 msgstr "{word}；已被过滤器隐藏"
 
-#: crates/greycard-ui/src/panel/browser.rs:4023
+#: crates/greycard-ui/src/panel/browser.rs:4024
 msgid "choosing a folder to open..."
 msgstr "正在选择要打开的文件夹..."
 
-#: crates/greycard-ui/src/panel/browser.rs:4024
+#: crates/greycard-ui/src/panel/browser.rs:4025
 msgid "Open folder"
 msgstr "打开文件夹"
 
-#: crates/greycard-ui/src/panel/browser.rs:4042
+#: crates/greycard-ui/src/panel/browser.rs:4043
 msgid "open folder canceled"
 msgstr "已取消打开文件夹"
 

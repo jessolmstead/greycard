@@ -102,6 +102,9 @@ pub(crate) struct Views {
     /// What the facets' row says instead of its note when the index
     /// is busy or unavailable.
     pub(crate) index_error: Option<String>,
+    /// Why the library would not open at all: said in the facets'
+    /// row, after any `index_error`, for the rest of the session.
+    pub(crate) index_failed: Option<String>,
     /// Passes over this folder that have failed in a row; asked
     /// again a few times before the window gives up on it.
     pub(crate) index_tries: u32,

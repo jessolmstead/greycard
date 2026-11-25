@@ -2571,6 +2571,7 @@ fn follow_paths(st: &mut State, was: &Path, to: &Path) {
                 index_generation: _,
                 index_progress: _,
                 index_error: _,
+                index_failed: _,
                 index_tries: _,
                 index_pass_ready: _,
                 sort_reveal: _,

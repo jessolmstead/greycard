@@ -934,6 +934,7 @@ impl State {
                 index_progress: None,
                 index_path: None,
                 index_error: None,
+                index_failed: None,
                 index_tries: 0,
                 index_pass_ready: false,
                 facets_last: RefCell::new(Vec::new()),

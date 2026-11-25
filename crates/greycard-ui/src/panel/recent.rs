@@ -485,7 +485,7 @@ mod tests {
             // come, and a folder opened by hand is recorded.
             st.views.library.wanted = Some(crate::roots::View::Roots(None));
         }
-        crate::library::told(&app, crate::library::Told::Failed("no index".into()));
+        crate::library::told(&app, crate::library::Told::failed("no index".into()));
         open_folder(&state, &app, &worker, &under);
         assert_eq!(app.get_open_folder_name(), "harbor");
         assert_eq!(app.get_open_folder_root(), "Archive");
@@ -529,7 +529,7 @@ mod tests {
             st.views.library.awaiting = true;
             st.launch.last_folder = Some(a.clone());
         }
-        crate::library::told(&app, crate::library::Told::Failed("no index".into()));
+        crate::library::told(&app, crate::library::Told::failed("no index".into()));
         crate::roots::land_sent(&state, &app, &worker);
         assert!(!state.borrow().views.library.awaiting, "a capture ends");
         assert_eq!(app.get_open_folder_name(), "a");

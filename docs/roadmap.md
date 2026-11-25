@@ -205,10 +205,6 @@ the reasoning lives in `docs/notes.md`.
       `a_cached_thumbnail_job_finds_what_the_pool_kept` under load
       (2026-11-22). Its wait is longer now; the abort itself is not
       found
-- [ ] An index a later greycard wrote is refused, and the Library
-      view's notice gives the path twice before the reason, which
-      falls off the window's edge; the roots list with no frames
-      (issue 199). Put the reason first, or list the roots from disk
 - [ ] A left-click that closes the picture's context menu moves the
       picture toward the click, on Windows at 1:1 (issue 179); the
       right press's release may never reach the viewport. Unverified

@@ -1629,42 +1629,42 @@ msgid "excluded"
 msgstr "exclu"
 
 #. Filter bar: the rating row
-#: crates/greycard-slint/ui/panel/filter.slint:446
+#: crates/greycard-slint/ui/panel/filter.slint:467
 msgid "Stars"
 msgstr "Étoiles"
 
 #. Filter bar: the rating's two modes
-#: crates/greycard-slint/ui/panel/filter.slint:454
+#: crates/greycard-slint/ui/panel/filter.slint:475
 msgid "exactly"
 msgstr "exactement"
 
 #. Filter bar: the rating's two modes
-#: crates/greycard-slint/ui/panel/filter.slint:454
+#: crates/greycard-slint/ui/panel/filter.slint:475
 msgid "or more"
 msgstr "ou plus"
 
 #. Filter bar: the flag row
-#: crates/greycard-slint/ui/panel/filter.slint:517
+#: crates/greycard-slint/ui/panel/filter.slint:538
 msgid "Flag"
 msgstr "Marqueur"
 
 #. Filter bar: the label row
-#: crates/greycard-slint/ui/panel/filter.slint:561
+#: crates/greycard-slint/ui/panel/filter.slint:582
 msgid "Label"
 msgstr "Étiquette"
 
 #. Filter bar's search hint; camera: and iso>= stay English
-#: crates/greycard-slint/ui/panel/filter.slint:675
+#: crates/greycard-slint/ui/panel/filter.slint:696
 msgid "Name, keyword, or camera:R6 iso>=3200"
 msgstr "Nom, mot-clé ou camera:R6 iso>=3200"
 
 #. Filter bar: frames shown of the frames in the folder
-#: crates/greycard-slint/ui/panel/filter.slint:712
+#: crates/greycard-slint/ui/panel/filter.slint:733
 msgid "{} of {}"
 msgstr "{} sur {}"
 
 #. Filter bar: save the filter as a smart collection
-#: crates/greycard-slint/ui/panel/filter.slint:722
+#: crates/greycard-slint/ui/panel/filter.slint:743
 msgid "Save..."
 msgstr "Enregistrer..."
 
@@ -4106,44 +4106,50 @@ msgstr "le guide est ouvert dans le navigateur"
 msgid "no browser would open: the guide is at {url}"
 msgstr "aucun navigateur ne s'est ouvert : le guide se trouve sur {url}"
 
-#: crates/greycard-ui/src/library.rs:685
-msgid "the indexer panicked: {}"
-msgstr "l'indexeur a provoqué une erreur fatale : {}"
-
-#: crates/greycard-ui/src/library.rs:1505
-#: crates/greycard-ui/src/library.rs:1639
-msgid "the passes' connection to the library could not be had"
-msgstr "impossible de se connecter à la bibliothèque pour les passes"
-
-#: crates/greycard-ui/src/library.rs:1855
-msgid "The library index could not be read"
-msgstr "Impossible de lire l'index de la bibliothèque"
-
-#: crates/greycard-ui/src/library.rs:2341
-msgid "Indexing the folder: {done} of {total}"
-msgstr "Indexation du dossier : {done} sur {total}"
-
-#: crates/greycard-ui/src/library.rs:2347
-msgid "No camera, lens or date in these files' EXIF"
-msgstr "Aucun appareil, objectif ni date dans les données EXIF de ces fichiers"
-
-#: crates/greycard-ui/src/library.rs:2348
-msgid "Opening the library index"
-msgstr "Ouverture de l'index de la bibliothèque"
-
-#: crates/greycard-ui/src/library.rs:2586
+#: crates/greycard-ui/src/library.rs:221
 msgid "No library index: {message}"
 msgstr "Aucun index de bibliothèque : {message}"
 
-#: crates/greycard-ui/src/library.rs:2650
+#: crates/greycard-ui/src/library.rs:235
+msgid ""
+"The library index is from a newer greycard and was left alone. Use that "
+"version, or close greycard and rename the file to start a new one: {path}"
+msgstr ""
+
+#: crates/greycard-ui/src/library.rs:723
+msgid "the indexer panicked: {}"
+msgstr "l'indexeur a provoqué une erreur fatale : {}"
+
+#: crates/greycard-ui/src/library.rs:1543
+#: crates/greycard-ui/src/library.rs:1677
+msgid "the passes' connection to the library could not be had"
+msgstr "impossible de se connecter à la bibliothèque pour les passes"
+
+#: crates/greycard-ui/src/library.rs:1893
+msgid "The library index could not be read"
+msgstr "Impossible de lire l'index de la bibliothèque"
+
+#: crates/greycard-ui/src/library.rs:2384
+msgid "Indexing the folder: {done} of {total}"
+msgstr "Indexation du dossier : {done} sur {total}"
+
+#: crates/greycard-ui/src/library.rs:2390
+msgid "No camera, lens or date in these files' EXIF"
+msgstr "Aucun appareil, objectif ni date dans les données EXIF de ces fichiers"
+
+#: crates/greycard-ui/src/library.rs:2391
+msgid "Opening the library index"
+msgstr "Ouverture de l'index de la bibliothèque"
+
+#: crates/greycard-ui/src/library.rs:2696
 msgid "Library index busy; trying again ({e})"
 msgstr "Index de la bibliothèque occupé ; nouvelle tentative ({e})"
 
-#: crates/greycard-ui/src/library.rs:2670
+#: crates/greycard-ui/src/library.rs:2716
 msgid "Library index unavailable: {e}"
 msgstr "Index de la bibliothèque indisponible : {e}"
 
-#: crates/greycard-ui/src/library.rs:2752
+#: crates/greycard-ui/src/library.rs:2798
 msgid "{name} isn't reachable; showing its last indexed frames"
 msgstr "{name} est inaccessible ; affichage des dernières photos indexées"
 
@@ -5416,19 +5422,19 @@ msgstr ""
 msgid "nothing to open"
 msgstr "rien à ouvrir"
 
-#: crates/greycard-ui/src/panel/browser.rs:3525
+#: crates/greycard-ui/src/panel/browser.rs:3526
 msgid "{word}; hidden by the filter"
 msgstr "{word} ; masqué par le filtre"
 
-#: crates/greycard-ui/src/panel/browser.rs:4023
+#: crates/greycard-ui/src/panel/browser.rs:4024
 msgid "choosing a folder to open..."
 msgstr "choix d'un dossier à ouvrir..."
 
-#: crates/greycard-ui/src/panel/browser.rs:4024
+#: crates/greycard-ui/src/panel/browser.rs:4025
 msgid "Open folder"
 msgstr "Ouvrir un dossier"
 
-#: crates/greycard-ui/src/panel/browser.rs:4042
+#: crates/greycard-ui/src/panel/browser.rs:4043
 msgid "open folder canceled"
 msgstr "ouverture du dossier annulée"
 

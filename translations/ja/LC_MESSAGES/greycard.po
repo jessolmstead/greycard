@@ -1619,42 +1619,42 @@ msgid "excluded"
 msgstr "除外条件"
 
 #. Filter bar: the rating row
-#: crates/greycard-slint/ui/panel/filter.slint:446
+#: crates/greycard-slint/ui/panel/filter.slint:467
 msgid "Stars"
 msgstr "星"
 
 #. Filter bar: the rating's two modes
-#: crates/greycard-slint/ui/panel/filter.slint:454
+#: crates/greycard-slint/ui/panel/filter.slint:475
 msgid "exactly"
 msgstr "のみ"
 
 #. Filter bar: the rating's two modes
-#: crates/greycard-slint/ui/panel/filter.slint:454
+#: crates/greycard-slint/ui/panel/filter.slint:475
 msgid "or more"
 msgstr "以上"
 
 #. Filter bar: the flag row
-#: crates/greycard-slint/ui/panel/filter.slint:517
+#: crates/greycard-slint/ui/panel/filter.slint:538
 msgid "Flag"
 msgstr "フラグ"
 
 #. Filter bar: the label row
-#: crates/greycard-slint/ui/panel/filter.slint:561
+#: crates/greycard-slint/ui/panel/filter.slint:582
 msgid "Label"
 msgstr "ラベル"
 
 #. Filter bar's search hint; camera: and iso>= stay English
-#: crates/greycard-slint/ui/panel/filter.slint:675
+#: crates/greycard-slint/ui/panel/filter.slint:696
 msgid "Name, keyword, or camera:R6 iso>=3200"
 msgstr "名前、キーワード、または camera:R6 iso>=3200"
 
 #. Filter bar: frames shown of the frames in the folder
-#: crates/greycard-slint/ui/panel/filter.slint:712
+#: crates/greycard-slint/ui/panel/filter.slint:733
 msgid "{} of {}"
 msgstr "{1}枚中{0}枚"
 
 #. Filter bar: save the filter as a smart collection
-#: crates/greycard-slint/ui/panel/filter.slint:722
+#: crates/greycard-slint/ui/panel/filter.slint:743
 msgid "Save..."
 msgstr "保存..."
 
@@ -4031,44 +4031,50 @@ msgstr "ブラウザーでガイドを開きました"
 msgid "no browser would open: the guide is at {url}"
 msgstr "ブラウザーを開けませんでした：ガイドは{url}にあります"
 
-#: crates/greycard-ui/src/library.rs:685
-msgid "the indexer panicked: {}"
-msgstr "インデクサーでパニックが発生しました：{}"
-
-#: crates/greycard-ui/src/library.rs:1505
-#: crates/greycard-ui/src/library.rs:1639
-msgid "the passes' connection to the library could not be had"
-msgstr "処理パスからライブラリへの接続を取得できませんでした"
-
-#: crates/greycard-ui/src/library.rs:1855
-msgid "The library index could not be read"
-msgstr "ライブラリのインデックスを読み取れませんでした"
-
-#: crates/greycard-ui/src/library.rs:2341
-msgid "Indexing the folder: {done} of {total}"
-msgstr "フォルダーのインデックスを作成中：{total}件中{done}件"
-
-#: crates/greycard-ui/src/library.rs:2347
-msgid "No camera, lens or date in these files' EXIF"
-msgstr "これらのファイルのEXIFにはカメラ、レンズ、日付がありません"
-
-#: crates/greycard-ui/src/library.rs:2348
-msgid "Opening the library index"
-msgstr "ライブラリのインデックスを開いています"
-
-#: crates/greycard-ui/src/library.rs:2586
+#: crates/greycard-ui/src/library.rs:221
 msgid "No library index: {message}"
 msgstr "ライブラリのインデックスがありません：{message}"
 
-#: crates/greycard-ui/src/library.rs:2650
+#: crates/greycard-ui/src/library.rs:235
+msgid ""
+"The library index is from a newer greycard and was left alone. Use that "
+"version, or close greycard and rename the file to start a new one: {path}"
+msgstr ""
+
+#: crates/greycard-ui/src/library.rs:723
+msgid "the indexer panicked: {}"
+msgstr "インデクサーでパニックが発生しました：{}"
+
+#: crates/greycard-ui/src/library.rs:1543
+#: crates/greycard-ui/src/library.rs:1677
+msgid "the passes' connection to the library could not be had"
+msgstr "処理パスからライブラリへの接続を取得できませんでした"
+
+#: crates/greycard-ui/src/library.rs:1893
+msgid "The library index could not be read"
+msgstr "ライブラリのインデックスを読み取れませんでした"
+
+#: crates/greycard-ui/src/library.rs:2384
+msgid "Indexing the folder: {done} of {total}"
+msgstr "フォルダーのインデックスを作成中：{total}件中{done}件"
+
+#: crates/greycard-ui/src/library.rs:2390
+msgid "No camera, lens or date in these files' EXIF"
+msgstr "これらのファイルのEXIFにはカメラ、レンズ、日付がありません"
+
+#: crates/greycard-ui/src/library.rs:2391
+msgid "Opening the library index"
+msgstr "ライブラリのインデックスを開いています"
+
+#: crates/greycard-ui/src/library.rs:2696
 msgid "Library index busy; trying again ({e})"
 msgstr "ライブラリのインデックスが使用中です。再試行します（{e}）"
 
-#: crates/greycard-ui/src/library.rs:2670
+#: crates/greycard-ui/src/library.rs:2716
 msgid "Library index unavailable: {e}"
 msgstr "ライブラリのインデックスを利用できません：{e}"
 
-#: crates/greycard-ui/src/library.rs:2752
+#: crates/greycard-ui/src/library.rs:2798
 msgid "{name} isn't reachable; showing its last indexed frames"
 msgstr ""
 "{name}に接続できません。最後にインデックスを作成した写真を表示しています"
@@ -5258,19 +5264,19 @@ msgstr ""
 msgid "nothing to open"
 msgstr "開くものがありません"
 
-#: crates/greycard-ui/src/panel/browser.rs:3525
+#: crates/greycard-ui/src/panel/browser.rs:3526
 msgid "{word}; hidden by the filter"
 msgstr "{word}。フィルターで非表示"
 
-#: crates/greycard-ui/src/panel/browser.rs:4023
+#: crates/greycard-ui/src/panel/browser.rs:4024
 msgid "choosing a folder to open..."
 msgstr "開くフォルダーを選択中..."
 
-#: crates/greycard-ui/src/panel/browser.rs:4024
+#: crates/greycard-ui/src/panel/browser.rs:4025
 msgid "Open folder"
 msgstr "フォルダーを開く"
 
-#: crates/greycard-ui/src/panel/browser.rs:4042
+#: crates/greycard-ui/src/panel/browser.rs:4043
 msgid "open folder canceled"
 msgstr "フォルダーを開く操作をキャンセルしました"
 
