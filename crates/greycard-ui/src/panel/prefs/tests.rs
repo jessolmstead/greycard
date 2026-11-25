@@ -423,8 +423,20 @@ fn the_theme_row_sets_the_palette() {
     assert_ne!(light_chosen.1, charcoal_chosen.1);
     crate::testing::click_segment(&app, ROW, "Grey");
     assert_eq!(app.global::<crate::Theme>().get_name(), "Grey");
+    // Monocard is Charcoal's surfaces under another accent, and a fill
+    // at rest that is not the accent.
+    let theme = app.global::<crate::Theme>();
+    assert_eq!(theme.get_fill(), theme.get_accent());
+    let blue = theme.get_accent();
+    crate::testing::click_segment(&app, ROW, "Monocard");
+    assert_eq!(theme.get_name(), "Monocard");
+    assert_eq!(theme.get_surface(), charcoal);
+    assert_ne!(theme.get_accent(), blue);
+    assert_ne!(theme.get_fill(), theme.get_accent());
+    assert_ne!(chosen(&theme), charcoal_chosen);
     crate::testing::click_segment(&app, ROW, "Charcoal");
     assert_eq!(app.global::<crate::Theme>().get_surface(), charcoal);
+    assert_eq!(theme.get_accent(), blue);
     app.set_theme("Mauve".into());
     app.invoke_theme_changed();
     assert_eq!(app.global::<crate::Theme>().get_name(), "Charcoal");

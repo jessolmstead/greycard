@@ -5,6 +5,8 @@
 # through bare and fails on any other string a shown binding holds
 # outside @tr.
 "greycard"
+# A theme's, a program's name.
+"Monocard"
 # Glyphs and punctuation.
 " "
 " %"
