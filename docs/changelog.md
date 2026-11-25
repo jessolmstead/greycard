@@ -217,6 +217,8 @@ design note behind it.
   at a smaller long edge it exports.
 - A TIFF or JPEG in Rec.2020, Adobe RGB, or Display P3 shows its true
   colors in the grid, the filmstrip, and the culling loupe (issue 209).
+- With one section open at a time, a new mask no longer leaves MASK
+  and LIGHT open together (issue 211).
 - A DNG with a linearization table, such as some DxO PureRAW files,
   no longer develops six stops dark and magenta.
 - A camera DNG that lists a tiny thumbnail first, a Leica M11's, shows

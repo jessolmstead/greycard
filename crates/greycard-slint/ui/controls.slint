@@ -432,9 +432,10 @@ export component Section inherits VerticalLayout {
     in property <bool> one-of-panel: false;
     property <int> fold-number: 0;
     // Opened under the rule: a section whose fold another tab shares
-    // folds that tab's sections here, which are not made to fold.
+    // folds that tab's sections here, which are not made to fold, and
+    // MASK its mask's, made with it in any order.
     callback opened-alone();
-    changed collapsed => {
+    function opened-under-the-rule() {
         if (!root.collapsed && root.one-of-panel && Folds.one-open) {
             if (root.fold-number == 0) {
                 Folds.count += 1;
@@ -445,6 +446,12 @@ export component Section inherits VerticalLayout {
             root.opened-alone();
         }
     }
+    changed collapsed => { root.opened-under-the-rule(); }
+    // Made already open (a mask chosen or made, a tab shown, the
+    // settings restored), a section has opened as much as by its
+    // header: a fold no section was made to hear, set while this one
+    // was unmade, leaves no second section open.
+    init => { root.opened-under-the-rule(); }
     property <int> fold-opened: Folds.opened;
     changed fold-opened => {
         if (root.one-of-panel && Folds.one-open && !root.collapsed

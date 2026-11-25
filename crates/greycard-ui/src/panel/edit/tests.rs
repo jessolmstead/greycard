@@ -293,6 +293,170 @@ fn a_fold_two_tabs_share_folds_the_other_tabs_sections() {
     assert_eq!(open(), ["metadata"], "Cull shows one open");
 }
 
+/// A window for one section open at a time over the Masks tab: every
+/// section folded but the masks' list, the rule on or off.
+fn one_open_window(
+    on: bool,
+    files: Vec<std::path::PathBuf>,
+) -> (App, Rc<Shared>, Rc<crate::worker::Worker>) {
+    let app = window(1);
+    app.window()
+        .set_size(slint::LogicalSize::new(1500.0, 950.0));
+    let (state, worker) = crate::testing::state_for(&app, files);
+    for (_, _, set) in FOLDS {
+        set(&app, true);
+    }
+    app.set_collapsed_adjustments(false);
+    app.set_one_section(on);
+    crate::testing::settle(&app);
+    (app, state, worker)
+}
+
+/// The sections open, by name, made or not.
+fn open_folds(app: &App) -> Vec<&'static str> {
+    FOLDS
+        .iter()
+        .filter(|(_, get, _)| !get(app))
+        .map(|(n, _, _)| *n)
+        .collect()
+}
+
+/// Settled after a click: the folds' animations run out.
+fn settled(app: &App) {
+    for _ in 0..6 {
+        crate::testing::settle(app);
+    }
+}
+
+fn click_header(app: &App, section: &str) {
+    let (at, size) = crate::testing::header(app, section);
+    crate::testing::click(app, at.x + size.width / 2.0, at.y + size.height / 2.0);
+    settled(app);
+}
+
+fn click_new_mask(app: &App) {
+    let (at, size) = crate::testing::by_id(app, "AdjustmentsList::new-mask-button");
+    crate::testing::click(app, at.x + size.width / 2.0, at.y + size.height / 2.0);
+    settled(app);
+}
+
+fn show_tab(app: &App, tab: &str) {
+    crate::testing::click_panel_tab(app, tab);
+    settled(app);
+}
+
+fn choose_mask(app: &App, i: usize) {
+    crate::testing::click_key(app, "AdjustmentsList::mask-item", i);
+    settled(app);
+}
+
+/// One section open at a time, and New mask with none chosen while
+/// LIGHT is open: MASK is made open with LIGHT, and MASK, asked for,
+/// is the one open (issue 211), then and after the mask is chosen
+/// again.
+#[test]
+fn new_mask_with_none_chosen_opens_mask_alone() {
+    let (app, _state, _worker) = one_open_window(true, Vec::new());
+    click_header(&app, "LightSection");
+    show_tab(&app, "Masks");
+    click_new_mask(&app);
+    assert_eq!(open_folds(&app), ["adjustments", "mask"]);
+    choose_mask(&app, 0);
+    choose_mask(&app, 1);
+    assert_eq!(open_folds(&app), ["adjustments", "mask"], "chosen again");
+}
+
+/// One section open at a time, and MASK and LIGHT left open while
+/// no section of the mask's was made (as a restored session leaves
+/// them): a mask chosen in the list, by the edit (undo, redo), or
+/// made by M shows MASK alone, since a mask is what was asked for.
+#[test]
+fn a_mask_chosen_or_made_shows_mask_alone_over_folds_set_unmade() {
+    let both_open = |app: &App| {
+        app.set_collapsed_light(false);
+        crate::testing::settle(app);
+        app.set_collapsed_mask(false);
+        crate::testing::settle(app);
+    };
+
+    // Chosen in the list.
+    let (app, _state, _worker) = one_open_window(true, Vec::new());
+    show_tab(&app, "Masks");
+    click_new_mask(&app);
+    choose_mask(&app, 0);
+    both_open(&app);
+    choose_mask(&app, 1);
+    assert_eq!(
+        open_folds(&app),
+        ["adjustments", "mask"],
+        "chosen in the list"
+    );
+
+    // Chosen by the edit, from Develop.
+    let (app, state, _worker) = one_open_window(true, Vec::new());
+    show_tab(&app, "Masks");
+    click_new_mask(&app);
+    show_tab(&app, "Develop");
+    both_open(&app);
+    let edit = state.borrow().develop.edit.clone();
+    show_edit(&state.borrow(), &edit, &app, Some(0));
+    settled(&app);
+    assert_eq!(
+        (app.get_panel_tab().as_str(), app.get_target()),
+        ("Masks", 1)
+    );
+    assert_eq!(
+        open_folds(&app),
+        ["adjustments", "mask"],
+        "chosen by the edit"
+    );
+
+    // Made by M, from Develop.
+    let (app, _state, _worker) = one_open_window(true, crate::testing::folder(1));
+    app.invoke_select(0);
+    settled(&app);
+    both_open(&app);
+    crate::testing::press(&app, "m");
+    settled(&app);
+    assert_eq!(
+        (app.get_panel_tab().as_str(), app.get_target()),
+        ("Masks", 1)
+    );
+    assert_eq!(open_folds(&app), ["adjustments", "mask"], "made by M");
+}
+
+/// One section open at a time, and two of Develop's sections left
+/// open while Develop's were unmade (a restored session, another
+/// tab): Develop shows one of them.
+#[test]
+fn sections_made_open_under_one_at_a_time_leave_one_open() {
+    let (app, _state, _worker) = one_open_window(true, Vec::new());
+    show_tab(&app, "Crop");
+    app.set_collapsed_light(false);
+    app.set_collapsed_grain(false);
+    crate::testing::settle(&app);
+    show_tab(&app, "Develop");
+    assert_eq!(open_folds(&app), ["adjustments", "grain"]);
+}
+
+/// With the rule off, the same moves leave every section as it was.
+#[test]
+fn sections_made_open_with_the_rule_off_stay_open() {
+    let (app, _state, _worker) = one_open_window(false, Vec::new());
+    click_header(&app, "LightSection");
+    show_tab(&app, "Masks");
+    click_new_mask(&app);
+    assert_eq!(open_folds(&app), ["adjustments", "mask", "light"]);
+    choose_mask(&app, 0);
+    choose_mask(&app, 1);
+    assert_eq!(open_folds(&app), ["adjustments", "mask", "light"]);
+    show_tab(&app, "Crop");
+    app.set_collapsed_grain(false);
+    crate::testing::settle(&app);
+    show_tab(&app, "Develop");
+    assert_eq!(open_folds(&app), ["adjustments", "mask", "light", "grain"]);
+}
+
 /// The sharpen's Threshold slider runs 0 to 200 percent in steps of
 /// one, RawTherapee's range, and shows a value at its top as such.
 #[test]

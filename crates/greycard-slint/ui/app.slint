@@ -1349,6 +1349,19 @@ export component App inherits Window {
             root.collapsed-mask = true;
         }
     }
+    // MASK made open with a mask chosen or made is what the user asked
+    // for: the mask's other sections, made with it in either order,
+    // fold, whether they are made yet or not.
+    function alone-as-mask() {
+        root.collapsed-wb = true;
+        root.collapsed-light = true;
+        root.collapsed-color = true;
+        root.collapsed-curves = true;
+        root.collapsed-mixer = true;
+        root.collapsed-grading = true;
+        root.collapsed-tint = true;
+        root.collapsed-detail = true;
+    }
     function alone-with-cull() {
         if (root.shown-tab == "Cull") {
             root.collapsed-look = true;
@@ -4561,6 +4574,7 @@ export component App inherits Window {
                                     show-mask <=> root.show-mask;
                                     show-mask-toggled => { root.show-mask-toggled(); }
                                     collapsed-mask <=> root.collapsed-mask;
+                                    opened-alone => { root.alone-as-mask(); }
                                     placing <=> root.placing;
                                     adjustment-name <=> root.adjustment-name;
                                     name-wanted <=> root.mask-name-wanted;
