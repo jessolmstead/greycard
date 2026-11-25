@@ -757,3 +757,4 @@ in its section; the roadmap and the changelog only point at it.
 - [§743. The focus stack's highlights, under headroom](notes/743-the-focus-stacks-highlights-under-headroom.md) (2026-11-24)
 - [§744. A monochrome DNG's bad pixels](notes/744-a-monochrome-dngs-bad-pixels.md) (2026-11-24)
 - [§745. The sharpen of what is seen first](notes/745-the-sharpen-of-what-is-seen-first.md) (2026-11-24)
+- [§746. The stack's placing, blind to a difference in blur](notes/746-the-stacks-placing-blind-to-blur.md) (2026-11-25)

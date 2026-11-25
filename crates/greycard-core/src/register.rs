@@ -560,6 +560,23 @@ pub struct Options {
     /// keeps the log of a black pixel finite without touching anything
     /// the fit can use.
     pub floor_stops: f32,
+    /// What the gradient fit's answer is refined by, if anything. When
+    /// a refinement is used, the fit's residual and overlap are scored
+    /// again at the refined transform.
+    pub refine: Refine,
+}
+
+/// What a fit's answer is refined by once the gradient fit has found
+/// it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Refine {
+    /// Nothing: the gradient fit's answer is the answer.
+    #[default]
+    None,
+    /// The shifts of small patches read off their phase, which a
+    /// difference in blur between the frames does not move
+    /// ([`refine_by_phase`]): for frames that differ in focus.
+    Phase,
 }
 
 impl Default for Options {
@@ -574,6 +591,7 @@ impl Default for Options {
             min_overlap: 0.25,
             min_contrast: 1e-3,
             floor_stops: 14.0,
+            refine: Refine::None,
         }
     }
 }
@@ -712,7 +730,95 @@ pub fn fit_from(
             "a homography is fitted by fit_homography_from".to_string(),
         ));
     }
-    fit_warp(reference, moving, width, height, options, initial)
+    let mut fit = fit_warp(reference, moving, width, height, options, initial)?;
+    if options.refine == Refine::Phase {
+        match refine_by_phase(
+            reference,
+            moving,
+            width,
+            height,
+            options.model,
+            &fit.transform,
+        ) {
+            Ok(phased) => {
+                // The residual a caller gates on is the placing's it
+                // gets, so it is scored again where the refinement put
+                // the frame; the gradient fit's would vouch for a
+                // transform that is no longer the answer.
+                if let Some((residual, overlap)) =
+                    scored_at(reference, moving, width, height, options, &phased.transform)
+                {
+                    log::debug!(
+                        "register: refined by the phase in {} passes, {} patches agreeing to \
+                         {:.3} px; residual {:.4} -> {residual:.4}",
+                        phased.passes,
+                        phased.patches,
+                        phased.agreement.miss,
+                        fit.residual
+                    );
+                    fit.transform = phased.transform;
+                    fit.residual = residual;
+                    fit.overlap = overlap;
+                }
+            }
+            Err(why) => log::debug!("register: the phase refinement not used: {why:?}"),
+        }
+    }
+    Ok(fit)
+}
+
+/// The residual and overlap a fit would report for `t`: the error over
+/// the overlap at `options.finest_level`, scored as [`fit_from`] scores
+/// its own answer. None when the overlap is under `options.min_overlap`
+/// or a plane has nothing to score.
+fn scored_at(
+    reference: &[f32],
+    moving: &[f32],
+    width: usize,
+    height: usize,
+    options: &Options,
+    t: &Transform,
+) -> Option<(f32, f32)> {
+    let mut a = Plane {
+        data: log_plane(reference, options.floor_stops),
+        width,
+        height,
+    };
+    let mut b = Plane {
+        data: log_plane(moving, options.floor_stops),
+        width,
+        height,
+    };
+    // Down to the finest level the fit descends to, as its pyramid does.
+    let mut level = 0;
+    while level < options.finest_level
+        && level + 1 < options.max_levels.max(1)
+        && a.width.min(a.height) / 2 >= options.min_side.max(3)
+    {
+        a = downsample(&a);
+        b = downsample(&b);
+        level += 1;
+    }
+    let (reference_mean, deviation) = moments(&a);
+    let (moving_mean, _) = moments(&b);
+    if !(deviation.is_finite() && deviation as f32 >= options.min_contrast) {
+        return None;
+    }
+    // Each log plane let go once standardized: three full planes at the
+    // most, under what the fit's own pyramids held.
+    let template = standardized(&a, reference_mean, deviation);
+    drop(a);
+    let moved = standardized(&b, moving_mean, deviation);
+    drop(b);
+    let scored = score(&template, &moved, &t.at_scale(0.5f64.powi(level as i32)));
+    let countable = ((template.width - 2) * (template.height - 2)) as f32;
+    let overlap = scored.count as f32 / countable;
+    if overlap < options.min_overlap {
+        return None;
+    }
+    let count = scored.count.max(1) as f64;
+    let variance = (scored.sse - scored.error_sum * scored.error_sum / count) / count;
+    Some((variance.max(0.0).sqrt() as f32, overlap))
 }
 
 /// [`fit_from`] onto a [`Homography`], for frames a turn of the camera
@@ -972,13 +1078,17 @@ fn pyramid(base: Vec<f32>, width: usize, height: usize, options: &Options) -> Ve
 /// Blur by the binomial `[1 4 6 4 1] / 16` and keep every other
 /// sample, separably, the taps clamped at the border.
 fn downsample(src: &Plane) -> Plane {
+    downsample_view(&src.data, src.width, src.height)
+}
+
+/// [`downsample`] of a plane held as a slice.
+fn downsample_view(data: &[f32], w: usize, h: usize) -> Plane {
     const TAPS: [f32; 5] = [1.0 / 16.0, 4.0 / 16.0, 6.0 / 16.0, 4.0 / 16.0, 1.0 / 16.0];
-    let (w, h) = (src.width, src.height);
     let ow = w.div_ceil(2);
     let oh = h.div_ceil(2);
     let mut rows = vec![0.0f32; ow * h];
     rows.par_chunks_mut(ow)
-        .zip(src.data.par_chunks(w))
+        .zip(data.par_chunks(w))
         .for_each(|(out, row)| {
             for (x, o) in out.iter_mut().enumerate() {
                 let c = 2 * x;
@@ -1846,6 +1956,728 @@ fn wide_sample(
         }
         *o = sum;
     }
+}
+
+/// The smaller of the two patch sizes [`refine_by_phase`] reads, at
+/// the level it works on; the other is twice it. Each is read up to an
+/// eighth of its side in cycles: periods of eight of the level's
+/// pixels and longer.
+const PHASE_SIDE: usize = 32;
+/// The level it works on is the first whose short side is no longer
+/// than this.
+const PHASE_SIDE_MOST: usize = 2048;
+/// Most times the patches are read and the transform corrected: each
+/// pass takes out about half of what is left (a window does not move
+/// with the content, so a patch reads a shift short), more once the
+/// passes are stretched, and settling takes two passes running. A
+/// refinement that has not settled by then is not used.
+const PHASE_ROUNDS: usize = 16;
+/// A pass that moves the corners by less than this, in the working
+/// level's pixels, has settled. Not a hundredth: the passes jitter by
+/// a few hundredths as patches come into the overlap and leave it, and
+/// a refinement held to less would never settle; measured on the
+/// synthetic stacks, the jitter is 0.02 to 0.07 once the approach is
+/// done.
+const PHASE_SETTLED: f64 = 0.05;
+/// The most the patches may miss the transform fitted to them, at the
+/// median, in the working level's pixels, for the refinement to be
+/// used: past it the frames are not related by one transform of the
+/// model's kind (a turn of the camera about a point other than its
+/// lens, a scene with depth seen from two places), and which answer
+/// the refinement settles on depends on which patches it weighs most.
+/// See [`refine_by_phase`] for how it was set.
+pub const PHASE_MISS_MOST: f64 = 0.4;
+/// The most the patches may miss at the plain median, every patch
+/// counted once, in the working level's pixels. See
+/// [`refine_by_phase`] for how it was set.
+pub const PHASE_PLAIN_MOST: f64 = 3.0;
+/// The fewest patches of equal weight, `(Σw)² / Σw²`, that must carry
+/// the refinement. See [`refine_by_phase`] for how it was set.
+pub const PHASE_EFFECTIVE_LEAST: f64 = 8.0;
+/// A sample at or above this share of its frame's largest is taken as
+/// clipped, and a patch holding more than a sixty-fourth of them is
+/// not read: a clipped highlight's edge moves with the exposure, not
+/// with the frame.
+const PHASE_CLIPPED: f32 = 0.98;
+
+/// A plane borrowed: the phase reads its levels without copying the
+/// full resolution.
+#[derive(Clone, Copy)]
+struct View<'a> {
+    data: &'a [f32],
+    width: usize,
+    height: usize,
+}
+
+impl<'a> View<'a> {
+    fn of(plane: &'a Plane) -> Self {
+        Self {
+            data: &plane.data,
+            width: plane.width,
+            height: plane.height,
+        }
+    }
+}
+
+/// One patch's shift, by the slope of its cross-power phase: where the
+/// content of `moving` sits against `reference`'s, as `(dx, dy)` with
+/// the moving patch's content at `x + d` being the reference's at `x`,
+/// and how far to believe it. None for a patch with nothing in it, or
+/// with clipped samples (at or over `clip`, the reference's and the
+/// moving frame's) in it.
+///
+/// Why the phase: a symmetric blur's transfer function is real, so it
+/// scales a frequency's amplitude and leaves its phase where it was,
+/// and two patches that differ in defocus by any amount of it still
+/// have cross-power phases that are a plane through the origin, its
+/// slope the shift. A gradient fit has no such property (see
+/// [`refine_by_phase`]). The patch is taken in linear light, as a
+/// lens's blur acts, divided by its own mean so that an exposure
+/// difference, a gain, is nothing, and under a Hann window. A blur
+/// whose transfer function turns negative (a disc's past its first
+/// zero) flips a band's phase by a half turn; the second and third
+/// passes leave out any bin more than a quarter turn off the plane.
+///
+/// **What it can read.** The first pass fits the bins up to 2.5 cycles
+/// a patch, and the phase of the highest of them wraps once the shift
+/// passes a fifth of the patch's side: past that the slope it finds is
+/// an alias. On a repeating pattern the alias is a whole period off,
+/// and every patch agrees on it, so the patches alone cannot tell; it
+/// is the gradient fit's answer, which [`refine_by_phase`] starts
+/// from and may move only by a fraction of a patch, that keeps a
+/// refinement from walking a period away (see its guard).
+///
+/// **How far to believe it.** The weight is the square of the patches'
+/// coherence at the shift found: the cross power's projection onto the
+/// fitted plane over the two patches' own power, 1 for one picture in
+/// both, near 0 for noise or for two pictures with nothing in common.
+/// It does not grow with the patch's contrast: a dark patch's noise, or
+/// the edge of a highlight, has no more say than any other patch that
+/// agrees as well.
+///
+/// `SIDE` is the patch's side, `K1` one more than the highest frequency
+/// read (`SIDE / 8 + 1`), and `NX` the count of horizontal frequencies
+/// (`2 K1 - 1`): three numbers for one, as arrays want them.
+fn phase_shift<const SIDE: usize, const K1: usize, const NX: usize>(
+    reference: View,
+    moving: View,
+    x0: usize,
+    y0: usize,
+    clip: (f32, f32),
+) -> Option<(f64, f64, f64)> {
+    use std::f64::consts::PI;
+    const { assert!(K1 == SIDE / 8 + 1 && NX == 2 * K1 - 1) };
+    let k = K1 - 1;
+    let w = reference.width;
+    let window: [f64; SIDE] =
+        std::array::from_fn(|i| 0.5 - 0.5 * (2.0 * PI * (i as f64 + 0.5) / SIDE as f64).cos());
+    let twiddle: [[(f64, f64); SIDE]; K1] = std::array::from_fn(|f| {
+        std::array::from_fn(|n| {
+            let t = -2.0 * PI * (f * n) as f64 / SIDE as f64;
+            (t.cos(), t.sin())
+        })
+    });
+    let patch = |p: View, clip: f32| -> Option<Vec<f64>> {
+        let mut v: Vec<f64> = (0..SIDE * SIDE)
+            .map(|k| p.data[(y0 + k / SIDE) * w + x0 + k % SIDE] as f64)
+            .collect();
+        let clipped = v.iter().filter(|&&s| s >= clip as f64).count();
+        if clipped * 64 > v.len() {
+            return None;
+        }
+        let mean = v.iter().sum::<f64>() / v.len() as f64;
+        if !(mean > 0.0 && mean.is_finite()) {
+            return None;
+        }
+        for (k, x) in v.iter_mut().enumerate() {
+            *x = (*x / mean - 1.0) * window[k % SIDE] * window[k / SIDE];
+        }
+        Some(v)
+    };
+    // The transform at |kx| <= k, 0 <= ky <= k: rows, then columns. A
+    // negative frequency's twiddle is the conjugate of its positive's.
+    let transform = |p: &[f64]| -> [[(f64, f64); NX]; K1] {
+        let mut rows = [[(0.0, 0.0); NX]; SIDE];
+        for (y, row) in rows.iter_mut().enumerate() {
+            let line = &p[y * SIDE..(y + 1) * SIDE];
+            for (j, out) in row.iter_mut().enumerate() {
+                let kx = j as isize - k as isize;
+                let (mut re, mut im) = (0.0, 0.0);
+                for (v, (c, s)) in line.iter().zip(&twiddle[kx.unsigned_abs()]) {
+                    re += v * c;
+                    im += v * s;
+                }
+                *out = (re, if kx < 0 { -im } else { im });
+            }
+        }
+        let mut out = [[(0.0, 0.0); NX]; K1];
+        for (ky, line) in out.iter_mut().enumerate() {
+            for (j, o) in line.iter_mut().enumerate() {
+                let (mut re, mut im) = (0.0, 0.0);
+                for (row, (c, s)) in rows.iter().zip(&twiddle[ky]) {
+                    let (r, i) = row[j];
+                    re += r * c - i * s;
+                    im += r * s + i * c;
+                }
+                *o = (re, im);
+            }
+        }
+        out
+    };
+    let (a, b) = (
+        transform(&patch(reference, clip.0)?),
+        transform(&patch(moving, clip.1)?),
+    );
+    // Each bin of the half plane: its angular frequency, the phase of
+    // A conj(B), and the cross power's magnitude, which weighs it; and
+    // the two patches' own power over the same bins.
+    let mut bins = Vec::with_capacity(K1 * NX);
+    let (mut power_a, mut power_b) = (0.0f64, 0.0f64);
+    for ky in 0..K1 {
+        for (j, (&(ar, ai), &(br, bi))) in a[ky].iter().zip(&b[ky]).enumerate() {
+            let kx = j as isize - k as isize;
+            if ky == 0 && kx <= 0 {
+                continue;
+            }
+            power_a += ar * ar + ai * ai;
+            power_b += br * br + bi * bi;
+            let (cr, ci) = (ar * br + ai * bi, ai * br - ar * bi);
+            let m = cr.hypot(ci);
+            if m > 0.0 && m.is_finite() {
+                bins.push((
+                    2.0 * PI * kx as f64 / SIDE as f64,
+                    2.0 * PI * ky as f64 / SIDE as f64,
+                    ci.atan2(cr),
+                    m,
+                ));
+            }
+        }
+    }
+    // The plane through the origin by weighted least squares, three
+    // times: the lowest frequencies alone, then every bin on the last
+    // pass's residual, wrapped, a bin a quarter turn off left out.
+    let lowest = 2.0 * PI * 2.5 / SIDE as f64;
+    let mut d = (0.0f64, 0.0f64);
+    let mut information = 0.0;
+    for pass in 0..3 {
+        let (mut sxx, mut sxy, mut syy, mut bx, mut by) = (0.0, 0.0, 0.0, 0.0, 0.0);
+        for &(gx, gy, phase, m) in &bins {
+            if pass == 0 && gx.hypot(gy) > lowest {
+                continue;
+            }
+            let mut r = phase - (gx * d.0 + gy * d.1);
+            r -= 2.0 * PI * (r / (2.0 * PI)).round();
+            if pass > 0 && r.abs() > PI / 2.0 {
+                continue;
+            }
+            sxx += m * gx * gx;
+            sxy += m * gx * gy;
+            syy += m * gy * gy;
+            bx += m * gx * r;
+            by += m * gy * r;
+        }
+        let det = sxx * syy - sxy * sxy;
+        if !(det > 0.0 && det.is_finite()) {
+            return None;
+        }
+        d.0 += (syy * bx - sxy * by) / det;
+        d.1 += (sxx * by - sxy * bx) / det;
+        information = det.sqrt();
+    }
+    // The coherence at the plane found.
+    let along: f64 = bins
+        .iter()
+        .map(|&(gx, gy, phase, m)| m * (phase - (gx * d.0 + gy * d.1)).cos())
+        .sum();
+    let coherence = (along / (power_a * power_b).sqrt()).clamp(0.0, 1.0);
+    // The information the slope had, which grows with the patch's
+    // contrast and is what a sharp patch is worth, times the square of
+    // its coherence, which a patch of noise or of two different
+    // pictures does not have whatever its contrast. Not capped: a cap
+    // at the ninetieth percentile, or at 25 times the median, takes
+    // from the sharp patches the say they earned and costs the
+    // synthetic stacks half again of their error at the corners.
+    let weight = information * coherence * coherence;
+    (weight.is_finite() && weight > 0.0).then_some((d.0, d.1, weight))
+}
+
+/// One patch's reading: its middle, its shift, and its weight.
+type Shift = (f64, f64, f64, f64, f64);
+
+/// Every patch of `SIDE` (overlapping by half) that the moving frame,
+/// placed by `t`, covers, and its shift: one past the frame's edge
+/// holds the clamp's smear.
+fn shifts<const SIDE: usize, const K1: usize, const NX: usize>(
+    reference: View,
+    warped: View,
+    t: &Transform,
+    clip: (f32, f32),
+) -> Vec<Shift> {
+    let (w, h) = (reference.width, reference.height);
+    if w < SIDE || h < SIDE {
+        return Vec::new();
+    }
+    let stride = SIDE / 2;
+    let starts = |size: usize| (0..=(size - SIDE) / stride).map(move |i| i * stride);
+    let places: Vec<(usize, usize)> = starts(h)
+        .flat_map(|y| starts(w).map(move |x| (x, y)))
+        .collect();
+    let inside = |u: f64, v: f64| {
+        let (u, v) = t.apply(u, v);
+        u >= 0.0 && v >= 0.0 && u <= (w - 1) as f64 && v <= (h - 1) as f64
+    };
+    let middle = (SIDE - 1) as f64 / 2.0;
+    places
+        .par_iter()
+        .filter(|&&(x, y)| {
+            let (x0, y0) = (x as f64, y as f64);
+            let (x1, y1) = (x0 + (SIDE - 1) as f64, y0 + (SIDE - 1) as f64);
+            inside(x0, y0) && inside(x1, y0) && inside(x0, y1) && inside(x1, y1)
+        })
+        .filter_map(|&(x, y)| {
+            let (dx, dy, weight) = phase_shift::<SIDE, K1, NX>(reference, warped, x, y, clip)?;
+            Some((x as f64 + middle, y as f64 + middle, dx, dy, weight))
+        })
+        .collect()
+}
+
+/// The transform near the identity, of `model`'s kind, that takes each
+/// patch's middle `p` to `p + d`: weighted least squares over the
+/// patches, reweighted five times by Huber's rule on each patch's
+/// miss, so that a patch the phase read wrongly (a moving subject, a
+/// region with nothing in common) has a bounded say. With it, how far
+/// the patches are from agreeing on that transform ([`Agreement`]).
+/// None when the patches do not hold the model.
+fn transform_of_shifts(
+    field: &[Shift],
+    model: Model,
+    width: usize,
+    height: usize,
+) -> Option<(Transform, Agreement)> {
+    let n = model.parameters().min(6);
+    if field.len() * 2 < n * 4 {
+        return None;
+    }
+    let (cx, cy) = ((width - 1) as f64 / 2.0, (height - 1) as f64 / 2.0);
+    let scale = 0.5 * (width as f64).hypot(height as f64);
+    // The rows of the design for one patch, in centered and scaled
+    // coordinates: d = J p.
+    let rows = |x: f64, y: f64| -> [[f64; MOST]; 2] {
+        let (x, y) = ((x - cx) / scale, (y - cy) / scale);
+        let mut r = [[0.0; MOST]; 2];
+        match model {
+            Model::Translation => {
+                r[0][0] = 1.0;
+                r[1][1] = 1.0;
+            }
+            Model::Similarity => {
+                r[0][..4].copy_from_slice(&[x, -y, 1.0, 0.0]);
+                r[1][..4].copy_from_slice(&[y, x, 0.0, 1.0]);
+            }
+            Model::Affine | Model::Homography => {
+                r[0][..6].copy_from_slice(&[x, 0.0, y, 0.0, 1.0, 0.0]);
+                r[1][..6].copy_from_slice(&[0.0, x, 0.0, y, 0.0, 1.0]);
+            }
+        }
+        r
+    };
+    let misses_at = |p: &[f64; MOST]| -> Vec<f64> {
+        field
+            .iter()
+            .map(|&(x, y, dx, dy, _)| {
+                let r = rows(x, y);
+                let at = |row: &[f64; MOST]| row.iter().zip(p).map(|(a, b)| a * b).sum::<f64>();
+                (dx - at(&r[0])).hypot(dy - at(&r[1]))
+            })
+            .collect()
+    };
+    let mut robust = vec![1.0f64; field.len()];
+    let mut p = [0.0f64; MOST];
+    for _ in 0..6 {
+        let mut packed = [0.0f64; PACKED];
+        let mut b = [0.0f64; MOST];
+        for (&(x, y, dx, dy, weight), r) in field.iter().zip(&robust) {
+            let c = weight * r;
+            for (row, d) in rows(x, y).iter().zip([dx, dy]) {
+                let mut k = 0;
+                for i in 0..n {
+                    b[i] += c * row[i] * d;
+                    for j in i..n {
+                        packed[k] += c * row[i] * row[j];
+                        k += 1;
+                    }
+                }
+            }
+        }
+        p = solve(&packed, &b, n)?;
+        let misses = misses_at(&p);
+        let mut sorted = misses.clone();
+        sorted.sort_by(f64::total_cmp);
+        // A fiftieth of a pixel at least, so a field that fits
+        // exactly does not reweigh on its rounding.
+        let k = 1.5 * (1.4826 * sorted[sorted.len() / 2]).max(0.02);
+        for (r, miss) in robust.iter_mut().zip(&misses) {
+            *r = if *miss <= k { 1.0 } else { k / miss };
+        }
+    }
+    // The weighted median of the misses, by the patches' own weights,
+    // and the plain one, every patch counted once.
+    let misses = misses_at(&p);
+    let plain = {
+        let mut sorted = misses.clone();
+        sorted.sort_by(f64::total_cmp);
+        sorted[sorted.len() / 2]
+    };
+    let (sum, squares) = field
+        .iter()
+        .fold((0.0, 0.0), |(s, q), f| (s + f.4, q + f.4 * f.4));
+    let effective = if squares > 0.0 {
+        sum * sum / squares
+    } else {
+        0.0
+    };
+    let mut weighed: Vec<(f64, f64)> = misses.into_iter().zip(field.iter().map(|s| s.4)).collect();
+    weighed.sort_by(|a, b| a.0.total_cmp(&b.0));
+    let total: f64 = weighed.iter().map(|m| m.1).sum();
+    let mut seen = 0.0;
+    let mut miss = weighed.last().map_or(0.0, |m| m.0);
+    for &(m, weight) in &weighed {
+        seen += weight;
+        if seen >= total / 2.0 {
+            miss = m;
+            break;
+        }
+    }
+    // Back to pixels: x + d(x), the linear part over the scale.
+    let (a, b, c, d, tx, ty) = match model {
+        Model::Translation => (0.0, 0.0, 0.0, 0.0, p[0], p[1]),
+        Model::Similarity => (p[0], -p[1], p[1], p[0], p[2], p[3]),
+        Model::Affine | Model::Homography => (p[0], p[2], p[1], p[3], p[4], p[5]),
+    };
+    let (a, b, c, d) = (1.0 + a / scale, b / scale, c / scale, 1.0 + d / scale);
+    Some((
+        Transform {
+            m: [
+                a,
+                b,
+                cx + tx - a * cx - b * cy,
+                c,
+                d,
+                cy + ty - c * cx - d * cy,
+            ],
+        },
+        Agreement {
+            miss,
+            plain,
+            effective,
+        },
+    ))
+}
+
+/// How far the patches are from agreeing on the transform fitted to
+/// them, in the plane's pixels.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Agreement {
+    /// The median of the patches' misses, each patch weighed as the fit
+    /// weighed it.
+    pub miss: f64,
+    /// The median of the misses with every patch counted once: the
+    /// weighted one alone is the miss of whichever patch holds half the
+    /// weight, and one strong patch on a moving leaf can hold that much
+    /// and agree with itself.
+    pub plain: f64,
+    /// How many patches of equal weight the field is worth, `(Σw)² / Σw²`:
+    /// the whole count when the weights are even, one when one patch
+    /// holds them all.
+    pub effective: f64,
+}
+
+/// How far a transform moves the four corners of a `w` by `h` plane,
+/// x and y each.
+fn corner_moves(t: &Transform, w: usize, h: usize) -> [f64; 8] {
+    let (x1, y1) = ((w - 1) as f64, (h - 1) as f64);
+    let mut out = [0.0; 8];
+    for (k, (x, y)) in [(0.0, 0.0), (x1, 0.0), (0.0, y1), (x1, y1)]
+        .into_iter()
+        .enumerate()
+    {
+        let (dx, dy) = t.displacement(x, y);
+        out[2 * k] = dx;
+        out[2 * k + 1] = dy;
+    }
+    out
+}
+
+/// Why the guard turns away a refinement whose patches came to
+/// `agreement`, or None when it is kept.
+fn refused(agreement: &Agreement, most_miss: f64) -> Option<Unrefined> {
+    if agreement.effective < PHASE_EFFECTIVE_LEAST {
+        return Some(Unrefined::Few {
+            effective: agreement.effective,
+        });
+    }
+    (agreement.miss > most_miss || agreement.plain > PHASE_PLAIN_MOST).then_some(
+        Unrefined::Disagree {
+            miss: agreement.miss,
+            plain: agreement.plain,
+        },
+    )
+}
+
+/// What [`refine_by_phase`] came to.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Phased {
+    /// The refined transform, in the planes' own pixels.
+    pub transform: Transform,
+    /// How many times the patches were read.
+    pub passes: usize,
+    /// How well the patches agreed on the transform fitted to them at
+    /// the last pass, in the working level's pixels: what the guard
+    /// reads.
+    pub agreement: Agreement,
+    /// How many patches the last pass read.
+    pub patches: usize,
+    /// The working level's pixels per full-resolution pixel: 1, a half,
+    /// a quarter.
+    pub level: f64,
+}
+
+/// Why [`refine_by_phase`] did not refine.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum Unrefined {
+    /// The planes are not the size given, or too small for two patches.
+    Size,
+    /// Too few patches had anything in them to hold the model.
+    Patches,
+    /// The passes ran out before the corrections settled.
+    Unsettled { passes: usize },
+    /// The patches settled, but do not agree on one transform: their
+    /// weighted median miss is over [`PHASE_MISS_MOST`] or their plain
+    /// one over [`PHASE_PLAIN_MOST`].
+    Disagree { miss: f64, plain: f64 },
+    /// The patches settled, but too few of them carry the weight: fewer
+    /// than [`PHASE_EFFECTIVE_LEAST`] of equal weight.
+    Few { effective: f64 },
+}
+
+/// A transform a gradient fit found between two frames that differ in
+/// focus, corrected by the shifts of small patches read off their
+/// phase: what a focus stack's links are refined by
+/// ([`Refine::Phase`]).
+///
+/// **Why.** A gradient fit's answer moves with a difference in blur
+/// between its frames. Between two neighbors of a focus stack the blur
+/// differs everywhere, by an amount that runs across the picture with
+/// the scene's depth, and the fit reads part of that as motion: a
+/// shift, a turn, a magnification. It is small for one link, a tenth
+/// to a half of a pixel at the corners of a 480-pixel frame, but it is
+/// the same between every pair of neighbors, since each sees the same
+/// scene with the focus a step further on, so down a chain it adds up
+/// rather than averaging out. A patch's phase does not move with a
+/// symmetric blur at all (see [`phase_shift`]), so the shifts the
+/// patches report are the geometry's, and a transform fitted to them,
+/// robustly, has no such bias. The rest is the blur's change across a
+/// patch, which is not a convolution and which the phase cannot be
+/// blind to.
+///
+/// **The guard.** It refines and does not replace, and it is not used
+/// unless it earned it. The patches read shifts up to a fifth of their
+/// side, so the gradient fit's reach is still what finds the frame.
+/// The passes must settle, two running under [`PHASE_SETTLED`], within
+/// [`PHASE_ROUNDS`]. Then the patches must agree on one transform, three
+/// ways, all in the working level's pixels: their weighted median miss
+/// under [`PHASE_MISS_MOST`] (0.4); their plain median miss, every
+/// patch counted once, under [`PHASE_PLAIN_MOST`] (3); and the weight
+/// spread over at least [`PHASE_EFFECTIVE_LEAST`] patches' worth (8),
+/// so that no one strong patch, a sunlit edge on a moving leaf, holds
+/// half the weight and passes the weighted median on its own miss. Two
+/// frames that no transform of the model's kind relates (a handheld
+/// pair turned about a point ahead of the lens, whose near and far
+/// parts moved differently) settle on an answer that depends on which
+/// patches weigh most, and the gradient fit's, which weighs every pixel
+/// alike, is the better of the two there: it is kept.
+///
+/// Where the bounds sit, measured. The synthetic stacks' links that
+/// are kept: weighted miss 0.04 to 0.4, plain 0.11 to 2.8 (the high
+/// end on the depth bed, whose defocused and flat patches read little
+/// and weigh little, and which the plain bound has to let through), and
+/// 9 to 100 patches' worth (12 at the least on the texture beds; 20
+/// would turn half of those away). Real handheld pairs at one focus, at
+/// half a 24-megapixel frame: three kept, at 0.15 to 0.34 weighted,
+/// 0.24 to 0.44 plain, 60 to 86 patches' worth, where the phase and the
+/// gradient fit agree to a tenth of a pixel; four turned away at 0.71
+/// to 3.8 weighted, among them the one the refinement used to take 5 px
+/// from the gradient fit's answer to a worse place (forward then back
+/// 4.95 px against 0.09). The plain bound is loose: on the beds it
+/// cannot be tighter than the depth bed allows, and it is the patch
+/// count that stops one strong patch.
+///
+/// **What the guard gives up.**
+/// - Stacks of two to five frames, and macro stacks of coarse steps,
+///   are mostly turned away: their neighbors are a large step of
+///   defocus apart, past what the phase is blind to. No gain there, and
+///   no loss: the gradient fit's placing, to the bit.
+/// - A chain can mix kept and turned-away links. Each kept link
+///   replaces the gradient fit's bias with a smaller one of the same
+///   sign, so the mix is never worse than either, but the chain's error
+///   is the turned-away links' sum.
+/// - A repeating pattern of 8 to 13 working pixels (a fifth of the
+///   patches' sides, down to where they wrap): when the gradient fit's
+///   answer is more than half a period off, the patches settle on the
+///   alias and agree on it, and nothing here can tell.
+/// - No real focus stack has been through it: the real pairs measured
+///   are at one focus, and the gain is shown only on synthetic stacks
+///   and on a real frame blurred and moved by a known amount.
+///
+/// It runs on the first pyramid level whose short side is at most 2048
+/// pixels, with patches of 32 and of 64 pixels a side overlapping by
+/// half; on a 24-megapixel frame that is about two thirds of a second
+/// a link. The levels are read straight from the planes given: nothing
+/// is copied at full resolution.
+pub fn refine_by_phase(
+    reference: &[f32],
+    moving: &[f32],
+    width: usize,
+    height: usize,
+    model: Model,
+    initial: &Transform,
+) -> std::result::Result<Phased, Unrefined> {
+    refine_by_phase_within(
+        reference,
+        moving,
+        width,
+        height,
+        model,
+        initial,
+        PHASE_MISS_MOST,
+    )
+}
+
+/// [`refine_by_phase`] with the guard's miss given: for a measurement
+/// of what the guard turns away.
+pub(crate) fn refine_by_phase_within(
+    reference: &[f32],
+    moving: &[f32],
+    width: usize,
+    height: usize,
+    model: Model,
+    initial: &Transform,
+    most_miss: f64,
+) -> std::result::Result<Phased, Unrefined> {
+    if reference.len() != width * height || moving.len() != width * height {
+        return Err(Unrefined::Size);
+    }
+    let full = (
+        View {
+            data: reference,
+            width,
+            height,
+        },
+        View {
+            data: moving,
+            width,
+            height,
+        },
+    );
+    // Down to the level it works on, in linear light. A level is
+    // made only when the one above is too big.
+    let mut levels: Option<(Plane, Plane)> = None;
+    let mut factor = 1.0f64;
+    while width.min(height) as f64 / factor > PHASE_SIDE_MOST as f64 {
+        let (a, b) = match &levels {
+            None => (full.0, full.1),
+            Some((a, b)) => (View::of(a), View::of(b)),
+        };
+        levels = Some((
+            downsample_view(a.data, a.width, a.height),
+            downsample_view(b.data, b.width, b.height),
+        ));
+        factor *= 2.0;
+    }
+    let (a, b) = match &levels {
+        None => full,
+        Some((a, b)) => (View::of(a), View::of(b)),
+    };
+    let (w, h) = (a.width, a.height);
+    if w < PHASE_SIDE * 2 || h < PHASE_SIDE * 2 {
+        return Err(Unrefined::Size);
+    }
+    let peak = |v: View| v.data.iter().copied().fold(0.0f32, f32::max) * PHASE_CLIPPED;
+    let clip = (peak(a), peak(b));
+    let mut t = initial.at_scale(1.0 / factor);
+    let mut last: Option<[f64; 8]> = None;
+    let mut was_settled = false;
+    for pass in 1..=PHASE_ROUNDS {
+        let data = warp_plane(b.data, w, h, w, h, &t, Edge::Clamp, Kernel::Cubic);
+        let warped = View {
+            data: &data,
+            width: w,
+            height: h,
+        };
+        let mut field = shifts::<PHASE_SIDE, { PHASE_SIDE / 8 + 1 }, { PHASE_SIDE / 4 + 1 }>(
+            a, warped, &t, clip,
+        );
+        field.extend(shifts::<
+            { 2 * PHASE_SIDE },
+            { PHASE_SIDE / 4 + 1 },
+            { PHASE_SIDE / 2 + 1 },
+        >(a, warped, &t, clip));
+        let (correction, agreement) =
+            transform_of_shifts(&field, model, w, h).ok_or(Unrefined::Patches)?;
+        let moved = correction.corner_distance(&Transform::IDENTITY, w, h);
+        // A patch reads a shift short, by a share that depends on what
+        // is in it and on how blurred it is (its window does not move
+        // with the content), so the passes close in geometrically. The
+        // share is read off the last two passes, the corners' moves
+        // projected one on the other, and the correction stretched by
+        // what is still to come: `1 / (1 - r)` for a pass that left `r`
+        // of what was there. Not when the passes turn or grow: that is
+        // no geometric approach, and stretching it would run away.
+        let corners = corner_moves(&correction, w, h);
+        let stretch = match &last {
+            Some(before) => {
+                let along: f64 = corners.iter().zip(before).map(|(a, b)| a * b).sum();
+                let size: f64 = before.iter().map(|b| b * b).sum();
+                let r = if size > 0.0 { along / size } else { 0.0 };
+                if r > 0.0 && r < 1.0 {
+                    1.0 / (1.0 - r.min(0.8))
+                } else {
+                    1.0
+                }
+            }
+            None => 1.0,
+        };
+        last = Some(corners);
+        // Settled when two passes running move less than the bound. A
+        // step under the bound goes in as read, never stretched (a
+        // stretched jitter would not settle), and the pass after it reads
+        // where it put the frame, so no step is left unchecked.
+        let settled = moved < PHASE_SETTLED && was_settled;
+        was_settled = moved < PHASE_SETTLED;
+        if settled {
+            t = t.compose(&correction);
+            if let Some(why) = refused(&agreement, most_miss) {
+                return Err(why);
+            }
+            return Ok(Phased {
+                transform: t.at_scale(factor),
+                passes: pass,
+                agreement,
+                patches: field.len(),
+                level: 1.0 / factor,
+            });
+        }
+        let mut stretched = correction;
+        let stretch = if was_settled { 1.0 } else { stretch };
+        for (k, v) in stretched.m.iter_mut().enumerate() {
+            let identity = Transform::IDENTITY.m[k];
+            *v = identity + (*v - identity) * stretch;
+        }
+        t = t.compose(&stretched);
+    }
+    Err(Unrefined::Unsettled {
+        passes: PHASE_ROUNDS,
+    })
 }
 
 #[cfg(test)]
@@ -2831,5 +3663,352 @@ mod tests {
             );
             drop(out);
         }
+    }
+
+    /// A plane convolved with `taps` (offset, offset, weight), the
+    /// taps clamped at the border.
+    fn convolved(
+        src: &[f32],
+        width: usize,
+        height: usize,
+        taps: &[(isize, isize, f32)],
+    ) -> Vec<f32> {
+        (0..width * height)
+            .into_par_iter()
+            .map(|k| {
+                let (x, y) = ((k % width) as isize, (k / width) as isize);
+                taps.iter()
+                    .map(|&(dx, dy, v)| {
+                        let xx = (x + dx).clamp(0, width as isize - 1) as usize;
+                        let yy = (y + dy).clamp(0, height as isize - 1) as usize;
+                        v * src[yy * width + xx]
+                    })
+                    .sum()
+            })
+            .collect()
+    }
+
+    fn gaussian(sigma: f64) -> Vec<(isize, isize, f32)> {
+        let r = (3.0 * sigma).ceil() as isize;
+        let mut taps = Vec::new();
+        for dy in -r..=r {
+            for dx in -r..=r {
+                let d2 = (dx * dx + dy * dy) as f64;
+                taps.push((dx, dy, (-d2 / (2.0 * sigma * sigma)).exp() as f32));
+            }
+        }
+        normalized(taps)
+    }
+
+    /// A lens's out-of-focus disc: its transfer function goes negative
+    /// past the first zero.
+    fn disc(radius: f64) -> Vec<(isize, isize, f32)> {
+        let r = radius.ceil() as isize;
+        let mut taps = Vec::new();
+        for dy in -r..=r {
+            for dx in -r..=r {
+                if (dx as f64).hypot(dy as f64) <= radius {
+                    taps.push((dx, dy, 1.0));
+                }
+            }
+        }
+        normalized(taps)
+    }
+
+    /// A cat's eye, the disc cut by the lens's rim off axis: not
+    /// symmetric, so its transfer function has a phase. Moved so that
+    /// its centroid is on the pixel, as a blur that does not shift the
+    /// picture.
+    fn cats_eye(radius: f64, cut: f64) -> Vec<(isize, isize, f32)> {
+        let r = radius.ceil() as isize + 1;
+        let mut points = Vec::new();
+        for dy in -r..=r {
+            for dx in -r..=r {
+                let (x, y) = (dx as f64, dy as f64);
+                if x.hypot(y) <= radius && (x - cut * radius).hypot(y) <= radius {
+                    points.push((x, y));
+                }
+            }
+        }
+        let cx = points.iter().map(|p| p.0).sum::<f64>() / points.len() as f64;
+        let mut taps = std::collections::BTreeMap::<(isize, isize), f32>::new();
+        for (x, y) in points {
+            let x = x - cx;
+            let (x0, f) = (x.floor(), (x - x.floor()) as f32);
+            *taps.entry((x0 as isize, y as isize)).or_default() += 1.0 - f;
+            *taps.entry((x0 as isize + 1, y as isize)).or_default() += f;
+        }
+        normalized(taps.into_iter().map(|((x, y), v)| (x, y, v)).collect())
+    }
+
+    fn normalized(taps: Vec<(isize, isize, f32)>) -> Vec<(isize, isize, f32)> {
+        let sum: f32 = taps.iter().map(|t| t.2).sum();
+        taps.into_iter().map(|(x, y, v)| (x, y, v / sum)).collect()
+    }
+
+    /// A defocus that grows away from a column, as a scene's depth runs
+    /// across a frame: the Gaussians of 0 to 8 pixels blended by `x`,
+    /// the deviation `steep` times the distance from `focus` (a share
+    /// of the width).
+    fn ramped(src: &[f32], width: usize, height: usize, focus: f64, steep: f64) -> Vec<f32> {
+        let sigmas = [0.0, 1.0, 2.0, 3.0, 4.0, 6.0, 8.0];
+        let levels: Vec<Vec<f32>> = sigmas
+            .iter()
+            .map(|&s| {
+                if s == 0.0 {
+                    src.to_vec()
+                } else {
+                    convolved(src, width, height, &gaussian(s))
+                }
+            })
+            .collect();
+        (0..width * height)
+            .map(|k| {
+                let x = (k % width) as f64 / width as f64;
+                let s = (steep * (x - focus).abs()).min(8.0);
+                let i = sigmas.iter().rposition(|&v| v <= s).unwrap_or(0);
+                let j = (i + 1).min(sigmas.len() - 1);
+                let t = if j > i {
+                    ((s - sigmas[i]) / (sigmas[j] - sigmas[i])) as f32
+                } else {
+                    0.0
+                };
+                levels[i][k] * (1.0 - t) + levels[j][k] * t
+            })
+            .collect()
+    }
+
+    /// Two frames of one picture under different blurs, the second
+    /// moved by `truth`: the reference blurred as `a`, the moving frame
+    /// as `b` and then taken through the truth's inverse, so the fit
+    /// should come back with the truth.
+    fn blurred_pair(
+        width: usize,
+        height: usize,
+        a: impl Fn(&[f32]) -> Vec<f32>,
+        b: impl Fn(&[f32]) -> Vec<f32>,
+        truth: &Transform,
+    ) -> (Vec<f32>, Vec<f32>) {
+        let sharp = reference(width, height);
+        let moving = warp_plane(
+            &b(&sharp),
+            width,
+            height,
+            width,
+            height,
+            &truth.inverse().expect("a truth"),
+            Edge::Clamp,
+            Kernel::Cubic,
+        );
+        (a(&sharp), moving)
+    }
+
+    fn similarity_options(refine: Refine) -> Options {
+        Options {
+            model: Model::Similarity,
+            refine,
+            ..Default::default()
+        }
+    }
+
+    /// The known-answer construction: one picture under two different
+    /// blurs, a Gaussian, a lens's disc, an off-axis cat's eye, and a
+    /// defocus ramping across the frame, the second frame moved by a
+    /// known similarity. The gradient fit alone reads a third to three
+    /// fifths of a pixel of the blurs' difference as motion at the
+    /// corners (0.59 under the Gaussian, 0.54 the disc, 0.39 the cat's
+    /// eye, 0.35 the ramps); the refinement leaves 0.04, 0.02, 0.01, and
+    /// 0.16. A ramp steep enough to change the blur by a pixel across a
+    /// patch is past what the phase is blind to, and the guard turns
+    /// such a pair away more often than not.
+    #[test]
+    fn the_phase_refinement_is_blind_to_a_difference_in_blur() {
+        let (width, height) = (480usize, 320);
+        let truth = Transform::similarity(
+            1.004,
+            0.08f64.to_radians(),
+            middle(width, height),
+            [2.3, -1.6],
+        );
+        let same = |p: &[f32]| p.to_vec();
+        type Blur<'a> = Box<dyn Fn(&[f32]) -> Vec<f32> + 'a>;
+        let cases: Vec<(&str, Blur, Blur, f64)> = vec![
+            (
+                "a Gaussian of 3",
+                Box::new(same),
+                Box::new(|p| convolved(p, width, height, &gaussian(3.0))),
+                0.15,
+            ),
+            (
+                "a disc of 4",
+                Box::new(same),
+                Box::new(|p| convolved(p, width, height, &disc(4.0))),
+                0.15,
+            ),
+            (
+                "a cat's eye of 4",
+                Box::new(same),
+                Box::new(|p| convolved(p, width, height, &cats_eye(4.0, 0.6))),
+                0.15,
+            ),
+            (
+                "ramps of defocus across the frame",
+                Box::new(|p| ramped(p, width, height, 0.35, 8.0)),
+                Box::new(|p| ramped(p, width, height, 0.65, 8.0)),
+                0.25,
+            ),
+        ];
+        for (name, a, b, most) in cases {
+            let (reference, moving) = blurred_pair(width, height, a, b, &truth);
+            let off = |refine| {
+                let fit = fit(
+                    &reference,
+                    &moving,
+                    width,
+                    height,
+                    &similarity_options(refine),
+                )
+                .expect("a fit");
+                error(&fit, &truth, width, height)
+            };
+            let (gradient, phase) = (off(Refine::None), off(Refine::Phase));
+            println!("{name}: the gradient fit {gradient:.3} px off, refined {phase:.3}");
+            assert!(phase < most, "{name}: refined {phase:.3} px off");
+            assert!(
+                gradient > most,
+                "{name}: the gradient fit {gradient:.3} px off"
+            );
+        }
+    }
+
+    /// A pure shift, no blur, from the identity: found to a few
+    /// hundredths of a pixel.
+    #[test]
+    fn the_phase_refinement_finds_a_known_shift() {
+        let (width, height) = (480usize, 320);
+        let truth = Transform::translation(1.7, -0.9);
+        let moving = moved(width, height, &truth);
+        let phased = refine_by_phase(
+            &reference(width, height),
+            &moving,
+            width,
+            height,
+            Model::Similarity,
+            &Transform::IDENTITY,
+        )
+        .expect("refined");
+        let off = phased.transform.corner_distance(&truth, width, height);
+        println!("{phased:?}: {off:.4} px off");
+        assert!(off < 0.05, "{off} px off");
+        assert!(phased.agreement.miss < 0.05, "{}", phased.agreement.miss);
+    }
+
+    /// A frame with nothing in it: no patch has a phase to read.
+    #[test]
+    fn a_featureless_frame_is_not_refined() {
+        let (width, height) = (480usize, 320);
+        let flat = vec![0.4f32; width * height];
+        let got = refine_by_phase(
+            &flat,
+            &flat,
+            width,
+            height,
+            Model::Similarity,
+            &Transform::IDENTITY,
+        );
+        assert_eq!(got, Err(Unrefined::Patches));
+    }
+
+    /// Started further off than a patch can read, a fifth of its side
+    /// and more, the refinement does not hand back a wrong answer: it
+    /// finds the truth or it says it did not settle or did not agree.
+    #[test]
+    fn a_start_past_the_patches_reach_is_not_refined_wrongly() {
+        let (width, height) = (480usize, 320);
+        let truth = Transform::IDENTITY;
+        let sharp = reference(width, height);
+        for off in [8.0, 14.0, 20.0, 40.0] {
+            let got = refine_by_phase(
+                &sharp,
+                &sharp,
+                width,
+                height,
+                Model::Similarity,
+                &Transform::translation(off, 0.0),
+            );
+            println!("started {off} px off: {got:?}");
+            if let Ok(phased) = got {
+                let left = phased.transform.corner_distance(&truth, width, height);
+                assert!(left < 0.05, "started {off} px off, ended {left:.3} px off");
+            }
+        }
+    }
+
+    /// A repeating pattern: a grating of 24-pixel period over the
+    /// texture's faint copy, moved by a fraction of the period. Started
+    /// within a patch's reach, the refinement finds it. A start a whole
+    /// period off is the same picture to every patch, and only the
+    /// gradient fit's reach, which the refinement starts from, can tell
+    /// it apart; the refinement keeps whichever period it was handed.
+    #[test]
+    fn a_repeating_pattern_is_refined_within_its_reach() {
+        let (width, height) = (480usize, 320);
+        let pattern = |x: f64, y: f64| {
+            let period = 24.0;
+            let w = 2.0 * std::f64::consts::PI / period;
+            (0.5 + 0.3 * (w * x).sin() * (w * y).sin()) as f32 + 0.1 * texture(x, y)
+        };
+        let truth = Transform::translation(3.1, 1.2);
+        let back = truth.inverse().expect("invertible");
+        let a = plane_of(width, height, pattern);
+        let b = plane_of(width, height, |x, y| {
+            let (u, v) = back.apply(x, y);
+            pattern(u, v)
+        });
+        let phased = refine_by_phase(
+            &a,
+            &b,
+            width,
+            height,
+            Model::Similarity,
+            &Transform::translation(1.0, 0.0),
+        )
+        .expect("refined");
+        let off = phased.transform.corner_distance(&truth, width, height);
+        assert!(off < 0.1, "{off} px off");
+    }
+
+    /// One strong patch, on a moving leaf or a sunlit edge, holding most
+    /// of the weight and moving its own way, against two hundred weaker
+    /// ones that agree with each other: the fit leans to the strong patch,
+    /// the weighted median miss is about its own, 0.32, and alone would
+    /// let the refinement through. The patch count (1.2 patches' worth)
+    /// and the plain median (3.2) see it.
+    #[test]
+    fn one_strong_patch_cannot_pass_the_guard_alone() {
+        let (w, h) = (960usize, 640usize);
+        let mut field: Vec<Shift> = Vec::new();
+        for j in 0..10 {
+            for i in 0..20 {
+                let (x, y) = (24.0 + 48.0 * i as f64, 32.0 + 64.0 * j as f64);
+                // A few hundredths of a pixel of reading noise.
+                let wobble = 0.03 * ((i * 7 + j * 13) % 5) as f64 - 0.06;
+                field.push((x, y, 0.3 + wobble, -0.2 - wobble, 1.0));
+            }
+        }
+        field.push((480.0, 320.0, 3.0, 2.0, 2000.0));
+        let (_, agreement) =
+            transform_of_shifts(&field, Model::Similarity, w, h).expect("a transform");
+        // The weighted median alone would keep it.
+        assert!(agreement.miss < PHASE_MISS_MOST, "{agreement:?}");
+        assert!(
+            refused(&agreement, PHASE_MISS_MOST).is_some(),
+            "{agreement:?} kept"
+        );
+        // And the same field without the strong patch is kept.
+        field.pop();
+        let (_, agreement) =
+            transform_of_shifts(&field, Model::Similarity, w, h).expect("a transform");
+        assert_eq!(refused(&agreement, PHASE_MISS_MOST), None, "{agreement:?}");
     }
 }

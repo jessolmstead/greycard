@@ -122,7 +122,7 @@ fn strong(u: f64, v: f64, sigma: f64, seed: u64) -> f64 {
 
 /// How a stack of the scene is shot.
 #[derive(Debug, Clone, Copy)]
-struct Shot {
+pub(super) struct Shot {
     pub width: usize,
     pub height: usize,
     pub frames: usize,
@@ -176,7 +176,7 @@ impl Shot {
 
     /// How frame `k` sees the scene: its pixel `(x, y)` is the scene at
     /// `apply(x, y)`.
-    fn view(&self, k: usize) -> Transform {
+    pub(super) fn view(&self, k: usize) -> Transform {
         let step = k as f64 - self.reference() as f64;
         Transform::similarity(
             1.0 + self.breathing * step,

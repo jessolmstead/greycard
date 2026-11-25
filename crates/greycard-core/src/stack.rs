@@ -184,6 +184,8 @@ use crate::sharpness;
 #[cfg(test)]
 mod bed;
 #[cfg(test)]
+mod breathing;
+#[cfg(test)]
 mod in_memory;
 mod prior;
 
@@ -208,7 +210,11 @@ pub struct Options {
     pub reference: Reference,
     /// How each frame is put onto the reference. A similarity by
     /// default: focus breathing is a change of scale, so a
-    /// translation is not enough.
+    /// translation is not enough. Each link refined by the phase of
+    /// small patches ([`register::Refine::Phase`]), which a difference
+    /// in defocus does not move: the gradient fit alone reads part of
+    /// one as motion, the same way at every link, and down a chain it
+    /// adds up.
     pub register: register::Options,
     /// Radius, in pixels, of the window the Laplacian energy is
     /// averaged over to make the sharpness map. Small enough to follow
@@ -281,6 +287,7 @@ impl Default for Options {
             reference: Reference::Middle,
             register: register::Options {
                 model: register::Model::Similarity,
+                refine: register::Refine::Phase,
                 ..Default::default()
             },
             sharpness_radius: 4,
@@ -1803,7 +1810,14 @@ mod tests {
         // in the top of the pyramid, and at the top of the pyramid the
         // two frames are equally sharp and are averaged, which is the
         // right answer for every part of a focus stack that is not
-        // about detail.
+        // about detail. Placed exactly where they are, the right half
+        // comes to 0.36 of the offset. As the chain places them it is
+        // 0.57: the gradient fit's placing, turned a third of a degree
+        // by the two halves' difference in blur, since the two frames
+        // are a whole step of defocus apart and the phase's refinement
+        // is turned away on them. The bound below is the chain's as it
+        // is: a placing that took the turn out would come to 0.36 and
+        // fail it, and the bound should then come down to 0.25.
         assert!(
             low < 0.15 * OFFSET,
             "the left frame did not win its half: {low}"

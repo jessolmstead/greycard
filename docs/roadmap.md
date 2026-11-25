@@ -834,9 +834,12 @@ brackets and the panorama to shoot for testing are in
       bed is the only evidence (§740)
 - [ ] A noisy focus stack's faint texture: little is gained at four
       times the noise, and nothing in deep shadows (§740)
-- [ ] Focus breathing in a focus stack: each frame scaled to the
-      reference before the merge, the scale fitted with the alignment
-      (issue 134, 2026-11-13)
+- [ ] A focus stack's placing tried on real frames at one exposure:
+      a tripod, fifteen frames or more, a flat textured target at an
+      angle, shot both ways (§746; issue 134)
+- [ ] A focus stack of two to five frames, or of coarse steps, placed
+      blind to blur: the guard turns most of their links away, and a
+      stack that is mostly blur stays 10 px out (§746)
 - [ ] A focus stack corrected by hand: a region taken from a chosen
       frame, as Canon DPP and Shine Stacker offer (issue 134)
 - [ ] Phase 1's leftovers (§525): the CA fit taken from the frame with
