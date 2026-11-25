@@ -401,9 +401,91 @@ impl Floors {
     }
 }
 
+/// The schema that first wrote floors. A build before it (0.12, at 9)
+/// knows none, and tells a newer file only by a state past its schema.
+const FLOORS_SINCE: u32 = 10;
+
+/// The keys a build at schema 9 reads, and so writes back: at the top
+/// of the file, on a line (the file's own, at its top, or a version's),
+/// and on a version. Fixed, as that build is.
+const KEYS_AT_NINE: &[&str] = &[
+    "meta",
+    "meta_at",
+    "turn",
+    "xmp",
+    "xmp_shared",
+    "lightroom",
+    "saved",
+    "revisions",
+    "absorbed",
+    "versions",
+];
+const LINE_KEYS_AT_NINE: &[&str] = &[
+    "current",
+    "step",
+    "exported",
+    "last_export",
+    "id",
+    "history",
+    "snapshots",
+];
+const VERSION_KEYS_AT_NINE: &[&str] = &["id", "name", "made", "line"];
+
+/// Whether a build at schema 9 would lose any of the file `value` on a
+/// write: a key it does not know, or a write floor past the first,
+/// which says something it would read wrongly. Two it drops cost
+/// nothing: the floors (a file with none is judged by its states), and
+/// the copies set aside ([`Sidecar::set_aside`] says why).
+fn lost_at_nine(value: &serde_json::Value) -> bool {
+    let unknown = |v: &serde_json::Value, known: &[&[&str]], skip: &[&str]| {
+        v.as_object().is_some_and(|o| {
+            o.keys().any(|k| {
+                !skip.contains(&k.as_str()) && !known.iter().any(|ks| ks.contains(&k.as_str()))
+            })
+        })
+    };
+    let versions = value.get("versions").and_then(|v| v.as_array());
+    Floors::OURS.write > FLOORS_SINCE
+        || unknown(
+            value,
+            &[KEYS_AT_NINE, LINE_KEYS_AT_NINE],
+            &["floors", "set_aside"],
+        )
+        || versions.is_some_and(|vs| {
+            vs.iter().any(|v| {
+                unknown(v, &[VERSION_KEYS_AT_NINE], &[])
+                    || v.get("line")
+                        .is_some_and(|l| unknown(l, &[LINE_KEYS_AT_NINE], &[]))
+            })
+        })
+}
+
+/// What stops a build before floors from writing a file: one state at
+/// the first schema with floors, as the file's history. That build
+/// refuses a file with any state past its schema; this one, and every
+/// build with floors, reads no history on a line with no current state.
+/// Always at [`FLOORS_SINCE`], never this build's schema: a later build
+/// whose floors let us read and write its file must not stop us with a
+/// state past ours.
+#[derive(Serialize)]
+struct Stop {
+    version: u32,
+}
+
+impl Stop {
+    const AT: Stop = Stop {
+        version: FLOORS_SINCE,
+    };
+}
+
 /// The file's keys, in the order they have always been written: the
 /// fields' own, and the shape where the file needs it
 /// ([`Sidecar::written_shape`]), which is no field's alone.
+///
+/// A file with no state would be read by a build before floors, and
+/// written back at its schema. Where that would lose something, the
+/// file carries a [`Stop`] so that build refuses it, as it refuses a
+/// file with states.
 impl Serialize for Sidecar {
     fn serialize<S: serde::Serializer>(
         &self,
@@ -414,6 +496,9 @@ impl Serialize for Sidecar {
             floors: Floors,
             #[serde(flatten)]
             line: &'a Line,
+            // A line with no state writes no history of its own.
+            #[serde(rename = "history", skip_serializing_if = "Option::is_none")]
+            stop: Option<[Stop; 1]>,
             #[serde(skip_serializing_if = "skip::meta")]
             meta: &'a Meta,
             #[serde(skip_serializing_if = "skip::times")]
@@ -444,9 +529,10 @@ impl Serialize for Sidecar {
             #[serde(skip_serializing_if = "skip::zero")]
             original_at: u64,
         }
-        Out {
+        let mut out = Out {
             floors: Floors::OURS,
             line: &self.line,
+            stop: None,
             meta: &self.meta,
             meta_at: &self.meta_at,
             turn: &self.turn,
@@ -462,8 +548,19 @@ impl Serialize for Sidecar {
             versions: &self.versions,
             removed: &self.removed,
             original_at: self.original_at,
+        };
+        // A file with a state has every state at this build's schema,
+        // which a build before floors refuses already. A line with no
+        // state writes no history (`LineOut`), so the stop is the
+        // file's only `history` key.
+        if !self.lines().any(Line::recorded)
+            && let Ok(value) = serde_json::to_value(&out)
+            && lost_at_nine(&value)
+        {
+            debug_assert!(value.get("history").is_none(), "a second history");
+            out.stop = Some([Stop::AT]);
         }
-        .serialize(serializer)
+        out.serialize(serializer)
     }
 }
 
@@ -1760,6 +1857,8 @@ mod checked_tests;
 mod floors_tests;
 #[cfg(test)]
 mod golden_tests;
+#[cfg(test)]
+mod nine_tests;
 #[cfg(test)]
 mod parent_tests;
 #[cfg(test)]

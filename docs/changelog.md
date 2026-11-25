@@ -115,8 +115,9 @@ design note behind it.
 - Sidecars are schema 10: 0.12 and older can't read one that 0.13 has
   saved with an edit or exported, and write nothing over it
   ([§734](https://github.com/jessolmstead/greycard/blob/master/docs/notes/734-schema-10-as-built.md)).
-- One holding only a rating, flag, label, or turn they still read,
-  and save again in their own form.
+- One holding only a rating, flag, label, or turn they still read, and save again in their own form;
+  one holding more that they would lose, they refuse
+  ([§742](https://github.com/jessolmstead/greycard/blob/master/docs/notes/742-a-stateless-sidecar-0-12-refuses.md)).
 - The library index is newer too: 0.12 can't use one that 0.13 has opened, and leaves it alone (issue 199).
 - A frame only rated, flagged, or turned no longer counts as edited,
   and its sidecar holds no edit

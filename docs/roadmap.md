@@ -23,12 +23,6 @@ the reasoning lives in `docs/notes.md`.
 - [ ] Slint asks the card for every feature it has, so wgpu warns of
       `MAPPABLE_PRIMARY_BUFFERS` at every start; ask only for what we
       use, upstream in Slint
-- [ ] 0.12 saves a 0.13 sidecar that holds no state (a rating, a
-      flag, or a turn only) again at schema 9: the floors go, and so
-      would `turn_owed`, `line_id`, `undone`, and the tombstones; under
-      another placement it removes 0.13's copy. Ratings and turns
-      survived every run (2026-11-22). Decide before the cut whether
-      such a file should be one 0.12 refuses
 - [ ] A sidecar of many tiny states costs memory and time past its
       size: 100,000 `{}` history entries (300 KB) take 644 MB and 17 s
       over three reads, since no read caps history. Cap at read, charge
