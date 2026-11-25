@@ -46,6 +46,8 @@ design note behind it.
   its camera JPEG (issue 197).
 - An HDR merge or a panorama is sharpened in its shadows as its frames are; such files look a little crisper, and edited thumbnails are made again once
   ([§741](https://github.com/jessolmstead/greycard/blob/master/docs/notes/741-the-sharpen-on-a-merge-at-its-reference-frames-levels.md)).
+- A Clarity, Dehaze, or Detail move on a big frame shows sooner: what the window shows is sharpened first, the rest after
+  ([§745](https://github.com/jessolmstead/greycard/blob/master/docs/notes/745-the-sharpen-of-what-is-seen-first.md)).
 - A focus stack develops each frame as the editor does, chromatic
   aberration corrected: finer texture, no color fringes, about 1.8
   times the time

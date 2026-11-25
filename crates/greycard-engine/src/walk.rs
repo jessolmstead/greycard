@@ -2056,8 +2056,24 @@ fn attempt(
                     step,
                     Step::Op(Stage::Ca(_) | Stage::Demosaic(..) | Stage::Lens(_))
                 );
-                match device_run(steps, i..end, ctx, &mut st, kept, &mut places, &mut walked) {
+                let run = device_run(
+                    steps,
+                    i..end,
+                    ctx,
+                    &mut st,
+                    kept,
+                    &mut places,
+                    &mut walked,
+                    hold,
+                );
+                match run {
                     Ok(()) => i = end,
+                    // Asked to give way inside the run (the sharpen,
+                    // between its submissions): the picture as it was,
+                    // and the points the run kept before it.
+                    Err(greycard_gpu::Error::GaveWay) => {
+                        return Err(Retry::Stop(Stopped::GaveWay(steps_name(steps, i))));
+                    }
                     // The CA, the demosaic, and the lens read a picture
                     // still in hand: their run again on the CPU is the
                     // stage itself.
@@ -2678,7 +2694,12 @@ fn lens_in_camera(
 /// lens one at a time on pictures in memory, the Detail section and the
 /// sharpen as one run with one upload at its head and the device's
 /// picture between, a run ending at the shader writing its texture and
-/// one ending at the CPU's finish read back in full floats.
+/// one ending at the CPU's finish read back in full floats. The
+/// viewport's sharpen asks `hold` between its submissions whether to
+/// give way inside it.
+// The steps and the run, the device, what the walk carries and keeps,
+// and the hold.
+#[allow(clippy::too_many_arguments)]
 fn device_run(
     steps: &Steps,
     std::ops::Range { start: i, end }: std::ops::Range<usize>,
@@ -2687,6 +2708,7 @@ fn device_run(
     kept: &mut Kept,
     places: &mut Vec<Place>,
     walked: &mut Walked,
+    hold: &dyn Hold,
 ) -> greycard_gpu::Result<()> {
     match &steps.steps[i] {
         Step::Op(Stage::Ca(options)) => {
@@ -2969,7 +2991,7 @@ fn device_run(
                 }
                 places.push(Place::Gpu);
             }
-            Step::Op(Stage::Sharpen(options, delta)) => {
+            Step::Op(stage @ Stage::Sharpen(options, delta)) => {
                 let out = match &texture {
                     Some(out) => out.clone(),
                     None => ctx.viewport_texture(image.width(), image.height()),
@@ -2980,16 +3002,17 @@ fn device_run(
                     None => None,
                 };
                 began = None;
-                if delta.made() {
-                    let (stats, d) = ctx.sharpen_with_delta(
-                        &image,
-                        guide.as_deref(),
-                        options,
-                        radius,
-                        clip,
-                        &out,
-                        delta.sharpens(),
-                    )?;
+                let (stats, d) = ctx.sharpen_or_give_way(
+                    &image,
+                    guide.as_deref(),
+                    options,
+                    radius,
+                    clip,
+                    &out,
+                    (delta.made(), delta.sharpens()),
+                    &|| hold.give_way_inside(stage),
+                )?;
+                if let Some(d) = d {
                     let (w, h) = (image.width() as usize, image.height() as usize);
                     st.taps.sharpen = Some(SharpenTap {
                         width: w,
@@ -2998,12 +3021,9 @@ fn device_run(
                         sharpened: delta.sharpens(),
                         delta: greycard_render::detail::sharpen_delta(&d),
                     });
-                    if delta.sharpens() {
-                        walked.sharpen = Some(stats);
-                    }
-                } else {
-                    walked.sharpen =
-                        Some(ctx.sharpen(&image, guide.as_deref(), options, radius, clip, &out)?);
+                }
+                if delta.sharpens() {
+                    walked.sharpen = Some(stats);
                 }
                 places.push(Place::Gpu);
                 written = Some(out);

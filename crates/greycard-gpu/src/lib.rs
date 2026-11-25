@@ -74,6 +74,11 @@ pub enum Error {
     /// lets the context go.
     #[error("the GPU device was lost: {0}")]
     Lost(String),
+    /// The caller asked the op to give way part way, for newer work:
+    /// nothing is wrong with the device, and what the op was writing
+    /// is not to be read.
+    #[error("given way part way")]
+    GaveWay,
 }
 
 thread_local! {

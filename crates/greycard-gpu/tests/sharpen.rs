@@ -497,6 +497,7 @@ fn a_synthetic_picture_matches_the_reference() {
         iterations: 20,
         contrast: Threshold::Fixed(0.02),
         stop_early: true,
+        part: None,
         level_scale: 1.0,
     };
     let (cpu, _) = check(&ctx, "fixed", &image, &options, None, 2.0, TOLERANCE);
@@ -565,6 +566,7 @@ fn the_delta_matches_the_reference_sharpened_or_not() {
         iterations: 20,
         contrast: Threshold::Fixed(0.02),
         stop_early: true,
+        part: None,
         level_scale: 1.0,
     };
     for apply in [true, false] {
@@ -614,6 +616,7 @@ fn the_full_float_picture_is_the_reference_s() {
         iterations: 20,
         contrast: Threshold::Auto,
         stop_early: true,
+        part: None,
         level_scale: 1.0,
     };
     let uploaded = ctx.upload(&image).expect("the upload");
@@ -771,6 +774,7 @@ fn a_noisy_black_matches_the_reference() {
                 radius: Radius::Fixed(1.2),
                 iterations: 40,
                 stop_early: false,
+                part: None,
                 level_scale: 1.0,
             },
         ),
@@ -828,6 +832,7 @@ fn a_black_at_rest_stops_where_the_reference_does() {
             iterations,
             contrast: Threshold::Fixed(0.0),
             stop_early: true,
+            part: None,
             level_scale: 1.0,
         };
         for clip in [0.98, 8.0] {
@@ -1227,6 +1232,7 @@ fn draw(r: &mut Rng) -> Drawn {
             iterations,
             contrast,
             stop_early,
+            part: None,
             level_scale: 1.0,
         },
         measured,
@@ -1327,6 +1333,143 @@ fn the_iterations_split_into_submissions_give_the_same_planes() {
             }
         }
     }
+    ctx.set_sharpen_atlas_budget(96 << 20);
+}
+
+/// A part of the picture on the device: the tiles it touches are the
+/// device's whole-picture sharpen of them to the bit and the
+/// reference's part to its tolerance, every other pixel the picture as
+/// it was, and the stats the whole picture's; over several batches of
+/// tiles, as a large frame takes them, at the editor's twenty
+/// iterations and at the fewer a view far out asks for.
+#[test]
+fn a_part_is_the_whole_pictures_sharpen_of_its_tiles() {
+    let Some(ctx) = context() else {
+        return;
+    };
+    let (w, h) = (320, 240);
+    let image = textured(w, h, 1.0);
+    let tile = reference::tile_for(h);
+    // One padded tile's bytes or less: a band of tiles a batch.
+    ctx.set_sharpen_atlas_budget(4);
+    let part = reference::Part {
+        x0: 50,
+        y0: 70,
+        x1: 170,
+        y1: 130,
+    };
+    let (cols, bands) = part.tiles(w, h, tile);
+    assert!(cols.len() > 1 && bands.len() > 1, "{cols:?} {bands:?}");
+    let k = reference::BLACK_PEDESTAL;
+    for iterations in [20, 6] {
+        let whole = SharpenOptions {
+            iterations,
+            ..Default::default()
+        };
+        let options = SharpenOptions {
+            part: Some(part),
+            ..whole
+        };
+        let mut full = image.clone();
+        let (full_stats, full_mask) = ctx
+            .sharpen_image(&mut full, &whole, Some(1.0), 2.0)
+            .expect("sharpens");
+        let mut partial = image.clone();
+        let (stats, mask) = ctx
+            .sharpen_image(&mut partial, &options, Some(1.0), 2.0)
+            .expect("sharpens a part");
+        assert_eq!(format!("{stats:?}"), format!("{full_stats:?}"));
+        assert_eq!(mask, full_mask);
+        let mut moved = 0;
+        for y in 0..h {
+            for x in 0..w {
+                let i = (y * w + x) * 3;
+                let touched = cols.contains(&(x / tile)) && bands.contains(&(y / tile));
+                for c in 0..3 {
+                    let (got, was) = (partial.data[i + c], image.data[i + c]);
+                    if touched {
+                        assert_eq!(got.to_bits(), full.data[i + c].to_bits(), "{x},{y}");
+                        moved += usize::from(got != was);
+                    } else {
+                        let left = (was + k) - k;
+                        assert!((got - left).abs() <= 1e-6 * was.abs().max(1.0), "{x},{y}");
+                    }
+                }
+            }
+        }
+        assert!(moved > 0, "the part was sharpened");
+        check(
+            &ctx,
+            &format!("a part at {iterations} iterations"),
+            &image,
+            &options,
+            Some(1.0),
+            2.0,
+            TOLERANCE,
+        );
+    }
+    ctx.set_sharpen_atlas_budget(96 << 20);
+}
+
+/// The viewport's sharpen gives way after a submission of its
+/// iterations when asked, and says so; the next run, never asked, is
+/// the picture of a run that was never stopped, to the bit.
+#[test]
+fn the_viewports_sharpen_gives_way_when_asked() {
+    let Some(ctx) = context() else {
+        return;
+    };
+    let (w, h) = (320, 240);
+    let image = textured(w, h, 1.2);
+    ctx.set_sharpen_atlas_budget(4);
+    ctx.set_sharpen_batching(Batching::Every(1));
+    let uploaded = ctx.upload(&image).expect("uploads");
+    let options = SharpenOptions::default();
+    let out = ctx.viewport_texture(w as u32, h as u32);
+    let asked = std::cell::Cell::new(0);
+    let err = ctx
+        .sharpen_or_give_way(
+            &uploaded,
+            None,
+            &options,
+            Some(1.0),
+            2.0,
+            &out,
+            (false, true),
+            &|| {
+                asked.set(asked.get() + 1);
+                asked.get() == 3
+            },
+        )
+        .expect_err("gives way");
+    assert!(matches!(err, greycard_gpu::Error::GaveWay), "{err}");
+    assert_eq!(
+        asked.get(),
+        3,
+        "asked after each submission until it stopped"
+    );
+    assert!(!ctx.is_lost());
+    let (stats, delta) = ctx
+        .sharpen_or_give_way(
+            &uploaded,
+            None,
+            &options,
+            Some(1.0),
+            2.0,
+            &out,
+            (true, true),
+            &|| false,
+        )
+        .expect("sharpens");
+    let fresh = ctx.viewport_texture(w as u32, h as u32);
+    let (plain, plain_delta) = ctx
+        .sharpen_with_delta(&uploaded, None, &options, Some(1.0), 2.0, &fresh, true)
+        .expect("sharpens");
+    assert_eq!(format!("{stats:?}"), format!("{plain:?}"));
+    assert_eq!(delta, Some(plain_delta));
+    let rows = |t| ctx.read_viewport_rows(t, 0, h as u32).expect("reads");
+    assert_eq!(rows(&out), rows(&fresh));
+    ctx.set_sharpen_batching(Batching::Paced);
     ctx.set_sharpen_atlas_budget(96 << 20);
 }
 

@@ -1499,6 +1499,7 @@ fn land(app: &App, state: &Rc<Shared>, sources: Vec<greycard_edit::retouch::Patc
             sources,
             learned: crate::worker::LearnedReport::Off,
             fills: crate::worker::FillReport::default(),
+            settles: false,
         },
     );
 }

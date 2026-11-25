@@ -298,6 +298,7 @@ pub(crate) fn land_develop(
             sources: Vec::new(),
             learned,
             fills,
+            settles: false,
         },
     );
     app.get_status().to_string()

@@ -114,6 +114,9 @@ pub struct SharpenOptions {
     /// Stop a patch's iterations when any pixel's luminance in it drops
     /// under half its blended start, before a halo goes dark.
     pub stop_early: bool,
+    /// Deconvolve only the tiles this part of the picture touches,
+    /// every other left as it was; none for the whole picture.
+    pub part: Option<Part>,
     /// What the picture's levels are multiplied by to read as the
     /// scene was exposed: what the threshold's and the blend's L* and
     /// the pedestal are taken at. One for every file but a merge of
@@ -149,9 +152,102 @@ impl Default for SharpenOptions {
             iterations: DEFAULT_ITERATIONS,
             contrast: Threshold::Auto,
             stop_early: true,
+            part: None,
             level_scale: 1.0,
         }
     }
+}
+
+/// A rectangle of the picture, pixels, its far ends exclusive: what a
+/// sharpen deconvolves when a view shows only so much of the picture.
+///
+/// The deconvolution works in tiles that read only their own padded
+/// square of the luminance and the blend mask, so a tile the part
+/// touches is the whole picture's sharpen of that tile, to the bit.
+/// The luminance, the clip mask, the threshold, and the blend mask are
+/// still the whole picture's, and so are the stats. Every tile the part
+/// misses is left unsharpened. Shared.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Part {
+    pub x0: usize,
+    pub y0: usize,
+    pub x1: usize,
+    pub y1: usize,
+}
+
+impl Part {
+    /// The columns and the rows (bands) of `tile`-pixel tiles of a
+    /// `w` by `h` picture that the part touches: none for a part off
+    /// the picture or of no area.
+    pub fn tiles(
+        &self,
+        w: usize,
+        h: usize,
+        tile: usize,
+    ) -> (std::ops::Range<usize>, std::ops::Range<usize>) {
+        let (x1, y1) = (self.x1.min(w), self.y1.min(h));
+        if self.x0 >= x1 || self.y0 >= y1 {
+            return (0..0, 0..0);
+        }
+        (
+            self.x0 / tile..x1.div_ceil(tile),
+            self.y0 / tile..y1.div_ceil(tile),
+        )
+    }
+
+    /// Whether the part touches every tile of a `w` by `h` picture, so
+    /// that it is the whole picture's sharpen.
+    pub fn covers(&self, w: usize, h: usize, tile: usize) -> bool {
+        let (cols, bands) = self.tiles(w, h, tile);
+        cols == (0..w.div_ceil(tile)) && bands == (0..h.div_ceil(tile))
+    }
+}
+
+/// How small, at the finest detail a view shows, the part of the blur
+/// a shortened deconvolution has not yet taken back may be: the
+/// residual of [`iterations_seen_at`]'s model.
+const SEEN_RESIDUAL: f64 = 0.004;
+
+/// The fewest iterations [`iterations_seen_at`] gives: under it the
+/// early stop and the halos it guards against, which the linear model
+/// does not see, show at a fit view (measured by greycard-gpu's
+/// `held_apart` example: at six, fine synthetic texture at a 0.3 view
+/// had 0.12 % of its samples a level or more apart; at eight, about
+/// 0.001 %).
+const SEEN_FLOOR: usize = 8;
+
+/// How many of `iterations` a view at `zoom` (view pixels a picture
+/// pixel) needs to show what all of them would, for a point spread of
+/// `sigma`: all of them at 1:1 and above; below it, the finest detail
+/// the view shows is `zoom / 2` cycles a picture pixel, where the
+/// Gaussian keeps `H = exp(-2 pi^2 sigma^2 f^2)` of it, and
+/// Richardson–Lucy takes back the rest at about `1 - H^2` an iteration
+/// left; enough for [`SEEN_RESIDUAL`] of it to be left, and never
+/// fewer than [`SEEN_FLOOR`].
+///
+/// Measured on four frames from 24 to 102 MP and on fine synthetic
+/// texture, the viewport's minify at 0.15 to 0.7 against twenty
+/// iterations in 8-bit sRGB levels: at the counts this gives, about
+/// 0.01 % of the samples or fewer a level or more apart.
+pub fn iterations_seen_at(zoom: f32, sigma: f32, iterations: usize) -> usize {
+    if !(zoom > 0.0 && zoom < 1.0) {
+        return iterations;
+    }
+    let f = f64::from(zoom) / 2.0;
+    let s = f64::from(sigma.clamp(MIN_RADIUS, MAX_RADIUS));
+    let pi = std::f64::consts::PI;
+    let kept = (-2.0 * pi * pi * s * s * f * f).exp();
+    let left = 1.0 - kept * kept;
+    if left <= 0.0 {
+        return SEEN_FLOOR.min(iterations);
+    }
+    let needed = (SEEN_RESIDUAL.ln() / left.ln()).ceil();
+    let needed = if needed.is_finite() && needed < iterations as f64 {
+        needed as usize
+    } else {
+        iterations
+    };
+    needed.max(SEEN_FLOOR).min(iterations)
 }
 
 /// What a sharpen did.
@@ -780,8 +876,14 @@ fn deconvolve_in_tiles(
     let full = tile + 2 * border;
     let pedestal = options.pedestal();
     let mut out = luminance.to_vec();
+    // The tiles worked: every one, or those the part touches.
+    let (cols, bands) = match options.part {
+        Some(part) => part.tiles(w, h, tile),
+        None => (0..w.div_ceil(tile), 0..h.div_ceil(tile)),
+    };
     out.par_chunks_mut(w * tile)
         .enumerate()
+        .filter(|(band, _)| bands.contains(band))
         .for_each(|(band, rows)| {
             let y0 = band * tile;
             let rows_here = rows.len() / w;
@@ -792,7 +894,10 @@ fn deconvolve_in_tiles(
             let mut floor = vec![0f32; tile * tile];
             let mut settled = Vec::new();
             let down = rows_here.div_ceil(BLOCK);
-            for x0 in (0..w).step_by(tile) {
+            for x0 in (0..w)
+                .step_by(tile)
+                .filter(|x0| cols.contains(&(x0 / tile)))
+            {
                 let cols_here = tile.min(w - x0);
                 let across = cols_here.div_ceil(BLOCK);
                 // The rows and columns a block covers, and the floor
@@ -1009,6 +1114,7 @@ mod tests {
             iterations: 20,
             contrast: Threshold::Fixed(0.02),
             stop_early: true,
+            part: None,
             level_scale: 1.0,
         };
         let (stats, mask) = sharpen_with_mask(&mut image, None, &options, None, 10.0);
@@ -1038,6 +1144,7 @@ mod tests {
             iterations: 20,
             contrast: Threshold::Fixed(0.02),
             stop_early: true,
+            part: None,
             level_scale: 1.0,
         };
         let stats = sharpen(&mut image, &options, None, 10.0);
@@ -1345,6 +1452,7 @@ mod tests {
             iterations: 20,
             contrast: Threshold::Fixed(0.02),
             stop_early: true,
+            part: None,
             level_scale: 1.0,
         };
         let whole = deconvolve_in_tiles(&luminance, &blend, w, h, 1.0, &options, 256);
@@ -1550,6 +1658,33 @@ mod tests {
         assert_eq!(radius(&vec![0.2; w * h]), None);
     }
 
+    /// A picture with detail and grain in every tile, flat enough in
+    /// a corner for the automatic threshold to read.
+    fn busy(w: usize, h: usize) -> WorkingImage {
+        let mut image = WorkingImage::new(w, h);
+        let mut seed = 0x9E37_79B9_u32;
+        for y in 0..h {
+            for x in 0..w {
+                seed ^= seed << 13;
+                seed ^= seed >> 17;
+                seed ^= seed << 5;
+                let grain = (seed as f32 / u32::MAX as f32 - 0.5) * 0.01;
+                let (fx, fy) = (x as f32, y as f32);
+                let detail = if x < w / 5 && y < h / 5 {
+                    0.0
+                } else {
+                    0.15 * (fx * 0.9).sin() * (fy * 0.7).cos()
+                        + if (x / 9 + y / 7) % 2 == 0 { 0.1 } else { -0.1 }
+                };
+                let v = 0.3 + detail + grain;
+                let i = (y * w + x) * 3;
+                image.data[i] = v * 1.1;
+                image.data[i + 1] = v;
+                image.data[i + 2] = v * 0.8;
+            }
+        }
+        image
+    }
     /// A scene from deep shadow to highlight: steps of a stop and a
     /// half, 80 pixels wide, with a grain on them, crossed by bands of blurred bars, so the
     /// automatic threshold has flat patches to read and the blend has
@@ -1591,6 +1726,114 @@ mod tests {
         image
     }
 
+    /// A part's tiles are the whole picture's sharpen of them, to the
+    /// bit, and every other pixel is left as it was; the stats are the
+    /// whole picture's; and a part over every tile is the whole
+    /// picture's sharpen everywhere.
+    #[test]
+    fn a_part_sharpens_its_tiles_as_the_whole_picture_does() {
+        let (w, h) = (300, 200);
+        let image = busy(w, h);
+        let tile = tile_for(h);
+        assert_eq!(tile, 32);
+        let whole = SharpenOptions::default();
+        let mut full = image.clone();
+        let (full_stats, full_mask) = sharpen_with_mask(&mut full, None, &whole, Some(0.8), 2.0);
+        let part = Part {
+            x0: 70,
+            y0: 40,
+            x1: 150,
+            y1: 90,
+        };
+        let (cols, bands) = part.tiles(w, h, tile);
+        assert_eq!((cols.clone(), bands.clone()), (2..5, 1..3));
+        let mut partial = image.clone();
+        let options = SharpenOptions {
+            part: Some(part),
+            ..whole
+        };
+        let (stats, mask) = sharpen_with_mask(&mut partial, None, &options, Some(0.8), 2.0);
+        assert_eq!(stats, full_stats);
+        assert_eq!(mask, full_mask);
+        let k = BLACK_PEDESTAL;
+        let (mut inside, mut moved) = (0, 0);
+        for y in 0..h {
+            for x in 0..w {
+                let i = (y * w + x) * 3;
+                let touched = cols.contains(&(x / tile)) && bands.contains(&(y / tile));
+                for c in 0..3 {
+                    let (got, was) = (partial.data[i + c], image.data[i + c]);
+                    if touched {
+                        assert_eq!(got.to_bits(), full.data[i + c].to_bits(), "{x},{y}");
+                        inside += 1;
+                    } else {
+                        assert_eq!(got, (was + k) - k, "{x},{y}");
+                    }
+                    moved += usize::from(touched && full.data[i + c] != was);
+                }
+            }
+        }
+        assert_eq!(inside, 3 * 32 * 2 * 32 * 3);
+        assert!(moved > inside / 2, "the part's tiles were sharpened");
+        // Over every tile: the whole picture's sharpen.
+        let all = SharpenOptions {
+            part: Some(Part {
+                x0: 0,
+                y0: 0,
+                x1: w,
+                y1: h,
+            }),
+            ..whole
+        };
+        assert!(all.part.unwrap().covers(w, h, tile));
+        assert!(!part.covers(w, h, tile));
+        let mut every = image.clone();
+        sharpen_with_mask(&mut every, None, &all, Some(0.8), 2.0);
+        assert_eq!(every.data, full.data);
+        // Off the picture, or of no area: nothing deconvolved.
+        for off in [
+            Part {
+                x0: w,
+                y0: 0,
+                x1: w + 10,
+                y1: h,
+            },
+            Part {
+                x0: 10,
+                y0: 10,
+                x1: 10,
+                y1: 50,
+            },
+        ] {
+            assert_eq!(off.tiles(w, h, tile), (0..0, 0..0));
+        }
+    }
+
+    /// The iterations a view needs: all of them at 1:1 and above and
+    /// for no zoom at all; below it, fewer the further out, never
+    /// under the floor, and more for a wider point spread.
+    #[test]
+    fn a_view_further_out_needs_fewer_iterations() {
+        let n = DEFAULT_ITERATIONS;
+        for zoom in [1.0, 2.0, 0.0, -1.0, f32::NAN, f32::INFINITY] {
+            assert_eq!(iterations_seen_at(zoom, 0.74, n), n, "{zoom}");
+        }
+        let at = |zoom: f32| iterations_seen_at(zoom, 0.74, n);
+        assert_eq!(
+            [0.1, 0.2, 0.3, 0.4, 0.5, 0.7].map(at),
+            [8, 8, 8, 11, 19, 20]
+        );
+        let mut last = 0;
+        for i in 1..100 {
+            let k = at(i as f32 / 100.0);
+            assert!(k >= last && (SEEN_FLOOR..=n).contains(&k), "{i}: {k}");
+            last = k;
+        }
+        assert!(iterations_seen_at(0.2, 1.5, n) > at(0.2));
+        // Never more than the edit asks for.
+        assert_eq!(iterations_seen_at(0.4, 0.74, 8), 8);
+        assert_eq!(iterations_seen_at(0.2, 0.74, 3), 3);
+    }
     /// `scene` stored `stops` under itself, as a merge with that much
     /// headroom stores its samples.
     fn stored_under(scene: &WorkingImage, stops: f32) -> WorkingImage {

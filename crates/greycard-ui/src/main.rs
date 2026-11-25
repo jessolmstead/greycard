@@ -995,6 +995,8 @@ impl State {
                 zoom: 0.0,
                 mat: false,
                 center: (0.0, 0.0),
+                seen_told: None,
+                settle_for: None,
                 laid: None,
                 zoom_back: None,
                 stood_view: None,

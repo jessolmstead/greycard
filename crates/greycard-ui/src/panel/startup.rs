@@ -1356,6 +1356,13 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
                         app.get_view_height().max(1) as u32,
                     );
                     let zoom = effective_zoom(st, vw, vh);
+                    // What the view shows, for the worker's next
+                    // develop to sharpen first.
+                    WORKER.with(|w| {
+                        if let Some(w) = &*w.borrow() {
+                            crate::panel::viewport::tell_seen(st, &app, zoom, w);
+                        }
+                    });
                     if st.develop.placing.is_none()
                         && let Some(was) = st.develop.show_mask_kept.take()
                     {
@@ -1750,8 +1757,11 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
                     // way the culling path's `leave_next` guards it.
                     // A capture asked of a placeholder is never of a
                     // develop: the culling path takes that one.
+                    // Nor of a first round whose settle is to come: the
+                    // picture at rest is the settle's.
                     let ready = renderer.has_image()
                         && quiet
+                        && st.develop.settle_for != Some(st.develop.generation)
                         && !st.launch.awaiting_turn
                         && !st.launch.awaiting_index
                         && !st.views.library.awaiting

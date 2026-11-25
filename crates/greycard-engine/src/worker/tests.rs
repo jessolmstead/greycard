@@ -2800,6 +2800,7 @@ fn a_develop_without_its_model_says_what_was_left_out() {
         sources: Vec::new(),
         learned,
         fills,
+        settles: false,
     };
     assert!(left_out_of(&developed(LearnedReport::Off, FillReport::default()), None).is_empty());
     let model = greycard_ai::denoiser(greycard_edit::Learned::Fast.tier().unwrap()).unwrap();

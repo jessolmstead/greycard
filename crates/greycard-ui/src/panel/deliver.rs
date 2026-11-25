@@ -772,12 +772,14 @@ pub(crate) fn deliver(app: &App, outcome: Outcome) {
             sources,
             learned,
             fills,
+            settles,
         } => {
             release_thumbnails();
             let mut st = state.borrow_mut();
             if generation != st.develop.generation {
                 return;
             }
+            st.develop.settle_for = settles.then_some(generation);
             if st.culling.cull.is_some() {
                 // Culling takes the develop and not its planes: a mask's
                 // Detail asks again when the panel is back.
@@ -787,8 +789,9 @@ pub(crate) fn deliver(app: &App, outcome: Outcome) {
             // The Original's own, or the edit's, which the Original
             // gives way to.
             let original = crate::panel::original::landing(&mut st, app, generation);
-            // The saved edit's pictures, from this develop.
-            if !original {
+            // The saved edit's pictures, from this develop: from the
+            // settle, when one follows.
+            if !original && !settles {
                 crate::edited::landed(&st, turn);
             }
             // Sources the engine chose go into the edit, and beside the
@@ -952,11 +955,19 @@ pub(crate) fn deliver(app: &App, outcome: Outcome) {
             // one will never equal either, and `take_current` clears
             // it outright once a newer develop is asked for, before it
             // can sit and wait for one.
-            let said = st
-                .develop
-                .status_after_develop
-                .take_if(|(g, _)| *g == generation)
-                .map(|(_, s)| s);
+            // A first round leaves them for the settle's landing.
+            let said = if settles {
+                st.develop
+                    .status_after_develop
+                    .as_ref()
+                    .filter(|(g, _)| *g == generation)
+                    .map(|(_, s)| s.clone())
+            } else {
+                st.develop
+                    .status_after_develop
+                    .take_if(|(g, _)| *g == generation)
+                    .map(|(_, s)| s)
+            };
             // A dropper in hand keeps its hint: the defringe's arms
             // itself by asking for a develop, and the instructions
             // must not be what that develop takes away.
@@ -1129,9 +1140,10 @@ pub(crate) fn deliver(app: &App, outcome: Outcome) {
             if generation == st.develop.generation {
                 app.set_status(tr!("failed: {message}", message = message).into());
                 app.set_busy(false);
-                // No fill of it is coming.
+                // No fill of it is coming, nor a settle.
                 st.develop.fills_pending.clear();
                 st.develop.highlight_pending = false;
+                st.develop.settle_for = None;
                 app.set_fill_fraction(-1.0);
                 // An open that failed before it said whether the frame
                 // takes the highlight fill leaves the switch free.

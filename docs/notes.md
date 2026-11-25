@@ -755,3 +755,4 @@ in its section; the roadmap and the changelog only point at it.
 - [§741. The sharpen on a merge, at its reference frame's levels](notes/741-the-sharpen-on-a-merge-at-its-reference-frames-levels.md) (2026-11-24)
 - [§742. A sidecar with no state that 0.12 refuses](notes/742-a-stateless-sidecar-0-12-refuses.md) (2026-11-24)
 - [§743. The focus stack's highlights, under headroom](notes/743-the-focus-stacks-highlights-under-headroom.md) (2026-11-24)
+- [§745. The sharpen of what is seen first](notes/745-the-sharpen-of-what-is-seen-first.md) (2026-11-24)

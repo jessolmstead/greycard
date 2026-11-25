@@ -548,6 +548,62 @@ fn a_ctrl_click_with_a_wheel_in_hand_takes_the_hue_there() {
     assert_eq!(app.get_wheel_hand(), -1, "the exposure moved");
 }
 
+/// What the worker is told the view shows: the whole frame at the
+/// fit, at its zoom; the view's own rectangle about the center at 1:1
+/// and at 200%, at either scale factor, held to the frame; and nothing
+/// for a develop held from another frame. Told again only when it has
+/// changed.
+#[test]
+fn the_worker_is_told_what_the_view_shows() {
+    for scale in [1.0f32, 2.0] {
+        let (app, state, worker) = hover_frame(scale);
+        let (vw, vh) = (app.get_view_width() as f32, app.get_view_height() as f32);
+        let tell = || {
+            let mut st = state.borrow_mut();
+            let zoom = effective_zoom(&st, vw as u32, vh as u32);
+            tell_seen(&mut st, &app, zoom, &worker);
+            worker.seen()
+        };
+        let near = |got: [f32; 4], want: [f32; 4], what: &str| {
+            assert!(
+                got.iter().zip(want).all(|(g, w)| (g - w).abs() < 1e-4),
+                "{what} at {scale}: {got:?}, not {want:?}"
+            );
+        };
+        let fit = tell().expect("told at the fit");
+        near(fit.rect, [0.0, 0.0, 1.0, 1.0], "the fit");
+        assert!((fit.zoom - (vw / 6000.0).min(vh / 4000.0)).abs() < 1e-4);
+        for zoom in [1.0f32, 2.0] {
+            {
+                let mut st = state.borrow_mut();
+                st.develop.zoom = zoom;
+                st.develop.center = (1000.0, 1500.0);
+            }
+            let close = tell().expect("told close up");
+            assert_eq!(close.zoom, zoom);
+            let (hw, hh) = (vw / zoom / 2.0, vh / zoom / 2.0);
+            near(
+                close.rect,
+                [
+                    ((1000.0 - hw) / 6000.0).max(0.0),
+                    ((1500.0 - hh) / 4000.0).max(0.0),
+                    (1000.0 + hw) / 6000.0,
+                    (1500.0 + hh) / 4000.0,
+                ],
+                "close up",
+            );
+        }
+        // Told once: a second tell with nothing changed says nothing,
+        // so the worker keeps what it was told even when it is reset.
+        worker.set_seen(None);
+        assert_eq!(tell(), None, "not told again");
+        state.borrow_mut().develop.center = (1200.0, 1500.0);
+        assert!(tell().is_some(), "a pan is told");
+        state.borrow_mut().develop.held = Some(Edit::default());
+        assert_eq!(tell(), None, "a held develop shows another frame");
+    }
+}
+
 /// The view's middle, logical pixels.
 fn view_middle(app: &App) -> (f32, f32) {
     let scale = app.window().scale_factor();

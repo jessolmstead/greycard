@@ -654,6 +654,7 @@ mod tests {
                 sources: Vec::new(),
                 learned: crate::worker::LearnedReport::Off,
                 fills,
+                settles: false,
             },
         );
     }

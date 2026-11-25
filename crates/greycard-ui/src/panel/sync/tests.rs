@@ -1538,6 +1538,7 @@ fn a_single_frame_click_names_a_left_off_profile_and_the_words_ride_the_develop(
             sources: Vec::new(),
             learned: crate::worker::LearnedReport::Off,
             fills: crate::worker::FillReport::default(),
+            settles: false,
         },
     );
     assert_eq!(app.get_status(), said);
@@ -1689,6 +1690,7 @@ fn a_multi_frame_presets_words_ride_the_develop_that_lands() {
             sources: Vec::new(),
             learned: crate::worker::LearnedReport::Off,
             fills: crate::worker::FillReport::default(),
+            settles: false,
         },
     );
     // The set's words alone: the develop's own are the log's.

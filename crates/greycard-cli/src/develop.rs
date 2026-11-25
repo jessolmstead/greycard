@@ -347,6 +347,7 @@ pub(crate) fn run(args: DevelopArgs) -> Result<()> {
                 None => sharpen::Threshold::Auto,
             },
             stop_early: true,
+            part: None,
             level_scale: 1.0,
         }),
     };
@@ -1855,6 +1856,7 @@ mod tests {
             // what the flattest patch of a synthetic frame measures.
             contrast: sharpen::Threshold::Fixed(0.0),
             stop_early: true,
+            part: None,
             level_scale: 1.0,
         };
 
@@ -1922,6 +1924,7 @@ mod tests {
             iterations: sharpen::DEFAULT_ITERATIONS,
             contrast: sharpen::Threshold::Fixed(0.0),
             stop_early: true,
+            part: None,
             level_scale: 1.0,
         };
         let dehazing = DehazeOptions { amount: 0.6 };
@@ -1972,6 +1975,7 @@ mod tests {
             iterations: sharpen::DEFAULT_ITERATIONS,
             contrast: sharpen::Threshold::Fixed(0.0),
             stop_early: true,
+            part: None,
             level_scale: 1.0,
         };
         let mut got = source.clone();
@@ -2048,6 +2052,7 @@ mod tests {
             iterations: sharpen::DEFAULT_ITERATIONS,
             contrast: sharpen::Threshold::Fixed(0.0),
             stop_early: true,
+            part: None,
             level_scale: 1.0,
         };
 

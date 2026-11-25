@@ -386,6 +386,7 @@ impl Sharpen {
             iterations,
             contrast: sharpen::Threshold::Auto,
             stop_early: true,
+            part: None,
             level_scale: 1.0,
         })
     }

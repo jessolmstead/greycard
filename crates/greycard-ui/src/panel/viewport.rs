@@ -893,6 +893,67 @@ pub(crate) fn source_to_view(st: &State, app: &App, u: f32, v: f32) -> (f32, f32
     ViewMap::of(st, app).to_view(u, v)
 }
 
+/// What the view shows of the open frame's picture at `zoom`: the
+/// bounds of the view's corners on the source, as fractions of its
+/// sides, which the geometry's map takes straight lines to straight
+/// lines for; none for a compare view, a picture held from another
+/// frame, or no source yet. The worker's next develop sharpens that
+/// first (`worker::Seen`).
+pub(crate) fn seen(st: &State, app: &App, zoom: f32) -> Option<crate::worker::Seen> {
+    if compared(st) > 1 || !source_known(st) || st.develop.held.is_some() || zoom <= 0.0 {
+        return None;
+    }
+    let scale = app.window().scale_factor();
+    let (vw, vh) = (
+        app.get_view_width().max(1) as f32 / scale,
+        app.get_view_height().max(1) as f32 / scale,
+    );
+    let (sw, sh) = (
+        st.develop.source_size.0 as f32,
+        st.develop.source_size.1 as f32,
+    );
+    let mut rect = [
+        f32::INFINITY,
+        f32::INFINITY,
+        f32::NEG_INFINITY,
+        f32::NEG_INFINITY,
+    ];
+    for (x, y) in [(0.0, 0.0), (vw, 0.0), (0.0, vh), (vw, vh)] {
+        // The masks' units: the source's width over both axes.
+        let (u, v) = view_to_source(st, app, x, y);
+        let (u, v) = (u, v * sw / sh);
+        rect = [
+            rect[0].min(u),
+            rect[1].min(v),
+            rect[2].max(u),
+            rect[3].max(v),
+        ];
+    }
+    if !rect.iter().all(|v| v.is_finite()) {
+        return None;
+    }
+    Some(crate::worker::Seen {
+        rect: rect.map(|v| v.clamp(0.0, 1.0)),
+        zoom,
+    })
+}
+
+/// The picture on screen is a first round whose settle is still to
+/// land: not the edit's at rest.
+pub(crate) fn settling(st: &State) -> bool {
+    st.develop.settle_for == Some(st.develop.generation)
+}
+
+/// [`seen`], told to `worker` when it has changed.
+pub(crate) fn tell_seen(st: &mut State, app: &App, zoom: f32, worker: &Worker) {
+    let now = seen(st, app, zoom);
+    if st.develop.seen_told == now {
+        return;
+    }
+    st.develop.seen_told = now;
+    worker.set_seen(now);
+}
+
 /// The view's mapping of the picture's units, read from the panel
 /// once and applied to as many points as a frame has.
 pub(crate) struct ViewMap {

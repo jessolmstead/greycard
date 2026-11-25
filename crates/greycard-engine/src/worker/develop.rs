@@ -59,6 +59,15 @@ pub(super) struct Round {
     /// highlight fill's making: nothing of it was kept, and its outcome
     /// is not to be delivered.
     pub gave_way: bool,
+    /// What the window shows, which the round sharpens alone where it
+    /// may ([`super::seen`]); none for the whole frame.
+    pub seen: Option<super::Seen>,
+    /// The round sharpened only what it was shown, and what that was:
+    /// the settle is to follow.
+    pub quick: Option<super::seen::Quick>,
+    /// The settle: the whole sharpen after a round that sharpened only
+    /// what was shown, giving way to a newer develop.
+    pub settle: bool,
 }
 
 /// What a round does with a learned highlight fill its walk would have
@@ -87,6 +96,9 @@ impl Round {
             aside: false,
             highlight: Highlight::Inline,
             gave_way: false,
+            seen: None,
+            quick: None,
+            settle: false,
         }
     }
 
@@ -99,6 +111,27 @@ impl Round {
             aside: false,
             highlight: Highlight::First,
             gave_way: false,
+            seen: None,
+            quick: None,
+            settle: false,
+        }
+    }
+
+    /// The window's develop sharpened first as far as `seen` shows.
+    pub(super) fn first_seen(seen: Option<super::Seen>) -> Self {
+        Self {
+            seen,
+            ..Self::first()
+        }
+    }
+
+    /// The settle after a first round that sharpened only what was
+    /// shown: the whole develop, every fill kept in place as the first
+    /// round's, giving way to a newer develop.
+    pub(super) fn settle() -> Self {
+        Self {
+            settle: true,
+            ..Self::first()
         }
     }
 
@@ -111,6 +144,9 @@ impl Round {
             aside: false,
             highlight: Highlight::Make,
             gave_way: false,
+            seen: None,
+            quick: None,
+            settle: false,
         }
     }
 }
@@ -131,6 +167,9 @@ enum Walk<'a> {
     /// The fill's round ([`crate::walk::walk_fill_round`]), asking
     /// `hold` up to the fill's end whether to give way.
     Fill(&'a dyn Hold),
+    /// From what the frame keeps, asking `hold` before each stage and
+    /// inside the sharpen whether to give way: the settle's.
+    Settle(&'a dyn Hold),
 }
 
 /// Develop `edit` on the open frame at `turn`: a walk of the window's
@@ -196,18 +235,15 @@ pub(super) fn develop_round(
                 .is_some_and(|k| k.steps[..] == steps.steps[..=at])
     });
     let Some(at) = pending else {
+        // The settle, the rest of a round that sharpened only what was
+        // shown, which gives way to a newer develop.
+        let how = if round.settle {
+            Walk::Settle(hold)
+        } else {
+            Walk::Plain
+        };
         return develop_with(
-            input,
-            edit,
-            turn,
-            generation,
-            h,
-            ai,
-            stores,
-            gpu,
-            deliver,
-            round,
-            Walk::Plain,
+            input, edit, turn, generation, h, ai, stores, gpu, deliver, round, how,
         );
     };
     if round.highlight == Highlight::Make {
@@ -330,6 +366,23 @@ fn develop_with(
         }
         _ => (steps, plan),
     };
+    // The window's first round on the device sharpens only what the
+    // window shows, where its edit has no fill to make; the settle
+    // after it sharpens the rest. The size is the developed picture's,
+    // at the turn the window draws.
+    round.quick = None;
+    let steps = match (&how, round.seen.as_ref()) {
+        (Walk::Plain, Some(seen)) if gpu.is_some() && super::seen::may_quicken(edit) => {
+            match super::seen::quickened(&steps, seen, facts.full(), h.meta.radius) {
+                Some((steps, quick)) => {
+                    round.quick = Some(quick);
+                    steps
+                }
+                None => steps,
+            }
+        }
+        _ => steps,
+    };
     // What the frame says it shows: the fill-off edit, when the fill is
     // left for the next round.
     let off;
@@ -392,6 +445,10 @@ fn develop_with(
     // the floor the models' sessions are kept over is measured from.
     let free_before = gpu.as_ref().and_then(|_| crate::ai::card_free_for_log());
     let (walked, unfilled) = match how {
+        Walk::Settle(hold) => (
+            walk(&steps, &plan, &walking, &mut h.kept, &mut models, gpu, hold),
+            None,
+        ),
         Walk::Plain | Walk::Unfilled | Walk::StandIn(_) => (
             walk(
                 &steps,
@@ -440,7 +497,7 @@ fn develop_with(
     let walked = match walked {
         Ok(walked) => walked,
         Err(crate::walk::Stopped::GaveWay(stage)) => {
-            tracing::debug!("the highlight fill's round gave way before or in the {stage}");
+            tracing::debug!("the round gave way before or in the {stage}");
             round.gave_way = true;
             return (
                 Outcome::Failed {
@@ -697,6 +754,7 @@ fn develop_with(
         sources: walked.sources,
         learned,
         fills,
+        settles: round.quick.is_some(),
     };
     h.developed_as = Some((edit.clone(), turn));
     h.left_out = left_out_of(&outcome, Some(h));

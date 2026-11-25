@@ -2661,6 +2661,8 @@ fn follow_paths(st: &mut State, was: &Path, to: &Path) {
                 zoom: _,
                 mat: _,
                 center: _,
+                seen_told: _,
+                settle_for: _,
                 laid: _,
                 stood_view: _,
                 zoom_free: _,

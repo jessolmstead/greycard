@@ -2465,6 +2465,7 @@ fn developed(generation: u64, size: (u32, u32)) -> Outcome {
         sources: Vec::new(),
         learned: crate::worker::LearnedReport::Off,
         fills: crate::worker::FillReport::default(),
+        settles: false,
     }
 }
 
@@ -3058,6 +3059,42 @@ fn the_way_back_from_200_percent_follows_a_move() {
     assert_eq!(now.map(|(k, _)| k.path), Some(to));
 }
 
+/// A develop's first round, a settle to follow under its generation:
+/// the picture on screen is not the edit's at rest (the Original does
+/// not keep it to put back), and a preset's or a sync's words stay
+/// for the settle's landing, which then makes the picture whole.
+#[test]
+fn a_first_round_is_not_the_picture_at_rest_until_its_settle_lands() {
+    let app = crate::testing::window(1);
+    let (state, _worker) = crate::testing::state_for(&app, crate::testing::folder(1));
+    app.invoke_select(0);
+    let generation = state.borrow().develop.generation;
+    deliver(&app, opened_raw(generation, "Zero", 2, (5000.0, 0.0)));
+    nudge(&app, 0.7);
+    let generation = state.borrow().develop.generation;
+    let said = "Muted Slide onto 3 frames".to_string();
+    state.borrow_mut().develop.status_after_develop = Some((generation, said.clone()));
+    let whole = |state: &Rc<Shared>| crate::panel::original::edit_picture_whole(&state.borrow());
+    let land = |state: &Rc<Shared>| {
+        let mut st = state.borrow_mut();
+        crate::panel::startup::land_pending(&mut st, &app);
+    };
+    let mut first = developed(generation, (60, 40));
+    if let Outcome::Developed { settles, .. } = &mut first {
+        *settles = true;
+    }
+    deliver(&app, first);
+    land(&state);
+    assert!(!whole(&state), "a first round is not put back");
+    assert!(crate::panel::viewport::settling(&state.borrow()));
+    assert_eq!(app.get_status().as_str(), said, "the words stay");
+    deliver(&app, developed(generation, (60, 40)));
+    land(&state);
+    assert!(whole(&state), "the settle's is");
+    assert!(!crate::panel::viewport::settling(&state.borrow()));
+    assert_eq!(app.get_status().as_str(), said, "and the words with it");
+    assert!(state.borrow().develop.status_after_develop.is_none());
+}
 /// An export pressed on a frame whose masks wait on a shape nothing can
 /// measure (§724) takes nothing, alone or pressed in a set, and the set
 /// is not exported in its place; a set it is one of leaves it out.

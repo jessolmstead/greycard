@@ -54,6 +54,7 @@ fn land_at(app: &App, state: &Rc<crate::Shared>, size: (u32, u32), turn: u8) {
             sources: Vec::new(),
             learned: crate::worker::LearnedReport::Off,
             fills: crate::worker::FillReport::default(),
+            settles: false,
         },
     );
 }

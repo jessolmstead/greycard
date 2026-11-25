@@ -586,8 +586,63 @@ impl Context {
                 clip_level,
                 Output::Half(out),
                 Also::SHARPEN,
+                &|| false,
             )
         })
+    }
+
+    /// The viewport's sharpen: [`Context::sharpen`], or with `delta`
+    /// [`Context::sharpen_with_delta`], the picture sharpened only with
+    /// `apply`; asking `give_way` after each submission of its
+    /// iterations whether to stop there, which it does with
+    /// [`Error::GaveWay`] and `out` part written.
+    // The picture, its guide, the reference's three, the output, the
+    // two asks, and the give-way.
+    #[allow(clippy::too_many_arguments)]
+    pub fn sharpen_or_give_way(
+        &self,
+        image: &Image,
+        guide: Option<&Image>,
+        options: &SharpenOptions,
+        measured: Option<f32>,
+        clip_level: f32,
+        out: &wgpu::Texture,
+        (delta, apply): (bool, bool),
+        give_way: &dyn Fn() -> bool,
+    ) -> Result<(SharpenStats, Option<Vec<f32>>)> {
+        if out.width() != image.width || out.height() != image.height {
+            return Err(Error::Unsupported(format!(
+                "a {}x{} output for a {}x{} picture",
+                out.width(),
+                out.height(),
+                image.width,
+                image.height
+            )));
+        }
+        let plane = delta.then(|| self.delta_texture(image.width, image.height));
+        let stats = self.scoped("sharpening", || {
+            self.sharpen_into(
+                image,
+                guide,
+                options,
+                measured,
+                clip_level,
+                Output::Half(out),
+                Also {
+                    apply,
+                    delta: plane.as_ref(),
+                },
+                give_way,
+            )
+        })?;
+        let delta = match &plane {
+            Some(d) => {
+                let read = self.read_texture(d, 0, 0, image.width, image.height, 4)?;
+                Some(bytemuck::cast_slice(&read).to_vec())
+            }
+            None => None,
+        };
+        Ok((stats, delta))
     }
 
     /// [`Context::sharpen`], and the sharpen's delta read back, a value
@@ -630,6 +685,7 @@ impl Context {
                     apply,
                     delta: Some(&delta),
                 },
+                &|| false,
             )
         })?;
         let read = self.read_texture(&delta, 0, 0, image.width, image.height, 4)?;
@@ -775,6 +831,7 @@ impl Context {
                     clip_level,
                     Output::Nothing,
                     also,
+                    &|| false,
                 )
             })?;
             (None, stats)
@@ -839,6 +896,7 @@ impl Context {
                     mask: &mask,
                 },
                 also,
+                &|| false,
             )?;
             Ok((rgb, mask, stats))
         })
@@ -886,7 +944,8 @@ impl Context {
         Ok((stats, bytemuck::cast_slice(&mask).to_vec(), delta))
     }
 
-    // The picture, its guide, the reference's three, and the outputs.
+    // The picture, its guide, the reference's three, the outputs, and
+    // the give-way.
     #[allow(clippy::too_many_arguments)]
     fn sharpen_into(
         &self,
@@ -897,6 +956,7 @@ impl Context {
         clip_level: f32,
         out: Output<'_>,
         also: Also<'_>,
+        give_way: &dyn Fn() -> bool,
     ) -> Result<SharpenStats> {
         let p = &self.sharpen;
         let (w, h) = (image.width, image.height);
@@ -935,14 +995,23 @@ impl Context {
         let tiles_across = w.div_ceil(tile);
         let bands = h.div_ceil(tile);
         let blocks = tile / reference::BLOCK as u32;
+        // The tiles worked: every one, or those the part touches, as
+        // the reference picks them.
+        let (cols, rows) = match options.part {
+            Some(part) => {
+                let (c, r) = part.tiles(w as usize, h as usize, tile as usize);
+                (c.start as u32..c.end as u32, r.start as u32..r.end as u32)
+            }
+            None => (0..tiles_across, 0..bands),
+        };
         let mut batches = Vec::new();
-        for c0 in (0..tiles_across).step_by(work.cap_cols as usize) {
-            for b0 in (0..bands).step_by(work.cap_rows as usize) {
+        for c0 in cols.clone().step_by(work.cap_cols as usize) {
+            for b0 in rows.clone().step_by(work.cap_rows as usize) {
                 batches.push((
                     c0,
                     b0,
-                    work.cap_cols.min(tiles_across - c0),
-                    work.cap_rows.min(bands - b0),
+                    work.cap_cols.min(cols.end - c0),
+                    work.cap_rows.min(rows.end - b0),
                 ));
             }
         }
@@ -1323,6 +1392,9 @@ impl Context {
                     let full_encoder = std::mem::replace(&mut encoder, self.encoder("sharpen"));
                     self.queue.submit(Some(full_encoder.finish()));
                     self.wait()?;
+                    if give_way() {
+                        return Err(Error::GaveWay);
+                    }
                     let took = started.elapsed();
                     longest = longest.max(took);
                     submits += 1;

@@ -96,7 +96,9 @@ pub(super) fn keep_open(
         .filter(|(edit, turn)| of_keep(edit, *turn))
         .and_then(|_| base.kept.picture(crate::stages::Keep::Developed).cloned())
         .map(|image| (image, base.left_out.clone()));
-    let gpu = hand.shown.filter(|s| of_keep(&s.edit, s.turn));
+    // A texture sharpened only as far as the window showed it is not
+    // the edit's picture: the save waits for the settle.
+    let gpu = hand.shown.filter(|s| !s.quick && of_keep(&s.edit, s.turn));
     let (cpu, gpu) = match (cpu, gpu, hand.gpu) {
         (Some(l), _, _) => (Some(l), None),
         (None, Some(s), Some(ctx)) => (None, Some((s, ctx))),

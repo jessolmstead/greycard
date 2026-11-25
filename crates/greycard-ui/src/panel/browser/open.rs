@@ -788,6 +788,9 @@ pub(crate) fn open_job(st: &mut State, i: usize, edit: Edit) -> Job {
 /// that frame is the one chosen ([`opened_is_current`]).
 fn sending_open(st: &mut State, path: &Path, version: &Option<std::sync::Arc<str>>) {
     st.develop.open_sent = Some((st.develop.generation, (path.to_path_buf(), version.clone())));
+    // The worker forgets what the window showed at an open: told again
+    // at the next frame drawn.
+    st.develop.seen_told = None;
     st.develop.reopen_due = false;
 }
 

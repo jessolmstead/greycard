@@ -108,6 +108,14 @@ pub(crate) struct Develop {
     pub(crate) mat: bool,
     /// The image pixel at the view's center.
     pub(crate) center: (f32, f32),
+    /// What the view showed of the picture when the worker was last
+    /// told (`viewport::tell_seen`).
+    pub(crate) seen_told: Option<crate::worker::Seen>,
+    /// The generation whose develop landed as a first round, the
+    /// settle still to come under it (`Outcome::Developed::settles`):
+    /// the picture on screen is not the edit's at rest while it is the
+    /// generation's.
+    pub(crate) settle_for: Option<u64>,
     /// The frame as the render last laid it out, which `center` is a
     /// point of: a change of the geometry carries the center through
     /// it (`viewport::frame_on_show`).

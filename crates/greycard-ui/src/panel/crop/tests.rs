@@ -915,6 +915,7 @@ fn a_tall_develop_shows_a_tall_crop_outline_on_screen() {
             sources: Vec::new(),
             learned: crate::worker::LearnedReport::Off,
             fills: crate::worker::FillReport::default(),
+            settles: false,
         },
     );
     // What the render does with a develop that has landed.
@@ -1063,6 +1064,7 @@ fn the_switch_is_off_and_still_under_free() {
             sources: Vec::new(),
             learned: crate::worker::LearnedReport::Off,
             fills: crate::worker::FillReport::default(),
+            settles: false,
         },
     );
     {

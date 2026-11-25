@@ -186,6 +186,7 @@ impl Kept {
                 sources: Vec::new(),
                 learned: crate::worker::LearnedReport::Off,
                 fills: crate::worker::FillReport::default(),
+                settles: false,
             },
         );
     }
@@ -2321,6 +2322,7 @@ fn developed_as(
         sources: Vec::new(),
         learned: crate::worker::LearnedReport::Off,
         fills: crate::worker::FillReport::default(),
+        settles: false,
     }
 }
 

@@ -596,6 +596,12 @@ impl Worker {
                 });
             }
             job => {
+                // What the window showed was of the frame left: a
+                // develop sent before the new frame is drawn sharpens
+                // it whole, until the window says what it shows.
+                if matches!(job, Job::Open { .. }) {
+                    q.seen = None;
+                }
                 let opening = match &q.develop {
                     Some(Job::Open { generation, .. }) => Some(*generation),
                     _ => None,
@@ -763,6 +769,20 @@ impl Worker {
         let (lock, cv) = &*self.queue;
         lock.lock().expect("worker queue").context = Some(ctx);
         cv.notify_one();
+    }
+
+    /// What the window shows of the open frame, none for anything
+    /// else (a compare view, no frame): a develop's first round on the
+    /// device sharpens only that, the round after it the whole frame
+    /// (`seen`). Read when a develop starts.
+    pub fn set_seen(&self, seen: Option<Seen>) {
+        self.queue.0.lock().expect("worker queue").seen = seen;
+    }
+
+    /// What the window last said it shows: for the window's tests.
+    #[cfg(any(test, feature = "testing"))]
+    pub fn seen(&self) -> Option<Seen> {
+        self.queue.0.lock().expect("worker queue").seen
     }
 
     /// What tells the worker the window's device was lost, from

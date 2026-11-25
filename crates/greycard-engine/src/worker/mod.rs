@@ -33,6 +33,11 @@ mod prefetch;
 mod render_gate;
 #[cfg(test)]
 mod samples;
+mod seen;
+#[cfg(test)]
+mod seen_tests;
+#[cfg(test)]
+mod settle_tests;
 mod shelf;
 #[cfg(test)]
 mod tests;
@@ -63,6 +68,7 @@ pub use self::{
     decode::correct_lens_of,
     handle::order_thumbnails,
     prefetch::{DEEPEST, Depth, Heading, Neighbor, ReadFirst, RemoteFs, STREAK_FOR_ONE, Side},
+    seen::Seen,
     shelf::FileNow,
     thumbs::{file_stat, thumb_key, thumb_tag, thumbnail},
 };
@@ -162,6 +168,12 @@ pub enum Job {
     /// behind any develop asked for, which gives the rest up.
     #[doc(hidden)]
     Fill { generation: u64 },
+    /// The whole sharpen of the open frame's develop `generation`,
+    /// whose first round sharpened only what the window shows
+    /// (`seen`): queued by the worker itself, behind any develop asked
+    /// for, which it gives way to.
+    #[doc(hidden)]
+    Settle { generation: u64 },
     /// The picture of a frame (a file, and the version of it) for the
     /// list's cell `index`: the picture kept of its edit when one is,
     /// else the camera's, made and kept if need be.
@@ -474,6 +486,12 @@ pub enum Outcome {
         learned: LearnedReport,
         /// What the fill model did.
         fills: FillReport,
+        /// A first round that sharpened only what the window showed:
+        /// the settle, the whole picture, follows under the same
+        /// generation, unless a newer develop takes its place. Not the
+        /// edit's picture at rest until then: not kept as its pictures,
+        /// nor put back after the Original.
+        settles: bool,
     },
     /// Whether the merge of ours just opened, one that keeps its recipe,
     /// can be made again with its frames denoised
@@ -767,6 +785,9 @@ struct Queue {
     remote_checks_by_test: (usize, Option<prefetch::RemoteFs>),
     /// The newest open or develop; an older one still queued is dropped.
     develop: Option<Job>,
+    /// What the window shows of the open frame (`Worker::set_seen`),
+    /// which a develop's first round sharpens alone.
+    seen: Option<Seen>,
     /// Masks wanted, the newest shape for a key replacing an older,
     /// with the model chosen for a learned shape that needs one
     /// picked (Subject; `None` for a shape whose model is not in
@@ -837,6 +858,10 @@ struct Queue {
     /// the window would send one while the round runs.
     #[cfg(test)]
     develop_on_fill_ask: Option<Job>,
+    /// What the window shows, as a test has it moved when the settle
+    /// asks its hold first.
+    #[cfg(test)]
+    seen_on_settle_ask: Option<Seen>,
     /// The card's free memory, and what its sessions give back when
     /// dropped, as a test has them (`Ai::free_memory_by_test`).
     #[cfg(test)]
@@ -977,6 +1002,9 @@ struct ShownTexture {
     /// What the develop left out of what the edit asked for
     /// ([`left_out_of`]): a picture without it is not kept.
     left_out: Vec<String>,
+    /// Sharpened only as far as the window shows, the settle still to
+    /// come: not the edit's picture, and not kept as it.
+    quick: bool,
 }
 
 impl ShownTexture {
@@ -994,6 +1022,7 @@ impl ShownTexture {
                 generation: *generation,
                 texture: texture.clone(),
                 left_out: left_out_of(outcome, base),
+                quick: false,
             }),
             _ => None,
         }
@@ -1153,7 +1182,8 @@ impl Blame {
             Job::Open { generation, .. }
             | Job::Develop { generation, .. }
             | Job::DevelopAside { generation, .. }
-            | Job::Fill { generation } => Blame::Develop(*generation),
+            | Job::Fill { generation }
+            | Job::Settle { generation } => Blame::Develop(*generation),
             // A frame of a set is caught where it runs, and counted
             // there as the set's failure.
             Job::ExportSet { .. } | Job::ExportFrame { .. } => Blame::Nobody,

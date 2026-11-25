@@ -194,6 +194,10 @@ pub(super) fn run(
     // many are left. A develop asked for gives them up; leaving the
     // editor pauses them.
     let mut fills_due: Option<FillsDue> = None;
+    // The open frame's develop landed sharpened only as far as the
+    // window showed it: the whole sharpen is to follow. A develop asked
+    // for gives it up, and makes its own.
+    let mut whole_due: Option<WholeDue> = None;
     // What a test has the open frame's fills let go of the card, where
     // the worker has no device.
     #[cfg(test)]
@@ -217,6 +221,7 @@ pub(super) fn run(
             let again = told.unwrap_or(true);
             let redo = lose_gpu(&mut gpu, &mut base, &mut shown, again)
                 .or_else(|| fill_redo.take().filter(|_| again));
+            whole_due = None;
             if let Some(job) = redo {
                 lock.lock()
                     .expect("worker queue")
@@ -235,6 +240,16 @@ pub(super) fn run(
                 // everything it holds are dropped here, on the thread
                 // that made them, before the process goes.
                 if q.stopping {
+                    // A save waiting on the settle: the settle first,
+                    // and the save from it, as a session that never
+                    // sharpened a part first would have kept.
+                    if let Some(due) = whole_due.as_ref().filter(|d| {
+                        save_waits(pending.as_ref(), d, base.as_ref(), lenses.as_deref())
+                    }) {
+                        break Job::Settle {
+                            generation: due.generation,
+                        };
+                    }
                     return;
                 }
                 // The store first, so a test's other seams sent with it
@@ -358,6 +373,15 @@ pub(super) fn run(
                 settle_due(&mut q, Instant::now());
                 if let Some((key, shape, model)) = q.masks.pop_front() {
                     break Job::Mask { key, shape, model };
+                }
+                // The whole sharpen of the develop on screen, behind any
+                // develop asked for and the masks (none of which reads
+                // the sharpen) and ahead of the rest: the picture at
+                // rest is the edit's.
+                if let Some(due) = whole_due.as_ref().filter(|d| !d.parked) {
+                    break Job::Settle {
+                        generation: due.generation,
+                    };
                 }
                 // An export before a person looked for: the export was
                 // asked first and is the thing delivered, while a frame
@@ -600,7 +624,68 @@ pub(super) fn run(
         if matches!(job, Job::Open { .. } | Job::Develop { .. }) {
             fills_due = None;
         }
-        if !matches!(job, Job::Fill { .. } | Job::Keep { .. }) {
+        // What takes the settle's place: an open, or a develop of the
+        // frame in hand, the Original's aside among them (the window
+        // develops the edit again after it). A develop of another file
+        // makes nothing, and leaves the settle and the texture as they
+        // are. The aside parks the settle rather than dropping it: not
+        // made while the Original is up, but made for a save waiting on
+        // it if the frame is left then.
+        let replaces = match &job {
+            Job::Open { .. } => true,
+            Job::Develop { of, .. } | Job::DevelopAside { of, .. } => {
+                holds(failed_open.as_ref(), opened_path.as_deref(), of.as_ref()) == Holds::Frame
+            }
+            _ => false,
+        };
+        // The frame left with a save waiting on its settle: the settle
+        // made now, undelivered (the window has gone on), and the save
+        // made from it, so the frame's pictures are the whole develop's.
+        if matches!(job, Job::Open { .. })
+            && let Some(due) = whole_due
+                .take_if(|d| save_waits(pending.as_ref(), d, base.as_ref(), lenses.as_deref()))
+            && let Some(f) = &input
+        {
+            let made = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                let mut round = Round::settle();
+                let (outcome, _) = develop_round(
+                    f,
+                    &due.edit,
+                    due.turn,
+                    due.generation,
+                    &mut base,
+                    &mut ai,
+                    (cache.as_ref(), lenses.as_deref()),
+                    &mut gpu,
+                    &deliver,
+                    &mut round,
+                    &crate::walk::NoHold,
+                );
+                ShownTexture::of(&due.edit, due.turn, &outcome, base.as_ref())
+            }));
+            match made {
+                Ok(Some(s)) => shown = Some(s),
+                Ok(None) => {}
+                Err(payload) => {
+                    let message = panic_message(payload.as_ref());
+                    lost_seen |= says_lost(&message);
+                    tracing::warn!("the settle of the frame left: the worker panicked: {message}");
+                }
+            }
+        }
+        if replaces {
+            if matches!(job, Job::DevelopAside { .. }) {
+                if let Some(due) = whole_due.as_mut() {
+                    due.parked = true;
+                }
+            } else {
+                whole_due = None;
+            }
+        }
+        if !matches!(
+            job,
+            Job::Fill { .. } | Job::Settle { .. } | Job::Keep { .. }
+        ) {
             ai.release_fills();
             // The card given back before another model loads, once a
             // fill's model ran: a develop after it loads the denoiser
@@ -648,8 +733,8 @@ pub(super) fn run(
         // The frame is about to be left, or its picture replaced: a save
         // still waiting on it is made from what is in hand now, or let go.
         // Any other job leaves it waiting (the kind is asked first: a
-        // `take` ahead of it would drop the save on a fill's round or the
-        // masks' picture, which it does not wait on).
+        // `take` ahead of it would drop the save on a fill's round, the
+        // masks' picture, or the settle).
         if matches!(job, Job::Open { .. } | Job::Develop { .. })
             && let Some(keep) = pending.take()
         {
@@ -682,10 +767,9 @@ pub(super) fn run(
         }
         // The texture goes before a develop makes the next, so the two are
         // never held at once.
-        if matches!(
-            job,
-            Job::Open { .. } | Job::Develop { .. } | Job::Fill { .. }
-        ) {
+        if matches!(job, Job::Fill { .. } | Job::Settle { .. })
+            || (replaces && matches!(job, Job::Open { .. } | Job::Develop { .. }))
+        {
             shown = None;
         }
         // A person looked for on a frame of a run of "use this person on
@@ -1006,7 +1090,11 @@ pub(super) fn run(
         // to what `during_develop` allows until it is done.
         let developing = matches!(
             job,
-            Job::Open { .. } | Job::Develop { .. } | Job::DevelopAside { .. } | Job::Fill { .. }
+            Job::Open { .. }
+                | Job::Develop { .. }
+                | Job::DevelopAside { .. }
+                | Job::Fill { .. }
+                | Job::Settle { .. }
         );
         // A picture with no Part on it lets the People model go: it
         // holds about a gigabyte, and two with a picture's crops.
@@ -1040,8 +1128,8 @@ pub(super) fn run(
         // The develop on screen, should the device be lost in a fill
         // round: the window's picture is its first round's texture,
         // which `shown` let go of.
-        fill_redo = match (&job, &fills_due) {
-            (Job::Fill { generation }, Some(due))
+        fill_redo = match (&job, &fills_due, &whole_due) {
+            (Job::Fill { generation }, Some(due), _)
                 if due.generation == *generation && due.highlight =>
             {
                 Some(Job::Develop {
@@ -1051,8 +1139,23 @@ pub(super) fn run(
                     of: None,
                 })
             }
+            // As a fill round's: the first round's texture on screen,
+            // which `shown` let go of.
+            (Job::Settle { generation }, _, Some(due)) if due.generation == *generation => {
+                Some(Job::Develop {
+                    edit: due.edit.clone(),
+                    generation: *generation,
+                    turn: due.turn,
+                    of: None,
+                })
+            }
             _ => None,
         };
+        // A save waits on the settle: it does not give way to the frame
+        // left or the editor closing.
+        let settle_for_save = whole_due
+            .as_ref()
+            .is_some_and(|d| save_waits(pending.as_ref(), d, base.as_ref(), lenses.as_deref()));
         let held = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| match job {
             Job::Open {
                 path,
@@ -1335,7 +1438,8 @@ pub(super) fn run(
                     not_held(of.as_ref(), opened_path.as_deref());
                 } else if let Some(f) = &input {
                     turn = wanted % 4;
-                    let mut round = Round::first();
+                    let seen = lock.lock().expect("worker queue").seen;
+                    let mut round = Round::first_seen(seen);
                     ai.clear_shorts();
                     asked_again = false;
                     // As the open's (above).
@@ -1360,7 +1464,26 @@ pub(super) fn run(
                     ai.set_card_release(None);
                     fills_due =
                         FillsDue::after(&mut outcome, &edit, turn, round, None, base.as_mut());
-                    shown = ShownTexture::of(&edit, turn, &outcome, base.as_ref());
+                    shown = ShownTexture::of(&edit, turn, &outcome, base.as_ref()).map(|s| {
+                        ShownTexture {
+                            quick: round.quick.is_some(),
+                            ..s
+                        }
+                    });
+                    // Sharpened only as far as the window shows, on the
+                    // device or on the CPU after the device declined:
+                    // the whole sharpen next, unless a develop is asked
+                    // first.
+                    whole_due = round
+                        .quick
+                        .filter(|_| matches!(outcome, Outcome::Developed { .. }))
+                        .map(|quick| WholeDue {
+                            edit: edit.clone(),
+                            turn,
+                            generation,
+                            quick,
+                            parked: false,
+                        });
                     after_develop(
                         lock,
                         masks::to_ask_again(&edit, base.as_ref(), &ai),
@@ -1368,6 +1491,99 @@ pub(super) fn run(
                     );
                     developed = matches!(outcome, Outcome::Developed { .. }).then_some(generation);
                     // No fill refused in a first round (see Open).
+                    deliver(outcome);
+                }
+            }
+            // The whole sharpen of a develop whose first round sharpened
+            // only what the window showed: walked again from the point
+            // kept before the sharpen, giving way to a newer develop
+            // between the sharpen's submissions, and delivered as the
+            // develop's own.
+            Job::Settle { generation } => {
+                if let (Some(due), Some(f)) = (whole_due.take(), &input)
+                    && due.generation == generation
+                {
+                    turn = due.turn;
+                    ai.clear_shorts();
+                    // The view moved past what the first round sharpened
+                    // (a pan, a zoom, a turn): a first round of what is
+                    // seen now, from the point kept before the sharpen,
+                    // delivered as the develop's, the settle after it.
+                    // Not on the way out, where only the save is wanted.
+                    let (seen, stopping) = {
+                        let q = lock.lock().expect("worker queue");
+                        (q.seen, q.stopping)
+                    };
+                    if !stopping && let Some(seen) = seen.filter(|s| !due.quick.shows(s)) {
+                        let mut round = Round::first_seen(Some(seen));
+                        let (outcome, _) = develop_round(
+                            f,
+                            &due.edit,
+                            turn,
+                            generation,
+                            &mut base,
+                            &mut ai,
+                            (cache.as_ref(), lenses.as_deref()),
+                            &mut gpu,
+                            &deliver,
+                            &mut round,
+                            &crate::walk::NoHold,
+                        );
+                        shown =
+                            ShownTexture::of(&due.edit, turn, &outcome, base.as_ref()).map(|s| {
+                                ShownTexture {
+                                    quick: round.quick.is_some(),
+                                    ..s
+                                }
+                            });
+                        whole_due = round
+                            .quick
+                            .filter(|_| matches!(outcome, Outcome::Developed { .. }))
+                            .map(|quick| WholeDue { quick, ..due });
+                        developed =
+                            matches!(outcome, Outcome::Developed { .. }).then_some(generation);
+                        deliver(outcome);
+                        return;
+                    }
+                    // On the way out the settle is made for the save
+                    // that waits on it and gives way to nothing, as the
+                    // inline settle at an open: a newer develop or a
+                    // view moved is never picked once the editor
+                    // leaves, and giving way to it would only run the
+                    // settle again until the stop's wait ran out.
+                    let settling = Settling {
+                        lock,
+                        quick: due.quick,
+                        held_for_save: settle_for_save,
+                    };
+                    let hold: &dyn crate::walk::Hold = if stopping {
+                        &crate::walk::NoHold
+                    } else {
+                        &settling
+                    };
+                    let mut round = Round::settle();
+                    let (outcome, _) = develop_round(
+                        f,
+                        &due.edit,
+                        turn,
+                        generation,
+                        &mut base,
+                        &mut ai,
+                        (cache.as_ref(), lenses.as_deref()),
+                        &mut gpu,
+                        &deliver,
+                        &mut round,
+                        hold,
+                    );
+                    // Given way: to a newer develop, which takes its
+                    // place, or to the view moved, which the settle's
+                    // next go sharpens first.
+                    if matches!(outcome, Outcome::Failed { .. }) && round.gave_way {
+                        whole_due = Some(due);
+                        return;
+                    }
+                    shown = ShownTexture::of(&due.edit, turn, &outcome, base.as_ref());
+                    developed = matches!(outcome, Outcome::Developed { .. }).then_some(generation);
                     deliver(outcome);
                 }
             }
@@ -1700,6 +1916,7 @@ pub(super) fn run(
         }
         if let Err(payload) = held {
             fills_due = None;
+            whole_due = None;
             ai.release_fills();
             // A mask's or a fill's job that panicked leaves nothing of
             // its own behind for a develop's or a save's masks or fills
@@ -1854,6 +2071,77 @@ impl Newer<'_> {
 }
 
 impl crate::walk::Hold for Newer<'_> {
+    fn give_way(&self, _next: &crate::stages::Stage) -> bool {
+        self.asked()
+    }
+
+    fn give_way_inside(&self, _stage: &crate::stages::Stage) -> bool {
+        self.asked()
+    }
+}
+
+/// The develop on screen sharpened only as far as the window showed
+/// it: what the settle walks.
+pub(super) struct WholeDue {
+    edit: Edit,
+    turn: u8,
+    generation: u64,
+    /// What the picture on screen sharpened.
+    quick: super::seen::Quick,
+    /// The Original is up: the settle is not made, unless the frame is
+    /// left or the editor closes with a save waiting on it.
+    parked: bool,
+}
+
+/// Whether the save waiting, `pending`, is of the develop `due` is the
+/// settle of: then the settle is made before it is let go.
+fn save_waits(
+    pending: Option<&Keep>,
+    due: &WholeDue,
+    base: Option<&FrameKept>,
+    lenses: Option<&greycard_lens::Database>,
+) -> bool {
+    let (Some(keep), Some(b)) = (pending, base) else {
+        return false;
+    };
+    keep.turn == due.turn
+        && crate::stages::same_develop(&due.edit, &keep.edit, &b.facts_at(keep.turn), lenses)
+}
+
+/// The settle's hold: it gives way to a develop or an aside of the
+/// frame (a save waiting on it then waits for the newer develop's, or
+/// is let go for another edit's), to the view moved past what the
+/// picture on screen sharpened, and to the editor closing or an open,
+/// unless a save waits on it: then the frame's pictures are made first.
+struct Settling<'a> {
+    lock: &'a Mutex<Queue>,
+    quick: super::seen::Quick,
+    held_for_save: bool,
+}
+
+impl Settling<'_> {
+    fn asked(&self) -> bool {
+        #[allow(unused_mut)]
+        let mut q = self.lock.lock().expect("worker queue");
+        #[cfg(test)]
+        {
+            if let Some(job) = q.develop_on_fill_ask.take() {
+                q.develop = Some(job);
+            }
+            if let Some(seen) = q.seen_on_settle_ask.take() {
+                q.seen = Some(seen);
+            }
+        }
+        let leaving = q.stopping || matches!(q.develop, Some(Job::Open { .. }));
+        let newer = matches!(
+            q.develop,
+            Some(Job::Develop { .. } | Job::DevelopAside { .. })
+        );
+        (leaving && !self.held_for_save) || newer || q.seen.is_some_and(|s| !self.quick.shows(&s))
+    }
+}
+
+impl crate::walk::Hold for Settling<'_> {
     fn give_way(&self, _next: &crate::stages::Stage) -> bool {
         self.asked()
     }
