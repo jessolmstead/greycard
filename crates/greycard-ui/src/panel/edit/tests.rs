@@ -366,6 +366,21 @@ fn new_mask_with_none_chosen_opens_mask_alone() {
     assert_eq!(open_folds(&app), ["adjustments", "mask"], "chosen again");
 }
 
+/// The other way round: a mask made first, then LIGHT opened by its
+/// header on the Masks tab folds MASK, and MASK opened again folds
+/// LIGHT (issue 211).
+#[test]
+fn light_opened_after_a_mask_is_made_folds_mask() {
+    let (app, _state, _worker) = one_open_window(true, Vec::new());
+    show_tab(&app, "Masks");
+    click_new_mask(&app);
+    assert_eq!(open_folds(&app), ["adjustments", "mask"]);
+    click_header(&app, "LightSection");
+    assert_eq!(open_folds(&app), ["adjustments", "light"]);
+    click_header(&app, "AdjustmentsSection");
+    assert_eq!(open_folds(&app), ["adjustments", "mask"]);
+}
+
 /// One section open at a time, and MASK and LIGHT left open while
 /// no section of the mask's was made (as a restored session leaves
 /// them): a mask chosen in the list, by the edit (undo, redo), or
