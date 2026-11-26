@@ -1452,6 +1452,10 @@ clears or a tester asks for it.
       error: no fill can match what the sensor never recorded, and
       the smoothness bar may reject fills that look right
 - [ ] Maybe: MCP
+- [ ] A Depth mask: a feathered range, with the Luminance mask's
+      controls, over a depth map a model estimates, and a phone's
+      embedded depth where the file carries one (issue 217). The map
+      is what a depth blur needs too
 - [ ] Maybe: Depth mapping for blur
 - [ ] Maybe: a Fill painted but not generated kept in the sidecar, as
       a row in the list marked not made, so its strokes survive a quit;
