@@ -22,6 +22,7 @@ fn moved_look() -> Look {
         tint: 0.004,
     };
     look.detail.clarity = 0.2;
+    look.grain.amount = -0.4;
     look
 }
 

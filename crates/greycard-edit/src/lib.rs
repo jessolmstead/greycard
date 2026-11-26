@@ -61,7 +61,7 @@ pub use color::Color;
 pub use curve::{CurveLut, Curves, Parametric};
 pub use geometry::Geometry;
 pub use grading::Grading;
-pub use grain::Grain;
+pub use grain::{Grain, LocalGrain};
 pub use history::{describe, describe_step};
 pub use lens::{Lens, LensChoice};
 pub use look::LookLut;

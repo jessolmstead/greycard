@@ -80,6 +80,103 @@ impl Default for Grain {
     }
 }
 
+/// A mask's Grain: an Amount in the picture's own units, -1 to 1 (the
+/// panel shows ±100), added to the picture's Amount under the mask's
+/// weight. -1 takes away all of the picture's grain, which is at most
+/// 100%; +1 adds a full 100% on top of it; with the picture's at 0% (or
+/// its switch off), +0.5 grains at 50% inside the mask alone. Always at
+/// the picture's Size and kind, and one field over the frame: the mask
+/// changes how strong it is, and never draws a second one. Read only on
+/// a mask's look. Left out of a sidecar at its default.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct LocalGrain {
+    /// The section's switch: off, the share stays set and does nothing.
+    pub enabled: bool,
+    /// The share, -1 to 1.
+    pub amount: f32,
+}
+
+impl Default for LocalGrain {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            amount: 0.0,
+        }
+    }
+}
+
+impl LocalGrain {
+    pub fn is_default(&self) -> bool {
+        *self == Self::default()
+    }
+
+    /// The share that acts: none while the switch is off, held to the
+    /// slider's ends.
+    pub fn acting(&self) -> f32 {
+        if self.enabled {
+            self.amount.clamp(-1.0, 1.0)
+        } else {
+            0.0
+        }
+    }
+}
+
+impl Grain {
+    /// The picture's own Amount as it acts, 0 to 1: none while its
+    /// switch is off.
+    pub fn acting(&self) -> f32 {
+        if self.enabled {
+            self.amount.clamp(0.0, 1.0)
+        } else {
+            0.0
+        }
+    }
+
+    /// The grain the frame's one field is drawn at, and the picture's
+    /// acting Amount `a` ([`Self::acting`]), which [`scale`] reads: the
+    /// picture's grain where `a` is over zero; otherwise, where a mask
+    /// adds some (`masks_add`, as the render crate's
+    /// `finish::grain_drawn` finds), the picture's Size and kind at a
+    /// full Amount; none where nothing can grain.
+    pub fn drawn(&self, masks_add: bool) -> Option<(Grain, f32)> {
+        let a = self.acting();
+        if a > 0.0 {
+            Some((*self, a))
+        } else if masks_add {
+            Some((
+                Grain {
+                    enabled: true,
+                    amount: 1.0,
+                    ..*self
+                },
+                0.0,
+            ))
+        } else {
+            None
+        }
+    }
+}
+
+/// A pixel's strength of the drawn grain ([`Grain::drawn`]), as a
+/// factor on it: the amount there is `max(a + k, 0)`, with `a` the
+/// picture's acting Amount and `k` the masks' Amounts summed by their
+/// weights, held to -1 to 1. The field is drawn at `a` where that is
+/// over zero, so the factor is `max(a + k, 0) / a`, and exactly 1 at
+/// `k` of zero, the picture as it was to the bit; at a full Amount
+/// otherwise, so the factor is `max(k, 0)`. Continuous in `a` and `k`
+/// both: as `a` falls to zero the grain is `a + k` of a full field
+/// either way. The shader's `grain_share` is this.
+#[inline]
+pub fn scale(a: f32, k: f32) -> f32 {
+    let k = k.clamp(-1.0, 1.0);
+    if a > 0.0 {
+        if k == 0.0 { 1.0 } else { (a + k).max(0.0) / a }
+    } else {
+        k.max(0.0)
+    }
+}
+
 /// What a full amount adds at the weighting's peak (`GRAIN_PEAK`) to
 /// an encoded value; the shadows and highlights keep a little over
 /// half of that. Unchanged since the shadow-weighted curve, so an
@@ -277,6 +374,82 @@ pub struct Character {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A mask's Amount adds to the picture's: the factor on the drawn
+    /// field is one at none to the bit, nothing where the sum is under
+    /// zero, the sum over the picture's where it grains and the masks'
+    /// alone where it does not, held at the ends; and continuous as the
+    /// picture's Amount falls through zero. The field is drawn at the
+    /// picture's settings, at a full Amount where only the masks grain.
+    #[test]
+    fn a_masks_amount_adds_to_the_pictures() {
+        assert_eq!(scale(0.4, 0.0), 1.0);
+        assert_eq!(scale(0.7, -1.0), 0.0);
+        assert_eq!(scale(0.4, 0.4), 2.0);
+        assert_eq!(scale(0.4, -0.2), 0.5);
+        assert_eq!(scale(0.4, 3.0), (0.4f32 + 1.0) / 0.4);
+        assert_eq!(scale(0.0, 0.0), 0.0);
+        assert_eq!(scale(0.0, -1.0), 0.0);
+        assert_eq!(scale(0.0, 0.5), 0.5);
+        assert_eq!(scale(0.0, 2.0), 1.0);
+        // The amount laid on, a * factor (or the factor alone at a full
+        // field), through a = 0 at a fixed k.
+        let laid = |a: f32, k: f32| {
+            if a > 0.0 {
+                a * scale(a, k)
+            } else {
+                scale(a, k)
+            }
+        };
+        for k in [-0.3f32, 0.0, 0.25, 1.0] {
+            let mut last = laid(0.0, k);
+            for i in 1..=200 {
+                let a = i as f32 * 0.0005;
+                let now = laid(a, k);
+                assert!((now - last).abs() < 0.001, "k {k}, a {a}: {last} to {now}");
+                assert!((now - (a + k).max(0.0)).abs() < 1e-6, "k {k}, a {a}");
+                last = now;
+            }
+        }
+        let picture = Grain {
+            amount: 0.3,
+            size: 1.2,
+            kind: Kind::Tabular,
+            ..Grain::default()
+        };
+        assert_eq!(picture.drawn(false), Some((picture, 0.3)));
+        assert_eq!(picture.drawn(true), Some((picture, 0.3)));
+        for off in [
+            Grain {
+                amount: 0.0,
+                ..picture
+            },
+            Grain {
+                enabled: false,
+                ..picture
+            },
+        ] {
+            assert_eq!(off.drawn(false), None);
+            let (drawn, base) = off.drawn(true).unwrap();
+            assert_eq!(base, 0.0);
+            assert!(drawn.enabled && drawn.amount == 1.0);
+            assert_eq!((drawn.size, drawn.kind), (1.2, Kind::Tabular));
+        }
+        let local = LocalGrain {
+            enabled: false,
+            amount: 0.5,
+        };
+        assert_eq!(local.acting(), 0.0);
+        assert_eq!(
+            LocalGrain {
+                amount: 3.0,
+                ..LocalGrain::default()
+            }
+            .acting(),
+            1.0
+        );
+        assert!(LocalGrain::default().is_default());
+    }
 
     /// Mean, root mean square and the largest magnitude of the green
     /// channel over a grid.

@@ -1147,6 +1147,84 @@ mod tests {
         assert!(json["detail"].get("output_sharpen").is_none(), "{json}");
     }
 
+    /// A mask's Grain in the sidecar: at its default the look writes no
+    /// `grain` key, so the file and the develop key are what they were;
+    /// set it is written, read back, and keyed, and back at the default
+    /// the bytes and the key are as before; a build from before it
+    /// (0.12, whose look has no such field) reads the rest of the look
+    /// as written; and the global look never carries one.
+    #[test]
+    fn a_masks_grain_round_trips_and_is_left_out_at_its_default() {
+        use crate::LocalGrain;
+        let mut e = Edit::default();
+        e.adjustments.push(crate::Adjustment {
+            id: 1,
+            ..Default::default()
+        });
+        e.adjustments[0].look.light.exposure = 0.5;
+        let before_text = e.to_json();
+        let before_key = e.develop_key_with(&[], None);
+        let json: serde_json::Value = serde_json::from_str(&before_text).unwrap();
+        assert!(
+            json["adjustments"][0]["look"].get("grain").is_none(),
+            "{json}"
+        );
+        // Set, and switched off with its share kept: each written.
+        for grain in [
+            LocalGrain {
+                enabled: true,
+                amount: -1.0,
+            },
+            LocalGrain {
+                enabled: true,
+                amount: 0.6,
+            },
+            LocalGrain {
+                enabled: false,
+                amount: 0.6,
+            },
+        ] {
+            let mut set = e.clone();
+            set.adjustments[0].look.grain = grain;
+            let json: serde_json::Value = serde_json::from_str(&set.to_json()).unwrap();
+            let written = &json["adjustments"][0]["look"]["grain"];
+            assert_eq!(written["enabled"].as_bool(), Some(grain.enabled), "{json}");
+            let amount = written["amount"].as_f64().unwrap();
+            assert!((amount - grain.amount as f64).abs() < 1e-6, "{json}");
+            assert_eq!(Edit::from_json(&set.to_json()).unwrap(), set);
+            assert_ne!(set.develop_key_with(&[], None), before_key);
+            // An older build: the look as 0.12 had it, the field passed
+            // over and the rest read as written.
+            #[derive(Debug, Default, Deserialize)]
+            #[serde(default)]
+            struct Before {
+                light: crate::Light,
+                detail: crate::Detail,
+            }
+            let read: Before =
+                serde_json::from_value(json["adjustments"][0]["look"].clone()).unwrap();
+            assert_eq!(read.light, set.adjustments[0].look.light);
+            assert_eq!(read.detail, crate::Detail::default());
+            // Back at the default: the bytes and the key as before.
+            let mut back = set.clone();
+            back.adjustments[0].look.grain = LocalGrain::default();
+            assert_eq!(back.to_json(), before_text);
+            assert_eq!(back.develop_key_with(&[], None), before_key);
+        }
+        // Absent reads as the default.
+        assert_eq!(Edit::from_json(&before_text).unwrap(), e);
+        // The global look never reads one, nor does setting it.
+        let mut edit = Edit::default();
+        edit.grain.amount = 0.4;
+        assert_eq!(edit.look().grain, LocalGrain::default());
+        let mut look = edit.look();
+        look.grain.amount = -1.0;
+        edit.set_look(look);
+        assert_eq!(edit.grain.amount, 0.4);
+        let json: serde_json::Value = serde_json::from_str(&edit.to_json()).unwrap();
+        assert!(json["grain"].get("enabled").is_some(), "{json}");
+    }
+
     /// A mask's own Radius and Threshold for its Output sharpen: none is
     /// left out, so an edit without them writes and keys as it did;
     /// set, each is written, read back, and keyed; +200 is written as

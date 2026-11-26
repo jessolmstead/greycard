@@ -367,6 +367,20 @@ fn golden_edits_now() -> Vec<(&'static str, Edit)> {
     radius_alone.look.detail.output_sharpen_radius = Some(3.0);
     e.adjustments = vec![own, radius_alone];
     out.push(("a mask's own output sharpen", e));
+    // A mask's Grain taking the picture's away, and one switched off
+    // with its share kept.
+    let mut e = exposed(0.1);
+    e.grain.amount = 0.4;
+    let mut taken = local(LocalWhite::Off, Shape::Background {});
+    taken.look.grain.amount = -1.0;
+    let mut kept = local(LocalWhite::Off, Shape::Sky { picks: vec![] });
+    kept.id = 2;
+    kept.look.grain = crate::LocalGrain {
+        enabled: false,
+        amount: 0.5,
+    };
+    e.adjustments = vec![taken, kept];
+    out.push(("a mask's grain", e));
     out
 }
 

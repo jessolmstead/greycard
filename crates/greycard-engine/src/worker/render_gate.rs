@@ -245,6 +245,9 @@ const CASES: &[Case] = &[
     // does nothing; smaller, the sheet's Sharpen giving way to it.
     full("mask-output-sharpen-own"),
     smaller("mask-output-sharpen-own-smaller", Sharpen::Standard),
+    // A mask's Grain over the picture's 40%: -100 under a feathered
+    // radial, +60 under a linear ramp, with the output sharpen's bands.
+    full("mask-grain"),
     full("retouch"),
     smaller("smaller", Sharpen::Off),
     smaller("smaller-sheet-sharpen", Sharpen::Standard),

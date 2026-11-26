@@ -58,6 +58,8 @@ design note behind it.
   [§748](https://github.com/jessolmstead/greycard/blob/master/docs/notes/748-a-shape-esc-put-down-is-out-of-hand.md)).
 - Export has a grey space, Gray Gamma 2.2: one channel under a grey profile, with toning and grain's color dropped. Thanks to @sbusso (PR 216,
   [§751](https://github.com/jessolmstead/greycard/blob/master/docs/notes/751-greyscale-export.md)).
+- A mask has Grain: its Amount adds to or takes from the picture's under the mask, in one grain pattern
+  ([§752](https://github.com/jessolmstead/greycard/blob/master/docs/notes/752-grain-in-a-mask.md)).
 - A focus stack develops each frame as the editor does, chromatic
   aberration corrected: finer texture, no color fringes, about 1.8
   times the time

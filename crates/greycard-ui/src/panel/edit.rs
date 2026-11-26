@@ -505,6 +505,12 @@ pub(crate) fn read_look(app: &App) -> Look {
                 .get_local_output_sharpen_threshold_own()
                 .then(|| app.get_local_output_sharpen_threshold()),
         },
+        // A mask's alone: the picture's grain is the edit's own, from
+        // the Develop tab's section.
+        grain: greycard_edit::LocalGrain {
+            enabled: app.get_local_grain_enabled(),
+            amount: app.get_local_grain_amount(),
+        },
     }
 }
 
@@ -1057,6 +1063,9 @@ pub(crate) fn show_edit(st: &State, edit: &Edit, app: &App, target: Option<usize
     app.set_local_output_sharpen_threshold_own(own.1.is_some());
     app.set_local_output_sharpen_threshold(own.1.unwrap_or(edit.output_sharpen.threshold));
     app.set_local_dehaze(look.detail.dehaze);
+    // And its own Grain, the global look's never shown.
+    app.set_local_grain_enabled(look.grain.enabled);
+    app.set_local_grain_amount(look.grain.amount);
     app.set_detail_enabled(edit.detail.enabled);
     app.set_detail_texture(edit.detail.texture);
     app.set_detail_clarity(edit.detail.clarity);

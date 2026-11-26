@@ -368,6 +368,103 @@ fn a_masks_sharpen_is_its_own_and_a_look_control() {
     );
 }
 
+/// A mask's Grain is a section of its own and a look control: on the
+/// Masks tab with a mask chosen it shows its Amount alone, -100 to +100,
+/// where the picture's GRAIN has Amount, Size, and kind; moving it hides
+/// the overlay, edits the mask's share and nothing of the picture's,
+/// asks for no develop (it is the output's alone), names its history
+/// row, goes through the sidecar's JSON and back onto the panel, and its
+/// switch is a step of its own.
+#[test]
+fn a_masks_grain_is_its_own_section_and_a_look_control() {
+    use greycard_edit::history::describe;
+    use i_slint_backend_testing::ElementHandle;
+    use slint::ComponentHandle;
+    let app = window(1);
+    app.window()
+        .set_size(slint::LogicalSize::new(1500.0, 4000.0));
+    let (state, _worker) = crate::testing::state_for(&app, Vec::new());
+    // Every section folded but Grain, so it is built in the panel.
+    let open_grain = || {
+        for (_, _, set) in crate::panel::edit::FOLDS {
+            set(&app, true);
+        }
+        app.set_collapsed_grain(false);
+        crate::testing::settle(&app);
+    };
+    let count = |id: &str| ElementHandle::find_by_element_id(&app, id).count();
+    let (picture, local, size) = (
+        "GrainSection::amount-slider",
+        "GrainSection::local-amount-slider",
+        "GrainSection::size-slider",
+    );
+    app.set_panel_tab("Develop".into());
+    open_grain();
+    assert_eq!((count(picture), count(local), count(size)), (1, 0, 1));
+    app.set_panel_tab("Masks".into());
+    open_grain();
+    assert_eq!(
+        (count(picture), count(local), count(size)),
+        (0, 0, 0),
+        "no mask chosen, no mask's Grain"
+    );
+    app.invoke_new_mask();
+    app.invoke_target_changed(1);
+    open_grain();
+    assert_eq!(
+        (count(picture), count(local), count(size)),
+        (0, 1, 0),
+        "a mask's Grain has its Amount alone"
+    );
+    let slider = ElementHandle::find_by_element_id(&app, local)
+        .next()
+        .unwrap();
+    assert_eq!(slider.accessible_value_minimum(), Some(-1.0));
+    assert_eq!(slider.accessible_value_maximum(), Some(1.0));
+    state.borrow_mut().develop.edit.adjustments[0]
+        .mask
+        .components
+        .push(greycard_edit::mask::Component::default());
+    let edit = || {
+        let st = state.borrow();
+        read_edit(&app, &st.develop.edit, st.develop.target)
+    };
+    let before = edit();
+    app.set_show_mask(true);
+    app.set_local_grain_amount(-0.7);
+    app.invoke_view_changed();
+    assert!(!app.get_show_mask(), "a Grain slider is a look control");
+    let after = edit();
+    assert_eq!(after.adjustments[0].look.grain.amount, -0.7);
+    assert!(after.adjustments[0].look.grain.enabled);
+    assert_eq!(after.grain, before.grain, "the picture's grain untouched");
+    let name = app.get_adjustment_name().to_string();
+    assert_eq!(describe(&before, &after, &[]), format!("{name}: Grain -70"));
+    assert_eq!(
+        state.borrow().develop.planes_asked,
+        Default::default(),
+        "no develop for the output's share"
+    );
+    let back = greycard_edit::Edit::from_json(&after.to_json()).unwrap();
+    assert_eq!(back, after);
+    app.set_local_grain_amount(0.0);
+    {
+        let st = state.borrow();
+        show_edit(&st, &back, &app, st.develop.target);
+    }
+    assert_eq!(app.get_local_grain_amount(), -0.7);
+    assert_eq!(
+        edit().adjustments[0].look.grain,
+        back.adjustments[0].look.grain
+    );
+    // The switch: kept share, its own history row.
+    app.set_local_grain_enabled(false);
+    let off = edit();
+    assert!(!off.adjustments[0].look.grain.enabled);
+    assert_eq!(off.adjustments[0].look.grain.amount, -0.7);
+    assert_eq!(describe(&after, &off, &[]), format!("{name}: Grain off"));
+}
+
 /// A mask's Output sharpen is a look control beside its Sharpen: the
 /// overlay hidden, its history row, no develop asked (it is the
 /// finish's alone), through the sidecar's JSON and back onto the panel,

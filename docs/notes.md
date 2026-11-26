@@ -763,3 +763,4 @@ in its section; the roadmap and the changelog only point at it.
 - [§749. A key moved beats a key by default](notes/749-a-key-moved-beats-a-key-by-default.md) (2026-11-26)
 - [§750. Lambda, a fourth theme](notes/750-lambda-a-fourth-theme.md) (2026-11-26)
 - [§751. Greyscale export](notes/751-greyscale-export.md) (2026-11-26)
+- [§752. Grain in a mask](notes/752-grain-in-a-mask.md) (2026-11-26)

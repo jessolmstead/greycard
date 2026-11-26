@@ -712,6 +712,9 @@ size. At the fit zoom you may hardly see it, so check it at 1:1.
 - **Cubic** or **Tabular**: classic film grain, or the finer and more
   even grain of modern film.
 
+A mask can take the grain away where it reaches, or add more there
+([Grain in a mask](masks.md#grain-in-a-mask)).
+
 ## Soft proof and monitor
 
 These two sections change what you see on screen, not the edit. See

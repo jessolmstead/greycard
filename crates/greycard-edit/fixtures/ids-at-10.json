@@ -33,5 +33,10 @@
     "id": "6ab1028ae86b7f159ee8a6f84fb3121c27874dd5941525a34e38c6e5f73f124b",
     "name": "a mask's own output sharpen",
     "text": "{\"adjustments\":[{\"id\":1,\"look\":{\"detail\":{\"clarity\":0.0,\"dehaze\":0.0,\"enabled\":true,\"output_sharpen\":1.5,\"output_sharpen_radius\":2.5,\"output_sharpen_threshold\":0.0,\"texture\":0.0}},\"mask\":{\"components\":[{\"shape\":{\"kind\":\"background\"}}]},\"name\":\"One\"},{\"id\":2,\"look\":{\"detail\":{\"clarity\":0.0,\"dehaze\":0.0,\"enabled\":true,\"output_sharpen\":0.4,\"output_sharpen_radius\":3.0,\"texture\":0.0}},\"mask\":{\"components\":[{\"shape\":{\"kind\":\"sky\"}}]},\"name\":\"One\"}],\"light\":{\"exposure\":0.1},\"process\":1,\"version\":10}"
+  },
+  {
+    "id": "75d6bc132f535d4beec0e64eb1471d733067392dc7526ef2bef6c11caefb3e8a",
+    "name": "a mask's grain",
+    "text": "{\"adjustments\":[{\"id\":1,\"look\":{\"grain\":{\"amount\":-1.0,\"enabled\":true}},\"mask\":{\"components\":[{\"shape\":{\"kind\":\"background\"}}]},\"name\":\"One\"},{\"id\":2,\"look\":{\"grain\":{\"amount\":0.5,\"enabled\":false}},\"mask\":{\"components\":[{\"shape\":{\"kind\":\"sky\"}}]},\"name\":\"One\"}],\"grain\":{\"amount\":0.4},\"light\":{\"exposure\":0.1},\"process\":1,\"version\":10}"
   }
 ]

@@ -153,6 +153,12 @@ pub struct Look {
     /// sidecar at its default.
     #[serde(skip_serializing_if = "Detail::is_default")]
     pub detail: Detail,
+    /// A mask's grain Amount ([`grain::LocalGrain`]), added to the
+    /// picture's at the output by its weight. Never read on the global
+    /// look, whose grain is the edit's own. Left out of a sidecar at
+    /// its default.
+    #[serde(skip_serializing_if = "grain::LocalGrain::is_default")]
+    pub grain: grain::LocalGrain,
 }
 
 /// Which of the detail bands some mask asks the develop for: the
@@ -377,6 +383,7 @@ impl Edit {
             tint: self.tint,
             white_balance: LocalWhite::Off,
             detail: Detail::default(),
+            grain: grain::LocalGrain::default(),
         }
     }
 
@@ -393,7 +400,8 @@ impl Edit {
         self.tint = look.tint;
         // `look.white_balance` is a mask's alone: the picture's white
         // is `white_balance`, in the develop. So is `look.detail`: the
-        // picture's is `detail`, before the sharpen.
+        // picture's is `detail`, before the sharpen; and `look.grain`,
+        // the picture's being `grain`.
     }
 
     /// The detail bands the masks ask for ([`DetailWants`]). A mask at

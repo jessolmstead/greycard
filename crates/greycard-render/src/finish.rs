@@ -81,6 +81,13 @@ pub struct Baked {
     /// exposure (`greycard_edit::vignette::Place`). Its stops come in by
     /// the pixel either way ([`finish_pixel_with`]).
     pub vignette_shown: bool,
+    /// The grain at the output ([`greycard_edit::grain::scale`]): on a
+    /// local, its own Amount added to the picture's, held to the
+    /// slider's ends, and nothing while its Grain is off; on the global
+    /// look, the picture's acting Amount, 0 while its switch is off
+    /// ([`greycard_edit::Grain::acting`]). The grain itself comes in by
+    /// the pixel ([`finish_pixel_with`]).
+    pub grain: f32,
 }
 
 /// What the finish is handed. A raw's develop is a scene, which the
@@ -334,6 +341,7 @@ impl Baked {
                 .map(|t| t.clamp(0.0, THRESHOLD_MAX)),
             output_sharpen: OutputSharpen::default(),
             vignette_shown: false,
+            grain: look.grain.acting(),
         }
     }
 
@@ -350,6 +358,7 @@ impl Baked {
             display_curve: edit.display_curve,
             output_sharpen: edit.output_sharpen,
             vignette_shown: edit.vignette.on_display(),
+            grain: edit.grain.acting(),
             ..Self::of(&edit.look())
         }
     }
@@ -2235,6 +2244,62 @@ pub fn encoded_luma(encoded: [f32; 3]) -> f32 {
     encode((LUMA[0] * c[0] + LUMA[1] * c[1] + LUMA[2] * c[2]).clamp(0.0, 1.0))
 }
 
+/// Whether some mask acts on the grain, over a picture whose acting
+/// Amount is `picture` ([`Baked::grain`] on the global look): one that
+/// reaches somewhere at some opacity with an Amount of its own, which
+/// over the picture's grain may be either way and over none must add,
+/// since a take from nothing is nothing. The one rule both for drawing
+/// the field for the masks alone ([`grain_drawn`]) and for reading each
+/// pixel's factor ([`grain_share`]): false wherever no mask can change
+/// a pixel's grain, so the finish does no share work there.
+pub fn masks_act_on_grain(picture: f32, locals: &[Local]) -> bool {
+    locals.iter().any(|l| {
+        l.enabled
+            && l.opacity > 0.0
+            && if picture > 0.0 {
+                l.baked.grain != 0.0
+            } else {
+                l.baked.grain > 0.0
+            }
+    })
+}
+
+/// The grain the frame's one field is drawn at and the picture's acting
+/// Amount ([`greycard_edit::Grain::drawn`]), where `locals` is what the
+/// finish is handed: with the picture's at none, drawn for the masks
+/// when one acts on it ([`masks_act_on_grain`]).
+pub fn grain_drawn(grain: &Grain, locals: &[Local]) -> Option<(Grain, f32)> {
+    grain.drawn(masks_act_on_grain(grain.acting(), locals))
+}
+
+/// A pixel's factor on the drawn grain: the masks' Amounts there, each
+/// by its weight, summed and through the detail's threshold
+/// ([`crate::detail::soft`]) as a mask's Sharpen share is, added to the
+/// picture's ([`Baked::grain`] on the global look) by
+/// [`greycard_edit::grain::scale`]. The shader's `grain_share` is the
+/// same arithmetic.
+#[inline]
+pub fn grain_share(global: &Baked, on: &[(&Baked, f32)]) -> f32 {
+    let mut k = 0.0f32;
+    for (b, w) in on {
+        if b.grain != 0.0 {
+            k += w * b.grain;
+        }
+    }
+    greycard_edit::grain::scale(global.grain, crate::detail::soft(k))
+}
+
+/// The drawn grain at a pixel scaled by its factor ([`grain_share`]):
+/// as it was at a share of one, to the bit; none at none.
+#[inline]
+pub fn grain_scaled(noise: Option<[f32; 3]>, share: f32) -> Option<[f32; 3]> {
+    match noise {
+        Some(n) if share == 1.0 => Some(n),
+        Some(n) if share > 0.0 => Some(n.map(|v| v * share)),
+        _ => None,
+    }
+}
+
 /// The whole image through `to_out`, each encoded value through
 /// `quantize`, interleaved. `position` gives a pixel's place in the
 /// masks' units (the developed picture's width), through whatever
@@ -2412,13 +2477,18 @@ fn finish_in_bands<'l, T: Copy + Default + Send, const N: usize>(
                 "the finish",
             )
         });
+    // Whether a local changes the grain where it reaches, which then
+    // reads each pixel's factor from the masks' weights there
+    // ([`grain_share`]): the rule the frame's field is drawn by.
+    let grain_shared = masks_act_on_grain(global.grain, locals);
     // A pixel up to the look table, display-referred in the working
-    // space, and the grain to lay over it at the output.
+    // space; the grain to lay over it at the output, as drawn; and its
+    // factor on that grain, one where no mask acts on it.
     let display_at = |x: usize,
                       y: usize,
                       px: &[f32; 3],
                       on: &mut Vec<(&'l Baked, f32)>|
-     -> ([f32; 3], Option<[f32; 3]>) {
+     -> ([f32; 3], Option<[f32; 3]>, f32) {
         on.clear();
         let mut g = None;
         let i = y * image.width + x;
@@ -2445,10 +2515,16 @@ fn finish_in_bands<'l, T: Copy + Default + Send, const N: usize>(
             g = guide.map(|(plane, sw)| (plane.at(u * sw, v * sw), plane.range));
         }
         let (stops, grain) = frame(x, y);
+        let share = if grain_shared {
+            grain_share(global, on)
+        } else {
+            1.0
+        };
         let bands = detail.map(|(d, meta)| (d.at(x, y), meta));
         (
             finish_pixel_display(*px, global, on, stops, ab, g, bands, look),
             grain,
+            share,
         )
     };
     let w = image.width;
@@ -2473,7 +2549,12 @@ fn finish_in_bands<'l, T: Copy + Default + Send, const N: usize>(
                     .zip(row_in.as_chunks::<3>().0)
                     .enumerate()
                 {
-                    let (c, grain) = display_at(x, y, px, &mut on);
+                    let (c, grain, share) = display_at(x, y, px, &mut on);
+                    let grain = if grain_shared {
+                        grain_scaled(grain, share)
+                    } else {
+                        grain
+                    };
                     *o = encode(finish_pixel_output(c, global, grain, to_out));
                 }
             }),
@@ -2495,35 +2576,60 @@ fn finish_in_bands<'l, T: Copy + Default + Send, const N: usize>(
                 // the picture's and the shares under the masks' weights,
                 // a term's each.
                 let mut amounts = vec![0.0f32; if shared { w * (hi - lo) * terms } else { 0 }];
+                // Each pixel's share of the grain, only where a local
+                // scales it, for the output pass, which reads no mask.
+                let mut shares = vec![1.0f32; if grain_shared { w * (hi - lo) } else { 0 }];
                 let row = |r: usize,
                            row_held: &mut [[f32; 3]],
                            row_in: &[f32],
-                           amounts: Option<&mut [f32]>| {
+                           amounts: Option<&mut [f32]>,
+                           shares: Option<&mut [f32]>| {
                     let mut on = Vec::with_capacity(locals.len());
                     let mut amounts = amounts;
+                    let mut shares = shares;
                     for (x, (o, px)) in row_held
                         .iter_mut()
                         .zip(row_in.as_chunks::<3>().0)
                         .enumerate()
                     {
-                        *o = display_at(x, lo + r, px, &mut on).0;
+                        let (c, _, share) = display_at(x, lo + r, px, &mut on);
+                        *o = c;
                         if let Some(a) = amounts.as_deref_mut() {
                             plan.amounts_at(&on, &mut a[x * terms..(x + 1) * terms]);
+                        }
+                        if let Some(s) = shares.as_deref_mut() {
+                            s[x] = share;
                         }
                     }
                 };
                 let rows_in = image.data[lo * w * 3..hi * w * 3].par_chunks(w * 3);
-                if shared {
+                // Each read only where it is made, and so not empty.
+                let row_amounts = amounts.par_chunks_mut((w * terms).max(1));
+                let row_shares = shares.par_chunks_mut(w.max(1));
+                if shared && grain_shared {
                     held.par_chunks_mut(w)
-                        .zip(amounts.par_chunks_mut(w * terms))
+                        .zip(row_amounts)
+                        .zip(row_shares)
                         .zip(rows_in)
                         .enumerate()
-                        .for_each(|(r, ((h, a), i))| row(r, h, i, Some(a)));
+                        .for_each(|(r, (((h, a), g), i))| row(r, h, i, Some(a), Some(g)));
+                } else if shared {
+                    held.par_chunks_mut(w)
+                        .zip(row_amounts)
+                        .zip(rows_in)
+                        .enumerate()
+                        .for_each(|(r, ((h, a), i))| row(r, h, i, Some(a), None));
+                } else if grain_shared {
+                    held.par_chunks_mut(w)
+                        .zip(row_shares)
+                        .zip(rows_in)
+                        .enumerate()
+                        .for_each(|(r, ((h, g), i))| row(r, h, i, None, Some(g)));
                 } else {
                     held.par_chunks_mut(w)
                         .zip(rows_in)
                         .enumerate()
-                        .for_each(|(r, (h, i))| row(r, h, i, None));
+                        .for_each(|(r, (h, i))| row(r, h, i, None, None));
                 }
                 let band_amounts =
                     shared.then(|| &amounts[(y0 - lo) * w * terms..(y0 - lo + count) * w * terms]);
@@ -2549,7 +2655,10 @@ fn finish_in_bands<'l, T: Copy + Default + Send, const N: usize>(
                             .zip(row)
                             .enumerate()
                         {
-                            let grain = frame(x, y0 + r).1;
+                            let mut grain = frame(x, y0 + r).1;
+                            if grain_shared {
+                                grain = grain_scaled(grain, shares[(y0 - lo + r) * w + x]);
+                            }
                             *o = encode(finish_pixel_output(*c, global, grain, to_out));
                         }
                     });
@@ -3031,6 +3140,7 @@ mod tests {
             output_threshold: None,
             output_sharpen: OutputSharpen::default(),
             vignette_shown: false,
+            grain: 0.0,
         };
         finish_pixel(px, &global, &[], m)
     }
@@ -3060,6 +3170,7 @@ mod tests {
             output_threshold: None,
             output_sharpen: OutputSharpen::default(),
             vignette_shown: false,
+            grain: 0.0,
         }
     }
 
@@ -4183,6 +4294,7 @@ mod tests {
                 output_threshold: None,
                 output_sharpen: OutputSharpen::default(),
                 vignette_shown: false,
+                grain: 0.0,
             };
             let mut last = -1.0;
             for i in 0..=1400 {
@@ -4867,6 +4979,7 @@ mod tests {
             output_threshold: None,
             output_sharpen: OutputSharpen::default(),
             vignette_shown: false,
+            grain: 0.0,
         };
         let g = guide.map(|g| (g.at(x as f32 + 0.5, y as f32 + 0.5), g.range));
         let px = image.pixel(x, y);
@@ -5970,6 +6083,7 @@ mod tests {
             output_threshold: None,
             output_sharpen: OutputSharpen::default(),
             vignette_shown: false,
+            grain: 0.0,
         };
         let m = [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]];
         let out = finish_pixel(px, &global, &[], &m);
@@ -6017,6 +6131,7 @@ mod tests {
             output_threshold: None,
             output_sharpen: OutputSharpen::default(),
             vignette_shown: false,
+            grain: 0.0,
         };
         let bare = Baked {
             tint: idle,
@@ -6106,6 +6221,7 @@ mod tests {
             output_threshold: None,
             output_sharpen: OutputSharpen::default(),
             vignette_shown: false,
+            grain: 0.0,
         };
         let local = Baked {
             tint,

@@ -40,271 +40,271 @@ msgid "Create"
 msgstr "作成"
 
 #. The camera match sheet's Fit button; it also reads 'Fit N groups'
-#: crates/greycard-slint/ui/app.slint:2420
+#: crates/greycard-slint/ui/app.slint:2425
 msgid "Fit"
 msgstr "フィット"
 
 #. The status line as shown.
-#: crates/greycard-slint/ui/app.slint:2458
+#: crates/greycard-slint/ui/app.slint:2463
 msgid "preparing..."
 msgstr "準備中..."
 
-#: crates/greycard-slint/ui/app.slint:2543
+#: crates/greycard-slint/ui/app.slint:2548
 msgid "Proof: {}"
 msgstr "校正：{}"
 
-#: crates/greycard-slint/ui/app.slint:2543
+#: crates/greycard-slint/ui/app.slint:2548
 msgid "Proof: {} · gamut"
 msgstr "校正：{} · 色域"
 
-#: crates/greycard-slint/ui/app.slint:2546
+#: crates/greycard-slint/ui/app.slint:2551
 msgid "File"
 msgstr "ファイル"
 
 #. The five canvas shades, in Settings and the View menu
-#: crates/greycard-slint/ui/app.slint:2571
+#: crates/greycard-slint/ui/app.slint:2576
 msgid "Black"
 msgstr "黒"
 
 #. The five canvas shades, in Settings and the View menu
-#: crates/greycard-slint/ui/app.slint:2571
+#: crates/greycard-slint/ui/app.slint:2576
 msgid "Dark grey"
 msgstr "ダークグレー"
 
 #. The five canvas shades, in Settings and the View menu
-#: crates/greycard-slint/ui/app.slint:2571
+#: crates/greycard-slint/ui/app.slint:2576
 msgid "Light grey"
 msgstr "ライトグレー"
 
 #. The five canvas shades, in Settings and the View menu
-#: crates/greycard-slint/ui/app.slint:2571
+#: crates/greycard-slint/ui/app.slint:2576
 msgid "Mid grey"
 msgstr "ミドルグレー"
 
 #. The five canvas shades, in Settings and the View menu
-#: crates/greycard-slint/ui/app.slint:2571
+#: crates/greycard-slint/ui/app.slint:2576
 msgid "White"
 msgstr "白"
 
 #. The download ask's yes button, for a model or the lens database
-#: crates/greycard-slint/ui/app.slint:2682
+#: crates/greycard-slint/ui/app.slint:2687
 msgid "Download"
 msgstr "ダウンロード"
 
 #. The download ask's button that declines for now
-#: crates/greycard-slint/ui/app.slint:2684
+#: crates/greycard-slint/ui/app.slint:2689
 msgid "Not now"
 msgstr "後で"
 
 #. The models ask's button that downloads every model
-#: crates/greycard-slint/ui/app.slint:2691
+#: crates/greycard-slint/ui/app.slint:2696
 msgid "Download all"
 msgstr "すべてダウンロード"
 
-#: crates/greycard-slint/ui/app.slint:4294
+#: crates/greycard-slint/ui/app.slint:4299
 msgid "Queued for export, shown as it will export. Edit it from its folder."
 msgstr ""
 "書き出し待ちのため、書き出される状態で表示しています。編集はそのフォルダーか"
 "ら行ってください。"
 
 #. The Loupe's mode button at the top of the develop panel
-#: crates/greycard-slint/ui/app.slint:4305
+#: crates/greycard-slint/ui/app.slint:4310
 msgid "Cull"
 msgstr "選別"
 
-#: crates/greycard-slint/ui/app.slint:4310
+#: crates/greycard-slint/ui/app.slint:4315
 msgid "Cull mode"
 msgstr "選別モード"
 
 #. Develop, Crop, Masks, and Retouch
-#: crates/greycard-slint/ui/app.slint:4329
+#: crates/greycard-slint/ui/app.slint:4334
 msgid "Panel tabs"
 msgstr "パネルのタブ"
 
 #. The Loupe's mode buttons at the top of the develop panel
-#: crates/greycard-slint/ui/app.slint:4332
+#: crates/greycard-slint/ui/app.slint:4337
 msgid "Crop"
 msgstr "切り抜き"
 
 #. The Loupe's mode buttons at the top of the develop panel
-#: crates/greycard-slint/ui/app.slint:4332
+#: crates/greycard-slint/ui/app.slint:4337
 msgid "Develop"
 msgstr "現像"
 
 #. The Loupe's mode buttons at the top of the develop panel
-#: crates/greycard-slint/ui/app.slint:4332
+#: crates/greycard-slint/ui/app.slint:4337
 msgid "Masks"
 msgstr "マスク"
 
 #. The Loupe's mode buttons at the top of the develop panel
-#: crates/greycard-slint/ui/app.slint:4332
+#: crates/greycard-slint/ui/app.slint:4337
 msgid "Retouch"
 msgstr "レタッチ"
 
 #. View menu
-#: crates/greycard-slint/ui/app.slint:5538
+#: crates/greycard-slint/ui/app.slint:5563
 msgid "Full screen"
 msgstr "全画面表示"
 
 #. View menu
-#: crates/greycard-slint/ui/app.slint:5538
+#: crates/greycard-slint/ui/app.slint:5563
 msgid "Full screen (F11)"
 msgstr "全画面表示 (F11)"
 
 #. File menu
-#: crates/greycard-slint/ui/app.slint:5546
+#: crates/greycard-slint/ui/app.slint:5571
 msgid "Export..."
 msgstr "書き出し..."
 
 #. File menu
-#: crates/greycard-slint/ui/app.slint:5546
+#: crates/greycard-slint/ui/app.slint:5571
 msgid "Stop export"
 msgstr "書き出しを停止"
 
 #. View menu
-#: crates/greycard-slint/ui/app.slint:5677
+#: crates/greycard-slint/ui/app.slint:5702
 msgid "Right panel"
 msgstr "右パネル"
 
 #. View menu
-#: crates/greycard-slint/ui/app.slint:5679
+#: crates/greycard-slint/ui/app.slint:5704
 msgid "Hide panel"
 msgstr "パネルを隠す"
 
 #. View menu
-#: crates/greycard-slint/ui/app.slint:5679
+#: crates/greycard-slint/ui/app.slint:5704
 msgid "Show panel"
 msgstr "パネルを表示"
 
 #. View menu: the filmstrip
-#: crates/greycard-slint/ui/app.slint:5716
+#: crates/greycard-slint/ui/app.slint:5741
 msgid "Filmstrip"
 msgstr "フィルムストリップ"
 
 #. View menu: the filmstrip
-#: crates/greycard-slint/ui/app.slint:5718
+#: crates/greycard-slint/ui/app.slint:5743
 msgid "Hide filmstrip"
 msgstr "フィルムストリップを隠す"
 
 #. View menu: the filmstrip
-#: crates/greycard-slint/ui/app.slint:5718
+#: crates/greycard-slint/ui/app.slint:5743
 msgid "Show filmstrip"
 msgstr "フィルムストリップを表示"
 
 #. Frame menu: {} is Back up or Bring back, over a list of archives
-#: crates/greycard-slint/ui/app.slint:5880
+#: crates/greycard-slint/ui/app.slint:5905
 msgid "{} to"
 msgstr "{}先"
 
 #. The view button at the top left: the grid
-#: crates/greycard-slint/ui/app.slint:5926
+#: crates/greycard-slint/ui/app.slint:5951
 msgid "Library"
 msgstr "ライブラリ"
 
-#: crates/greycard-slint/ui/app.slint:5930
+#: crates/greycard-slint/ui/app.slint:5955
 msgid "Library view"
 msgstr "ライブラリ表示"
 
 #. The view button at the top left: one frame
-#: crates/greycard-slint/ui/app.slint:5944
+#: crates/greycard-slint/ui/app.slint:5969
 msgid "Loupe"
 msgstr "ルーペ"
 
-#: crates/greycard-slint/ui/app.slint:5948
+#: crates/greycard-slint/ui/app.slint:5973
 msgid "Loupe view"
 msgstr "ルーペ表示"
 
 #. File menu
-#: crates/greycard-slint/ui/app.slint:6036
+#: crates/greycard-slint/ui/app.slint:6061
 msgid "Open folder..."
 msgstr "フォルダーを開く..."
 
 #. File menu
-#: crates/greycard-slint/ui/app.slint:6069
+#: crates/greycard-slint/ui/app.slint:6094
 msgid "Import..."
 msgstr "読み込み..."
 
-#: crates/greycard-slint/ui/app.slint:6092
+#: crates/greycard-slint/ui/app.slint:6117
 msgid "Stop import"
 msgstr "読み込みを停止"
 
-#: crates/greycard-slint/ui/app.slint:6092
+#: crates/greycard-slint/ui/app.slint:6117
 msgid "Stopping..."
 msgstr "停止中..."
 
-#: crates/greycard-slint/ui/app.slint:6093
+#: crates/greycard-slint/ui/app.slint:6118
 msgid "Importing the catalog..."
 msgstr "カタログを読み込み中..."
 
 #. File menu, under Import
-#: crates/greycard-slint/ui/app.slint:6114
+#: crates/greycard-slint/ui/app.slint:6139
 msgid "From a card or folder..."
 msgstr "カードまたはフォルダーから..."
 
 #. File menu, under Import
-#: crates/greycard-slint/ui/app.slint:6119
+#: crates/greycard-slint/ui/app.slint:6144
 msgid "A Lightroom catalog..."
 msgstr "Lightroomカタログ..."
 
 #. Help menu: a newer version is out; {} is its number
-#: crates/greycard-slint/ui/app.slint:6478
+#: crates/greycard-slint/ui/app.slint:6503
 msgid "{} is available"
 msgstr "{}が利用可能です"
 
 #. Help menu: under the version note
-#: crates/greycard-slint/ui/app.slint:6487
+#: crates/greycard-slint/ui/app.slint:6512
 msgid "Not now: do not offer {} again"
 msgstr "後で：{}を今後表示しない"
 
-#: crates/greycard-slint/ui/app.slint:6495
+#: crates/greycard-slint/ui/app.slint:6520
 msgid "Settings..."
 msgstr "設定..."
 
-#: crates/greycard-slint/ui/app.slint:6503
+#: crates/greycard-slint/ui/app.slint:6528
 msgid "Help"
 msgstr "ヘルプ"
 
-#: crates/greycard-slint/ui/app.slint:6506
+#: crates/greycard-slint/ui/app.slint:6531
 msgid "Help menu"
 msgstr "ヘルプメニュー"
 
 #. Help menu: the keys sheet, with the key that opens it
-#: crates/greycard-slint/ui/app.slint:6527
+#: crates/greycard-slint/ui/app.slint:6552
 msgid "Keys (?)"
 msgstr "キー操作 (?)"
 
-#: crates/greycard-slint/ui/app.slint:6531
+#: crates/greycard-slint/ui/app.slint:6556
 msgid "User guide"
 msgstr "ユーザーガイド"
 
-#: crates/greycard-slint/ui/app.slint:6536
+#: crates/greycard-slint/ui/app.slint:6561
 msgid "Report a problem..."
 msgstr "問題を報告..."
 
-#: crates/greycard-slint/ui/app.slint:6606
+#: crates/greycard-slint/ui/app.slint:6631
 msgid "Left panel"
 msgstr "左パネル"
 
-#: crates/greycard-slint/ui/app.slint:6942
+#: crates/greycard-slint/ui/app.slint:6967
 #, fuzzy
 msgid "Search apps"
 msgstr "キー操作を検索"
 
-#: crates/greycard-slint/ui/app.slint:6942
+#: crates/greycard-slint/ui/app.slint:6967
 #, fuzzy
 msgid "Search archives"
 msgstr "キー操作を検索"
 
-#: crates/greycard-slint/ui/app.slint:6943
+#: crates/greycard-slint/ui/app.slint:6968
 #, fuzzy
 msgid "No matching apps."
 msgstr "コピーするものはありません。"
 
-#: crates/greycard-slint/ui/app.slint:6943
+#: crates/greycard-slint/ui/app.slint:6968
 msgid "No matching archives."
 msgstr ""
 
-#: crates/greycard-slint/ui/app.slint:7291
+#: crates/greycard-slint/ui/app.slint:7316
 msgid "Edit in"
 msgstr "外部編集"
 
@@ -1587,29 +1587,29 @@ msgstr "自然"
 msgid "Overlay"
 msgstr "オーバーレイ"
 
-#: crates/greycard-slint/ui/panel/edit.slint:747
+#: crates/greycard-slint/ui/panel/edit.slint:754
 msgid "GRAIN"
 msgstr "粒子"
 
-#: crates/greycard-slint/ui/panel/edit.slint:780
+#: crates/greycard-slint/ui/panel/edit.slint:804
 msgid "Type"
 msgstr "種類"
 
 #. Grain: the two kinds of grain
-#: crates/greycard-slint/ui/panel/edit.slint:783
+#: crates/greycard-slint/ui/panel/edit.slint:807
 msgid "Cubic"
 msgstr "立方体"
 
 #. Grain: the two kinds of grain
-#: crates/greycard-slint/ui/panel/edit.slint:783
+#: crates/greycard-slint/ui/panel/edit.slint:807
 msgid "Tabular"
 msgstr "平板"
 
-#: crates/greycard-slint/ui/panel/edit.slint:801
+#: crates/greycard-slint/ui/panel/edit.slint:825
 msgid "DEMOSAIC"
 msgstr "デモザイク"
 
-#: crates/greycard-slint/ui/panel/edit.slint:808
+#: crates/greycard-slint/ui/panel/edit.slint:832
 msgid "Demosaic"
 msgstr "デモザイク"
 
@@ -5247,8 +5247,8 @@ msgstr "カメラのJPEGあり、{}"
 #: crates/greycard-ui/src/panel/cull.rs:446
 #: crates/greycard-ui/src/panel/deliver.rs:1682
 #: crates/greycard-ui/src/panel/deliver.rs:1716
-#: crates/greycard-ui/src/panel/edit.rs:552
-#: crates/greycard-ui/src/panel/edit.rs:1360
+#: crates/greycard-ui/src/panel/edit.rs:558
+#: crates/greycard-ui/src/panel/edit.rs:1369
 #: crates/greycard-ui/src/panel/history.rs:488
 msgid "developing..."
 msgstr "現像中..."
@@ -6124,24 +6124,24 @@ msgstr "{why}：別のフォルダーを選んでください"
 msgid "not exported: {why}; {failed}"
 msgstr "書き出しませんでした：{why}。{failed}"
 
-#: crates/greycard-ui/src/panel/edit.rs:597
+#: crates/greycard-ui/src/panel/edit.rs:603
 msgid "no demosaic for this mosaic"
 msgstr "このモザイクに対応するデモザイクがありません"
 
-#: crates/greycard-ui/src/panel/edit.rs:598
+#: crates/greycard-ui/src/panel/edit.rs:604
 msgid "not a mosaic"
 msgstr "モザイクではありません"
 
-#: crates/greycard-ui/src/panel/edit.rs:599
+#: crates/greycard-ui/src/panel/edit.rs:605
 msgid "the raw could not be read"
 msgstr "RAWを読み取れませんでした"
 
-#: crates/greycard-ui/src/panel/edit.rs:600
+#: crates/greycard-ui/src/panel/edit.rs:606
 msgid "reading the raw"
 msgstr "RAWの読み取り時"
 
 #. The adjustments list: the whole-picture row above the masks
-#: crates/greycard-ui/src/panel/edit.rs:783
+#: crates/greycard-ui/src/panel/edit.rs:789
 msgid "Global"
 msgstr "全体"
 

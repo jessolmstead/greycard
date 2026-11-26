@@ -650,7 +650,8 @@ fn develop_and_masks_share_one_order_and_their_six_sections() {
             "curves",
             "mixer",
             "grading",
-            "detail"
+            "detail",
+            "grain"
         ]
     );
 }
@@ -674,7 +675,7 @@ fn every_name_in_every_order_is_a_section() {
             .collect();
         assert_eq!(held, names_of(want), "{view} in {id}");
     };
-    // Develop shows all but MASK; the Masks tab its own nine.
+    // Develop shows all but MASK; the Masks tab its own ten.
     let develop: Vec<&str> = first_of("develop")
         .iter()
         .copied()
@@ -698,6 +699,7 @@ fn every_name_in_every_order_is_a_section() {
             "grading",
             "tint",
             "detail",
+            "grain",
         ],
     );
     for (tab, id, view) in [

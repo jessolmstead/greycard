@@ -133,7 +133,9 @@ struct Params {
     /// grid the shader snaps to, and 0 at 1:1 and below (`magnify`).
     minify: [f32; 4],
     /// In x the midtones (`Tone::midtones`): stops of shift by the
-    /// guide plane's region, as the highlights and shadows are.
+    /// guide plane's region, as the highlights and shadows are. In y
+    /// the picture's acting grain Amount, which the masks' Amounts add
+    /// to (`Grain::drawn`).
     tone: [f32; 4],
     /// The output sharpen: the picture's amount in x, and the draw's
     /// part in it in w (0 none, 1 the luminance, 2 the sharpened
@@ -362,6 +364,14 @@ impl Renderer {
         let g_cube =
             greycard_render::gamut::Op::for_output(&to_lut, greycard_render::gamut::Params::CUBE)
                 .map_or([[0.0; 3]; 3], |op| op.cone_to_output());
+        // The grain's field and the picture's share of it, as the
+        // export draws them; the shader takes a zero amount as none.
+        let locals_shown = &v.locals[..v.locals.len().min(MAX_LOCALS)];
+        let (grain, grain_amount, grain_base) =
+            match greycard_render::finish::grain_drawn(&v.grain, locals_shown) {
+                Some((g, base)) => (g, g.amount, base),
+                None => (v.grain, 0.0, 0.0),
+            };
         let params = Params {
             view: [tw as f32, th as f32],
             image,
@@ -434,18 +444,16 @@ impl Renderer {
                 v.vignette.feather,
                 v.vignette.roundness,
             ],
+            // The one field the export draws, the picture's or the
+            // masks' alone (`finish::grain_drawn`), which the masks'
+            // Amounts make stronger or weaker by the pixel.
             grain0: {
-                let c = v.grain.kind.character();
-                let (level, f) = v.grain.level();
-                let amount = if v.grain.is_off() {
-                    0.0
-                } else {
-                    v.grain.amount
-                };
-                [amount, level as f32, f, c.radius]
+                let c = grain.kind.character();
+                let (level, f) = grain.level();
+                [grain_amount, level as f32, f, c.radius]
             },
             grain1: {
-                let c = v.grain.kind.character();
+                let c = grain.kind.character();
                 [c.spread, c.floor, c.tint, c.norm]
             },
             canvas: [v.canvas[0], v.canvas[1], v.canvas[2], 1.0],
@@ -510,7 +518,7 @@ impl Renderer {
                 },
                 0.0,
             ],
-            tone: [v.light.tone.midtones, 0.0, 0.0, 0.0],
+            tone: [v.light.tone.midtones, grain_base, 0.0, 0.0],
             osharp: [0.0; 4],
             osharp_taps: [0.0; 4],
             osharp_sigma: [0.0; 4],

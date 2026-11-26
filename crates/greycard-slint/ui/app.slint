@@ -1360,9 +1360,9 @@ export component App inherits Window {
     property <bool> mask-name-wanted: false;
     // One section open at a time is a tab's, over its folds, and a
     // fold on two tabs opened on one leaves the other's sections
-    // unmade and open: so it folds them. Light through Detail and the
-    // white balance are Develop's and a mask's; METADATA Develop's and
-    // Cull's.
+    // unmade and open: so it folds them. Light through Detail, the
+    // white balance, and Grain are Develop's and a mask's; METADATA
+    // Develop's and Cull's.
     function alone-with-masks() {
         if (root.shown-tab == "Masks") {
             root.collapsed-look = true;
@@ -1373,7 +1373,6 @@ export component App inherits Window {
             root.collapsed-sharpen = true;
             root.collapsed-output-sharpen = true;
             root.collapsed-vignette = true;
-            root.collapsed-grain = true;
             root.collapsed-proof = true;
             root.collapsed-monitor = true;
             root.collapsed-demosaic = true;
@@ -1394,6 +1393,7 @@ export component App inherits Window {
         root.collapsed-grading = true;
         root.collapsed-tint = true;
         root.collapsed-detail = true;
+        root.collapsed-grain = true;
     }
     function alone-with-cull() {
         if (root.shown-tab == "Cull") {
@@ -2162,6 +2162,11 @@ export component App inherits Window {
     in-out property <float> local-output-sharpen-threshold: 0.01;
     in-out property <bool> local-output-sharpen-threshold-own: false;
     in-out property <float> local-dehaze: 0;
+    // The chosen mask's own Grain: its switch and its Amount, -1 to 1,
+    // shown as ±100, added to the picture's at the output by the mask's
+    // weight.
+    in-out property <bool> local-grain-enabled: true;
+    in-out property <float> local-grain-amount: 0;
     in-out property <bool> sharpen: true;
     // The lens: what the database found for the file, whether it
     // found anything, whether there is a database at all, and the
@@ -5223,6 +5228,25 @@ export component App inherits Window {
                                     vignette-place <=> root.vignette-place;
                                     view-changed => { root.view-changed(); }
                                 }
+                                // The chosen mask's own Grain: its Amount added to
+                                // the picture's, a look control put on at the output.
+                                if section == "grain" && root.shown-tab == "Masks" && root.target > 0: GrainSection {
+                                    reorderable: develop-stack.movable;
+                                    reorder-started => { develop-stack.start(i); }
+                                    reorder-moved(x, y) => { develop-stack.move(x, y); }
+                                    reorder-ended(commit) => { return develop-stack.end(commit); }
+                                    one-of-panel: !root.grid-open;
+                                    has-reset: true;
+                                    reset-live: root.section-resets.grain;
+                                    reset-clicked => { root.section-reset(section); }
+                                    collapsed-grain <=> root.collapsed-grain;
+                                    opened-alone => { root.alone-with-masks(); }
+                                    target-name <=> root.target-name;
+                                    local: true;
+                                    grain-enabled <=> root.local-grain-enabled;
+                                    local-amount <=> root.local-grain-amount;
+                                    view-changed => { root.view-changed(); }
+                                }
                                 if section == "grain" && root.shown-tab == "Develop": GrainSection {
                                     reorderable: develop-stack.movable;
                                     reorder-started => { develop-stack.start(i); }
@@ -5232,6 +5256,7 @@ export component App inherits Window {
                                     has-reset: true;
                                     reset-live: root.section-resets.grain;
                                     reset-clicked => { root.section-reset(section); }
+                                    opened-alone => { root.alone-with-masks(); }
                                     grain-enabled <=> root.grain-enabled;
                                     collapsed-grain <=> root.collapsed-grain;
                                     grain-amount <=> root.grain-amount;

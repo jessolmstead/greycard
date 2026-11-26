@@ -450,6 +450,7 @@ fn a_mask_made_over_a_chosen_masks_open_section_shows_mask_alone() {
         ("GradingSection", "grading"),
         ("CurvesSection", "curves"),
         ("DetailSection", "detail"),
+        ("GrainSection", "grain"),
     ];
     for by_m in [false, true] {
         for (section, fold) in sections {

@@ -40,271 +40,271 @@ msgid "Create"
 msgstr "만들기"
 
 #. The camera match sheet's Fit button; it also reads 'Fit N groups'
-#: crates/greycard-slint/ui/app.slint:2420
+#: crates/greycard-slint/ui/app.slint:2425
 msgid "Fit"
 msgstr "맞추기"
 
 #. The status line as shown.
-#: crates/greycard-slint/ui/app.slint:2458
+#: crates/greycard-slint/ui/app.slint:2463
 msgid "preparing..."
 msgstr "준비 중..."
 
-#: crates/greycard-slint/ui/app.slint:2543
+#: crates/greycard-slint/ui/app.slint:2548
 msgid "Proof: {}"
 msgstr "교정: {}"
 
-#: crates/greycard-slint/ui/app.slint:2543
+#: crates/greycard-slint/ui/app.slint:2548
 msgid "Proof: {} · gamut"
 msgstr "교정: {} · 색역"
 
-#: crates/greycard-slint/ui/app.slint:2546
+#: crates/greycard-slint/ui/app.slint:2551
 msgid "File"
 msgstr "파일"
 
 #. The five canvas shades, in Settings and the View menu
-#: crates/greycard-slint/ui/app.slint:2571
+#: crates/greycard-slint/ui/app.slint:2576
 msgid "Black"
 msgstr "검정"
 
 #. The five canvas shades, in Settings and the View menu
-#: crates/greycard-slint/ui/app.slint:2571
+#: crates/greycard-slint/ui/app.slint:2576
 msgid "Dark grey"
 msgstr "진한 회색"
 
 #. The five canvas shades, in Settings and the View menu
-#: crates/greycard-slint/ui/app.slint:2571
+#: crates/greycard-slint/ui/app.slint:2576
 msgid "Light grey"
 msgstr "밝은 회색"
 
 #. The five canvas shades, in Settings and the View menu
-#: crates/greycard-slint/ui/app.slint:2571
+#: crates/greycard-slint/ui/app.slint:2576
 msgid "Mid grey"
 msgstr "중간 회색"
 
 #. The five canvas shades, in Settings and the View menu
-#: crates/greycard-slint/ui/app.slint:2571
+#: crates/greycard-slint/ui/app.slint:2576
 msgid "White"
 msgstr "흰색"
 
 #. The download ask's yes button, for a model or the lens database
-#: crates/greycard-slint/ui/app.slint:2682
+#: crates/greycard-slint/ui/app.slint:2687
 msgid "Download"
 msgstr "다운로드"
 
 #. The download ask's button that declines for now
-#: crates/greycard-slint/ui/app.slint:2684
+#: crates/greycard-slint/ui/app.slint:2689
 msgid "Not now"
 msgstr "나중에"
 
 #. The models ask's button that downloads every model
-#: crates/greycard-slint/ui/app.slint:2691
+#: crates/greycard-slint/ui/app.slint:2696
 msgid "Download all"
 msgstr "모두 다운로드"
 
-#: crates/greycard-slint/ui/app.slint:4294
+#: crates/greycard-slint/ui/app.slint:4299
 msgid "Queued for export, shown as it will export. Edit it from its folder."
 msgstr ""
 "내보내기 대기 중이라 내보낼 모습으로 표시합니다. 편집은 해당 폴더에서 하십시"
 "오."
 
 #. The Loupe's mode button at the top of the develop panel
-#: crates/greycard-slint/ui/app.slint:4305
+#: crates/greycard-slint/ui/app.slint:4310
 msgid "Cull"
 msgstr "선별"
 
-#: crates/greycard-slint/ui/app.slint:4310
+#: crates/greycard-slint/ui/app.slint:4315
 msgid "Cull mode"
 msgstr "선별 모드"
 
 #. Develop, Crop, Masks, and Retouch
-#: crates/greycard-slint/ui/app.slint:4329
+#: crates/greycard-slint/ui/app.slint:4334
 msgid "Panel tabs"
 msgstr "패널 탭"
 
 #. The Loupe's mode buttons at the top of the develop panel
-#: crates/greycard-slint/ui/app.slint:4332
+#: crates/greycard-slint/ui/app.slint:4337
 msgid "Crop"
 msgstr "자르기"
 
 #. The Loupe's mode buttons at the top of the develop panel
-#: crates/greycard-slint/ui/app.slint:4332
+#: crates/greycard-slint/ui/app.slint:4337
 msgid "Develop"
 msgstr "현상"
 
 #. The Loupe's mode buttons at the top of the develop panel
-#: crates/greycard-slint/ui/app.slint:4332
+#: crates/greycard-slint/ui/app.slint:4337
 msgid "Masks"
 msgstr "마스크"
 
 #. The Loupe's mode buttons at the top of the develop panel
-#: crates/greycard-slint/ui/app.slint:4332
+#: crates/greycard-slint/ui/app.slint:4337
 msgid "Retouch"
 msgstr "리터치"
 
 #. View menu
-#: crates/greycard-slint/ui/app.slint:5538
+#: crates/greycard-slint/ui/app.slint:5563
 msgid "Full screen"
 msgstr "전체 화면"
 
 #. View menu
-#: crates/greycard-slint/ui/app.slint:5538
+#: crates/greycard-slint/ui/app.slint:5563
 msgid "Full screen (F11)"
 msgstr "전체 화면 (F11)"
 
 #. File menu
-#: crates/greycard-slint/ui/app.slint:5546
+#: crates/greycard-slint/ui/app.slint:5571
 msgid "Export..."
 msgstr "내보내기..."
 
 #. File menu
-#: crates/greycard-slint/ui/app.slint:5546
+#: crates/greycard-slint/ui/app.slint:5571
 msgid "Stop export"
 msgstr "내보내기 중지"
 
 #. View menu
-#: crates/greycard-slint/ui/app.slint:5677
+#: crates/greycard-slint/ui/app.slint:5702
 msgid "Right panel"
 msgstr "오른쪽 패널"
 
 #. View menu
-#: crates/greycard-slint/ui/app.slint:5679
+#: crates/greycard-slint/ui/app.slint:5704
 msgid "Hide panel"
 msgstr "패널 숨기기"
 
 #. View menu
-#: crates/greycard-slint/ui/app.slint:5679
+#: crates/greycard-slint/ui/app.slint:5704
 msgid "Show panel"
 msgstr "패널 표시"
 
 #. View menu: the filmstrip
-#: crates/greycard-slint/ui/app.slint:5716
+#: crates/greycard-slint/ui/app.slint:5741
 msgid "Filmstrip"
 msgstr "필름 스트립"
 
 #. View menu: the filmstrip
-#: crates/greycard-slint/ui/app.slint:5718
+#: crates/greycard-slint/ui/app.slint:5743
 msgid "Hide filmstrip"
 msgstr "필름 스트립 숨기기"
 
 #. View menu: the filmstrip
-#: crates/greycard-slint/ui/app.slint:5718
+#: crates/greycard-slint/ui/app.slint:5743
 msgid "Show filmstrip"
 msgstr "필름 스트립 표시"
 
 #. Frame menu: {} is Back up or Bring back, over a list of archives
-#: crates/greycard-slint/ui/app.slint:5880
+#: crates/greycard-slint/ui/app.slint:5905
 msgid "{} to"
 msgstr "{} 대상"
 
 #. The view button at the top left: the grid
-#: crates/greycard-slint/ui/app.slint:5926
+#: crates/greycard-slint/ui/app.slint:5951
 msgid "Library"
 msgstr "라이브러리"
 
-#: crates/greycard-slint/ui/app.slint:5930
+#: crates/greycard-slint/ui/app.slint:5955
 msgid "Library view"
 msgstr "라이브러리 보기"
 
 #. The view button at the top left: one frame
-#: crates/greycard-slint/ui/app.slint:5944
+#: crates/greycard-slint/ui/app.slint:5969
 msgid "Loupe"
 msgstr "확대경"
 
-#: crates/greycard-slint/ui/app.slint:5948
+#: crates/greycard-slint/ui/app.slint:5973
 msgid "Loupe view"
 msgstr "확대경 보기"
 
 #. File menu
-#: crates/greycard-slint/ui/app.slint:6036
+#: crates/greycard-slint/ui/app.slint:6061
 msgid "Open folder..."
 msgstr "폴더 열기..."
 
 #. File menu
-#: crates/greycard-slint/ui/app.slint:6069
+#: crates/greycard-slint/ui/app.slint:6094
 msgid "Import..."
 msgstr "가져오기..."
 
-#: crates/greycard-slint/ui/app.slint:6092
+#: crates/greycard-slint/ui/app.slint:6117
 msgid "Stop import"
 msgstr "가져오기 중지"
 
-#: crates/greycard-slint/ui/app.slint:6092
+#: crates/greycard-slint/ui/app.slint:6117
 msgid "Stopping..."
 msgstr "중지하는 중..."
 
-#: crates/greycard-slint/ui/app.slint:6093
+#: crates/greycard-slint/ui/app.slint:6118
 msgid "Importing the catalog..."
 msgstr "카탈로그를 가져오는 중..."
 
 #. File menu, under Import
-#: crates/greycard-slint/ui/app.slint:6114
+#: crates/greycard-slint/ui/app.slint:6139
 msgid "From a card or folder..."
 msgstr "카드 또는 폴더에서..."
 
 #. File menu, under Import
-#: crates/greycard-slint/ui/app.slint:6119
+#: crates/greycard-slint/ui/app.slint:6144
 msgid "A Lightroom catalog..."
 msgstr "Lightroom 카탈로그..."
 
 #. Help menu: a newer version is out; {} is its number
-#: crates/greycard-slint/ui/app.slint:6478
+#: crates/greycard-slint/ui/app.slint:6503
 msgid "{} is available"
 msgstr "{} 버전 사용 가능"
 
 #. Help menu: under the version note
-#: crates/greycard-slint/ui/app.slint:6487
+#: crates/greycard-slint/ui/app.slint:6512
 msgid "Not now: do not offer {} again"
 msgstr "나중에: {} 버전 다시 알리지 않기"
 
-#: crates/greycard-slint/ui/app.slint:6495
+#: crates/greycard-slint/ui/app.slint:6520
 msgid "Settings..."
 msgstr "설정..."
 
-#: crates/greycard-slint/ui/app.slint:6503
+#: crates/greycard-slint/ui/app.slint:6528
 msgid "Help"
 msgstr "도움말"
 
-#: crates/greycard-slint/ui/app.slint:6506
+#: crates/greycard-slint/ui/app.slint:6531
 msgid "Help menu"
 msgstr "도움말 메뉴"
 
 #. Help menu: the keys sheet, with the key that opens it
-#: crates/greycard-slint/ui/app.slint:6527
+#: crates/greycard-slint/ui/app.slint:6552
 msgid "Keys (?)"
 msgstr "단축키 (?)"
 
-#: crates/greycard-slint/ui/app.slint:6531
+#: crates/greycard-slint/ui/app.slint:6556
 msgid "User guide"
 msgstr "사용 설명서"
 
-#: crates/greycard-slint/ui/app.slint:6536
+#: crates/greycard-slint/ui/app.slint:6561
 msgid "Report a problem..."
 msgstr "문제 보고..."
 
-#: crates/greycard-slint/ui/app.slint:6606
+#: crates/greycard-slint/ui/app.slint:6631
 msgid "Left panel"
 msgstr "왼쪽 패널"
 
-#: crates/greycard-slint/ui/app.slint:6942
+#: crates/greycard-slint/ui/app.slint:6967
 #, fuzzy
 msgid "Search apps"
 msgstr "단축키 검색"
 
-#: crates/greycard-slint/ui/app.slint:6942
+#: crates/greycard-slint/ui/app.slint:6967
 #, fuzzy
 msgid "Search archives"
 msgstr "단축키 검색"
 
-#: crates/greycard-slint/ui/app.slint:6943
+#: crates/greycard-slint/ui/app.slint:6968
 #, fuzzy
 msgid "No matching apps."
 msgstr "복사할 항목이 없습니다."
 
-#: crates/greycard-slint/ui/app.slint:6943
+#: crates/greycard-slint/ui/app.slint:6968
 msgid "No matching archives."
 msgstr ""
 
-#: crates/greycard-slint/ui/app.slint:7291
+#: crates/greycard-slint/ui/app.slint:7316
 msgid "Edit in"
 msgstr "외부 편집"
 
@@ -1588,29 +1588,29 @@ msgstr "자연"
 msgid "Overlay"
 msgstr "오버레이"
 
-#: crates/greycard-slint/ui/panel/edit.slint:747
+#: crates/greycard-slint/ui/panel/edit.slint:754
 msgid "GRAIN"
 msgstr "그레인"
 
-#: crates/greycard-slint/ui/panel/edit.slint:780
+#: crates/greycard-slint/ui/panel/edit.slint:804
 msgid "Type"
 msgstr "종류"
 
 #. Grain: the two kinds of grain
-#: crates/greycard-slint/ui/panel/edit.slint:783
+#: crates/greycard-slint/ui/panel/edit.slint:807
 msgid "Cubic"
 msgstr "입방형"
 
 #. Grain: the two kinds of grain
-#: crates/greycard-slint/ui/panel/edit.slint:783
+#: crates/greycard-slint/ui/panel/edit.slint:807
 msgid "Tabular"
 msgstr "평판형"
 
-#: crates/greycard-slint/ui/panel/edit.slint:801
+#: crates/greycard-slint/ui/panel/edit.slint:825
 msgid "DEMOSAIC"
 msgstr "디모자이크"
 
-#: crates/greycard-slint/ui/panel/edit.slint:808
+#: crates/greycard-slint/ui/panel/edit.slint:832
 msgid "Demosaic"
 msgstr "디모자이크"
 
@@ -5242,8 +5242,8 @@ msgstr "카메라 JPEG 있음: {}"
 #: crates/greycard-ui/src/panel/cull.rs:446
 #: crates/greycard-ui/src/panel/deliver.rs:1682
 #: crates/greycard-ui/src/panel/deliver.rs:1716
-#: crates/greycard-ui/src/panel/edit.rs:552
-#: crates/greycard-ui/src/panel/edit.rs:1360
+#: crates/greycard-ui/src/panel/edit.rs:558
+#: crates/greycard-ui/src/panel/edit.rs:1369
 #: crates/greycard-ui/src/panel/history.rs:488
 msgid "developing..."
 msgstr "현상 중..."
@@ -6119,24 +6119,24 @@ msgstr "{why}: 다른 폴더를 선택하십시오"
 msgid "not exported: {why}; {failed}"
 msgstr "내보내지 않았습니다: {why}; {failed}"
 
-#: crates/greycard-ui/src/panel/edit.rs:597
+#: crates/greycard-ui/src/panel/edit.rs:603
 msgid "no demosaic for this mosaic"
 msgstr "이 모자이크에 맞는 디모자이크가 없습니다"
 
-#: crates/greycard-ui/src/panel/edit.rs:598
+#: crates/greycard-ui/src/panel/edit.rs:604
 msgid "not a mosaic"
 msgstr "모자이크가 아닙니다"
 
-#: crates/greycard-ui/src/panel/edit.rs:599
+#: crates/greycard-ui/src/panel/edit.rs:605
 msgid "the raw could not be read"
 msgstr "RAW를 읽을 수 없습니다"
 
-#: crates/greycard-ui/src/panel/edit.rs:600
+#: crates/greycard-ui/src/panel/edit.rs:606
 msgid "reading the raw"
 msgstr "RAW를 읽을 때"
 
 #. The adjustments list: the whole-picture row above the masks
-#: crates/greycard-ui/src/panel/edit.rs:783
+#: crates/greycard-ui/src/panel/edit.rs:789
 msgid "Global"
 msgstr "전체"
 

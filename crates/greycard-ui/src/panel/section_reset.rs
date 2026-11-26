@@ -62,6 +62,7 @@ pub(crate) const MASK_SECTIONS: &[&str] = &[
     "grading",
     "tint",
     "detail",
+    "grain",
 ];
 
 /// Put section `name` of `edit` back to `original`'s, the frame's
@@ -89,6 +90,7 @@ pub(crate) fn reset_section(
             "grading" => look.grading = fresh.grading,
             "tint" => look.tint = fresh.tint,
             "detail" => look.detail = fresh.detail,
+            "grain" => look.grain = fresh.grain,
             _ => return false,
         }
         return true;
@@ -177,6 +179,7 @@ pub(crate) fn section_at_reset(
             "grading" => look.grading == fresh.grading,
             "tint" => look.tint == fresh.tint,
             "detail" => look.detail == fresh.detail,
+            "grain" => look.grain == fresh.grain,
             _ => true,
         };
     }

@@ -899,13 +899,13 @@ fn finish_framed<T: Copy + Default + Send, const N: usize>(
             vignette.amount * vignette.at((x as f32 + 0.5) / iw, (y as f32 + 0.5) / ih, iw / ih)
         }
     };
-    let grain = edit.grain;
+    // The grain's one field over the frame as written: the picture's,
+    // or at its Size and kind for the masks alone where only a mask's
+    // share lays it on; the finish scales it by the masks' shares at
+    // each pixel (`finish::grain_share`).
+    let grain = finish::grain_drawn(&edit.grain, &locals).map(|(g, _)| g);
     let frame_at = |x: usize, y: usize| {
-        let noise = if grain.is_off() {
-            None
-        } else {
-            Some(grain.at((x as f32 + 0.5) / iw, (y as f32 + 0.5) / ih, iw / ih))
-        };
+        let noise = grain.map(|g| g.at((x as f32 + 0.5) / iw, (y as f32 + 0.5) / ih, iw / ih));
         (stops(x, y), noise)
     };
     let m = settings.space.matrix();
@@ -3707,6 +3707,8 @@ mod tests {
     }
 }
 
+#[cfg(test)]
+mod grain_tests;
 #[cfg(test)]
 mod grey_tests;
 #[cfg(test)]

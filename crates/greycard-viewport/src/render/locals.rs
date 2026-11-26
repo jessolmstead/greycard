@@ -37,7 +37,8 @@ pub(super) struct LocalGpu {
     /// (`Baked::detail`'s last); in the slot that keeps what follows
     /// 16-byte aligned.
     sharpen: f32,
-    /// This adjustment's tint as a vector, in x and y.
+    /// This adjustment's tint as a vector, in x and y; its grain
+    /// Amount (`Baked::grain`) in z.
     tint: [f32; 4],
     /// Its own Texture, Clarity, Dehaze, and Structure amounts
     /// (`Baked::detail`), put on from the detail planes.
@@ -341,7 +342,7 @@ pub(super) fn locals_gpu(
             sharpen: b.detail[4],
             tint: {
                 let v = b.tint.vector();
-                [v[0], v[1], 0.0, 0.0]
+                [v[0], v[1], b.grain, 0.0]
             },
             detail: [b.detail[0], b.detail[1], b.detail[2], b.detail[3]],
             white: match &b.white {

@@ -202,7 +202,8 @@ struct Params {
     minify: vec4<f32>,
     // In x the midtones, stops of shift by the guide plane's
     // luminance as the highlights and shadows are; `finish.rs` says
-    // where it acts.
+    // where it acts. In y the picture's acting grain Amount, 0 to 1,
+    // which the masks' Amounts add to (`Grain::drawn`, `grain_share`).
     tone: vec4<f32>,
     // The output sharpen (`output_sharpen.rs`): the picture's amount
     // (none while its section is off and a mask's share runs it) in x,
@@ -288,7 +289,8 @@ struct Local {
     // Its own Sharpen, the share of the sharpen's delta it puts on:
     // nothing while its Detail is off.
     sharpen: f32,
-    // This adjustment's tint as a vector, in xy.
+    // This adjustment's tint as a vector, in xy; its grain Amount in z,
+    // nothing while its Grain is off (`Baked::grain`).
     tint: vec4<f32>,
     // Its own Texture, Clarity, and Dehaze amounts, in xyz, and its
     // Structure in w: nothing while its section is off.
@@ -631,6 +633,9 @@ fn fs_main(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
     // on top, each into its term (the local's `tone.w`).
     var osharp_scale = 1.0;
     var osharp_add = array<f32, 4>(0.0, 0.0, 0.0, 0.0);
+    // The masks' grain Amounts here, summed by their weights, as
+    // `finish::grain_share` sums them.
+    var grain_k = 0.0;
     for (var k = 0u; k < count; k = k + 1u) {
         let l = locals[k];
         let m = mask_at(l, uv, sample);
@@ -641,6 +646,9 @@ fn fs_main(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
             detail_k = detail_k + w * l.detail;
         }
         detail_s = detail_s + w * l.sharpen;
+        if (l.tint.z != 0.0) {
+            grain_k = grain_k + w * l.tint.z;
+        }
         let osharp_share = w * l.tone.z;
         if (osharp_share < 0.0) {
             osharp_scale = osharp_scale * max(1.0 + osharp_share, 0.0);
@@ -909,7 +917,16 @@ fn fs_main(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
     }
     var e = encode(clamp(s, vec3<f32>(0.0), vec3<f32>(1.0)));
     if (p.grain0.x > 0.0) {
-        e = grain_apply(grain_at(q / p.frame_size, p.frame_size.x / p.frame_size.y), e);
+        // Its strength here, the picture's Amount and the masks' added:
+        // one field, scaled, and as it was to the bit at a factor of one.
+        let share = grain_share(grain_k);
+        if (share > 0.0) {
+            var noise = grain_at(q / p.frame_size, p.frame_size.x / p.frame_size.y);
+            if (share != 1.0) {
+                noise = noise * share;
+            }
+            e = grain_apply(noise, e);
+        }
     }
     // The scopes' analysis draw stops here, at the export space's
     // encoded values: what the file will hold, whatever the monitor.
@@ -988,6 +1005,31 @@ fn scope_weight(count: u32, weights: array<f32, 16>) -> f32 {
         return select(0.0, weights[min(k, 15u)], k < count);
     }
     return 1.0;
+}
+
+// A pixel's factor on the drawn grain, as `finish::grain_share` makes
+// it: the masks' summed Amounts through the detail's threshold
+// (`detail::soft`), held to -1 to 1, added to the picture's acting
+// Amount `p.tone.y`: `max(a + k, 0) / a` over the field drawn at `a`,
+// exactly 1 at no `k`; with none of the picture's, the field drawn at a
+// full Amount and `max(k, 0)` of it (`grain::scale`).
+fn grain_share(sum: f32) -> f32 {
+    let mag = abs(sum);
+    var k = sum;
+    if (mag < DETAIL_NEGLIGIBLE) {
+        k = 0.0;
+    } else if (mag < 2.0 * DETAIL_NEGLIGIBLE) {
+        k = sign(sum) * 2.0 * (mag - DETAIL_NEGLIGIBLE);
+    }
+    k = clamp(k, -1.0, 1.0);
+    let a = p.tone.y;
+    if (a > 0.0) {
+        if (k == 0.0) {
+            return 1.0;
+        }
+        return max(a + k, 0.0) / a;
+    }
+    return max(k, 0.0);
 }
 
 // The grain, as `grain.rs` has it: the hash, a cell's crystals from

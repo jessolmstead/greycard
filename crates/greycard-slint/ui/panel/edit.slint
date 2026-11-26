@@ -742,16 +742,38 @@ export component GrainSection inherits Section {
     in-out property <float> grain-amount;
     in-out property <float> grain-size;
     in-out property <string> grain-kind;
+    // A mask's own Grain names the mask it is under, as the other
+    // sections of its look do; empty for the picture's. A mask's is an
+    // Amount alone, -100 to +100, added to the picture's under the
+    // mask, at the picture's Size and kind: no Size or kind of its own.
+    in-out property <string> target-name;
+    in property <bool> local;
+    in-out property <float> local-amount;
     callback view-changed();
 
     title: @tr("GRAIN");
     icon: @image-url("../icons/grip.svg");
+    owner: root.target-name;
     collapsed <=> root.collapsed-grain;
     switchable: true;
     on <=> root.grain-enabled;
     switched => { root.view-changed(); }
-    amount-slider := EditSlider {
+    if root.local: local-amount-slider := EditSlider {
         label: @tr("Amount");
+        enabled: root.grain-enabled;
+        minimum: -1;
+        maximum: 1;
+        default: 0;
+        step: 0.01;
+        steps: Steps.percent;
+        value <=> root.local-amount;
+        scale: 100;
+        text: (root.local-amount >= 0 ? "+" : "") + round(root.local-amount * 100);
+        changed(v) => { root.view-changed(); }
+    }
+    if !root.local: amount-slider := EditSlider {
+        label: @tr("Amount");
+        enabled: root.grain-enabled;
         minimum: 0;
         maximum: 1;
         default: 0;
@@ -762,8 +784,9 @@ export component GrainSection inherits Section {
         text: round(root.grain-amount * 100) + "%";
         changed(v) => { root.view-changed(); }
     }
-    size-slider := EditSlider {
+    if !root.local: size-slider := EditSlider {
         label: @tr("Size");
+        enabled: root.grain-enabled;
         minimum: 0.1;
         maximum: 2;
         default: 0.5;
@@ -773,10 +796,11 @@ export component GrainSection inherits Section {
         text: round(root.grain-size * 100) / 100 + "\u{2030}";
         changed(v) => { root.view-changed(); }
     }
-    Rectangle { height: Theme.space-1; }
-    Segmented {
+    if !root.local: Rectangle { height: Theme.space-1; }
+    if !root.local: Segmented {
         // The panel's Tab is the window's: no stop here.
         tab-stop: false;
+        enabled: root.grain-enabled;
         name: @tr("Type");
         options: ["Cubic", "Tabular"];
         // Grain: the two kinds of grain

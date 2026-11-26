@@ -40,8 +40,8 @@ With a mask chosen, you see, top to bottom:
    any, and **Add a shape**, the buttons that add another shape.
 2. **The mask's own sliders:** **WHITE BALANCE**, **LIGHT**,
    **COLOR**, **CURVES**, **COLOR MIXER**, **COLOR GRADING**,
-   **TINT** and **DETAIL**, each headed with the mask's name as you typed
-   it ("Sky 1 · LIGHT").
+   **TINT**, **DETAIL**, and **GRAIN**, each headed with the mask's name
+   as you typed it ("Sky 1 · LIGHT").
 
 ### Naming, Show mask, Invert, Refine edge, and Opacity
 
@@ -339,8 +339,8 @@ capture sharpen. Exposure moves them.
 ## A mask's own sliders
 
 Under the mask, **LIGHT**, **COLOR**, **CURVES**, **COLOR MIXER**,
-**COLOR GRADING**, **TINT** and **DETAIL** work as they do on the
-Develop tab, but only where the mask reaches. **BLACK & WHITE** and
+**COLOR GRADING**, **TINT**, **DETAIL**, and **GRAIN** work as they
+do on the Develop tab, but only where the mask reaches. **BLACK & WHITE** and
 the **Display curve** switch are global only. A mask's tone sliders
 act even when the global **LIGHT** section is switched off. Each of
 the mask's sections has its own switch, **TINT** included, so you can
@@ -374,6 +374,21 @@ slider, one slider at a time. A mask's **Dehaze** used together with
 the same mask's **Texture**, **Clarity**, or **Structure** comes out a
 little differently from the global pair, since the mask reads the haze
 before its own detail is applied.
+
+### Grain in a mask
+
+The mask's **GRAIN** has one slider, **Amount**, in the same units
+as the Develop tab's [Grain](develop.md#grain) Amount. It adds to or
+takes from the picture's Amount under the mask: with the picture at
+40%, +40 grains at 80% inside the mask, and -100 takes all the grain
+away, so a face stays clean in a grainy frame. With the Develop tab's
+Grain off or at 0%, +50 grains at 50% inside the mask alone. The
+grain's **Size** and kind are always the Develop tab's.
+
+It is the picture's one grain, only stronger or weaker: across a
+feathered edge it fades in and out, with no seam and no second
+pattern. Where masks overlap, their amounts add, held to -100 and
++100. Like the picture's grain, check it at 1:1.
 
 ### White balance in a mask
 

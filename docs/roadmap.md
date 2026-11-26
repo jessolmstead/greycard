@@ -1470,8 +1470,7 @@ clears or a tester asks for it.
       error: no fill can match what the sensor never recorded, and
       the smoothness bar may reject fills that look right
 - [ ] Maybe: MCP
-- [ ] Grain in a mask: its amount and size under the mask, more or
-      less than the picture's (pixls 61420)
+- [ ] A mask's Grain with its own Size and kind (§752)
 - [ ] A picture with a grey ICC profile read by its curve, not as
       sRGB: it changes how such pictures already in a library develop
       (§751)

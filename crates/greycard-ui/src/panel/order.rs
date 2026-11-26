@@ -10,8 +10,8 @@
 //! The Masks tab shares Develop's order. The six sections a mask
 //! edits too (Light, Color, Curves, Mixer, Grading, and Tint) are one
 //! instance on both tabs and keep one place; MASK is the Masks tab's
-//! alone, and a mask's own white balance and Detail stand where
-//! Develop's do. A section the tab on show does not have takes no room
+//! alone, and a mask's own white balance, Detail, and Grain stand
+//! where Develop's do. A section the tab on show does not have takes no room
 //! there, so each tab sees its own sections in the shared order.
 //!
 //! Library and the Loupe share the left pane's one model too, so that

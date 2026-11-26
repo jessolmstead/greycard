@@ -169,6 +169,36 @@ fn toned() -> Vec<(&'static str, WorkingImage, Edit)> {
                 e.grain.amount = 0.5;
             }),
         ),
+        (
+            "a mask's grain",
+            photo(),
+            of(&|e| {
+                // The picture's 30%, a mask adding 60% over the left,
+                // feathered across a third of the frame, one taking all
+                // of it over the right, and the output sharpen's bands.
+                use greycard_edit::mask::{Component, Mask, Shape};
+                e.grain.amount = 0.3;
+                e.output_sharpen.amount = 0.6;
+                for (id, from, to, amount) in [(1, 0.5, 0.2, 0.6f32), (2, 0.7, 0.9, -1.0)] {
+                    let mut a = Adjustment {
+                        id,
+                        mask: Mask {
+                            components: vec![Component {
+                                shape: Shape::Linear {
+                                    from: [from, 0.0],
+                                    to: [to, 0.0],
+                                },
+                                ..Default::default()
+                            }],
+                            ..Default::default()
+                        },
+                        ..Default::default()
+                    };
+                    a.look.grain.amount = amount;
+                    e.adjustments.push(a);
+                }
+            }),
+        ),
     ]
 }
 

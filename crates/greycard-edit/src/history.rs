@@ -401,6 +401,16 @@ fn look(b: &Look, a: &Look, prefix: &str) -> Vec<String> {
     if b.detail != a.detail {
         out.push(format!("{prefix}{}", detail(&b.detail, &a.detail)));
     }
+    if b.grain != a.grain {
+        out.push(format!(
+            "{prefix}{}",
+            if b.grain.enabled != a.grain.enabled {
+                switched("Grain", a.grain.enabled)
+            } else {
+                format!("Grain {:+.0}", a.grain.amount * 100.0)
+            }
+        ));
+    }
     out
 }
 
@@ -1109,6 +1119,14 @@ mod tests {
         detail_off.adjustments[0].look.detail.enabled = false;
         assert_eq!(describe(&hazed, &detail_off, &[]), "Sky: Detail off");
         assert_eq!(describe(&detail_off, &hazed, &[]), "Sky: Detail on");
+        // And its Grain, in the global's words with its Amount.
+        let mut grained = hazed.clone();
+        grained.adjustments[0].look.grain.amount = -1.0;
+        assert_eq!(describe(&hazed, &grained, &[]), "Sky: Grain -100");
+        let mut grain_off = grained.clone();
+        grain_off.adjustments[0].look.grain.enabled = false;
+        assert_eq!(describe(&grained, &grain_off, &[]), "Sky: Grain off");
+        assert_eq!(describe(&grain_off, &grained, &[]), "Sky: Grain on");
         let mut e = base.clone();
         e.bw.enabled = true;
         assert_eq!(describe(&base, &e, &[]), "Black and white on");

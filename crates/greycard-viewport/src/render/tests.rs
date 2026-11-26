@@ -2473,6 +2473,286 @@ fn a_masks_output_sharpen_on_the_gpu_is_the_cpus() {
     }
 }
 
+/// A mask's Grain on the GPU is the CPU's: at 1:1 over the whole
+/// frame, at 1:1 panned so the view is a part of the frame across the
+/// mask's feather (the frame's pixels the export makes there), and at
+/// half (against the half-size export boxed down as the view's
+/// footprint averages it); a feathered radial at -100 and +100 over the
+/// picture's grain, +40 over 30%, +100 and +40 over 0%, an Amount under
+/// an opacity, two masks over each other, and one under a Grain
+/// switched off. Every pixel within a level. With the picture's at 0%,
+/// not a pixel the masks do not reach moves; an Amount of zero, one
+/// switched off, and one too small to act draw the same picture to the
+/// bit; and the shader's threshold is the CPU's.
+#[test]
+fn a_masks_grain_on_the_gpu_is_the_cpus() {
+    use greycard_render::finish::{Local, finish_reaching, grain_drawn};
+    assert_eq!(
+        shader_literal("DETAIL_NEGLIGIBLE"),
+        greycard_render::detail::NEGLIGIBLE
+    );
+    let Some((device, queue)) = device("a mask's grain") else {
+        return;
+    };
+    // Midtones, where the grain shows most, gently varied.
+    let (w, h) = (160usize, 96usize);
+    let mut image = WorkingImage::new(w, h);
+    for y in 0..h {
+        for x in 0..w {
+            let (u, v) = (x as f32 / w as f32, y as f32 / h as f32);
+            let i = (y * w + x) * 3;
+            image.data[i..i + 3].copy_from_slice(&[
+                0.12 + 0.1 * u,
+                0.15 + 0.06 * v,
+                0.2 - 0.08 * u,
+            ]);
+        }
+    }
+    let seen: Vec<f32> = image
+        .data
+        .iter()
+        .map(|v| half::f16::from_f32(*v).to_f32())
+        .collect();
+    let full = WorkingImage {
+        width: w,
+        height: h,
+        data: seen.clone(),
+    };
+    let (hw, hh) = (w / 2, h / 2);
+    let mut half_image = WorkingImage::new(hw, hh);
+    for y in 0..hh {
+        for x in 0..hw {
+            for k in 0..3 {
+                let at = |xx: usize, yy: usize| seen[(yy * w + xx) * 3 + k];
+                half_image.data[(y * hw + x) * 3 + k] = (at(2 * x, 2 * y)
+                    + at(2 * x + 1, 2 * y)
+                    + at(2 * x, 2 * y + 1)
+                    + at(2 * x + 1, 2 * y + 1))
+                    / 4.0;
+            }
+        }
+    }
+    let mut renderer = Renderer::new(&device, &queue);
+    renderer.upload(&Halves::from_image(&image, None));
+    let to_out = greycard_render::export::Space::Srgb.matrix();
+    let radial = |center: [f32; 2]| Mask {
+        components: vec![Component {
+            shape: Shape::Radial {
+                center,
+                radius: [0.22, 0.16],
+                angle: 0.0,
+                feather: 0.6,
+            },
+            ..Default::default()
+        }],
+        ..Default::default()
+    };
+    let edit_of = |amount: f32, shares: &[(f32, f32, bool)]| {
+        let mut edit = greycard_edit::Edit::default();
+        edit.light.exposure = 0.4;
+        edit.grain.amount = amount;
+        edit.grain.size = 1.5;
+        for (i, &(share, opacity, on)) in shares.iter().enumerate() {
+            let look = Look {
+                grain: greycard_edit::LocalGrain {
+                    enabled: on,
+                    amount: share,
+                },
+                ..Look::default()
+            };
+            edit.adjustments.push(greycard_edit::Adjustment {
+                id: i as u64 + 1,
+                mask: radial([0.4 + 0.2 * i as f32, 0.3]),
+                look,
+                opacity,
+                ..Default::default()
+            });
+        }
+        edit
+    };
+    let locals_of = |edit: &greycard_edit::Edit| -> Vec<Local> {
+        edit.adjustments
+            .iter()
+            .map(|a| Local::of(a, vec![None; a.mask.components.len()], None))
+            .collect()
+    };
+    // What the viewport shows of `edit` at `zoom`, a view `vw` by `vh`
+    // about frame pixel `center`.
+    let draw = |renderer: &mut Renderer,
+                edit: &greycard_edit::Edit,
+                zoom: f32,
+                (vw, vh): (usize, usize),
+                center: (f32, f32)| {
+        let view = View {
+            zoom,
+            center,
+            plane: (w as f32, h as f32),
+            frame_size: (w as f32, h as f32),
+            source: Source::SCENE,
+            locals: locals_of(edit),
+            ..View::with_look(edit)
+        };
+        let target = renderer.render(vw as u32, vh as u32, &view).0;
+        renderer.read_back(&target).expect("read back")
+    };
+    // The export's finish of `edit` over `picture`, `pw` wide, its
+    // grain drawn as `export::render` draws it.
+    let cpu = |edit: &greycard_edit::Edit, picture: &WorkingImage, reach: f32| {
+        let (pw, ph) = (picture.width, picture.height);
+        let locals = locals_of(edit);
+        let global = Baked::global(edit, Source::SCENE);
+        let grain = grain_drawn(&edit.grain, &locals).map(|(g, _)| g);
+        let (iw, ih) = (pw as f32, ph as f32);
+        finish_reaching(
+            picture,
+            reach,
+            None,
+            &global,
+            &locals,
+            |x, y| ((x as f32 + 0.5) / iw, (y as f32 + 0.5) / iw),
+            |x, y| {
+                let (u, v) = ((x as f32 + 0.5) / iw, (y as f32 + 0.5) / ih);
+                (0.0, grain.map(|g| g.at(u, v, iw / ih)))
+            },
+            None,
+            None,
+            None,
+            &to_out,
+            |v: f32| v,
+        )
+    };
+    // (the picture's Amount, each mask's Amount, opacity, and switch)
+    type Shares<'a> = &'a [(f32, f32, bool)];
+    let cases: [(f32, Shares); 8] = [
+        (0.6, &[(-1.0, 1.0, true)]),
+        (0.5, &[(1.0, 1.0, true)]),
+        (0.3, &[(0.4, 1.0, true)]),
+        (0.0, &[(1.0, 1.0, true)]),
+        (0.0, &[(0.4, 1.0, true)]),
+        (0.7, &[(-0.6, 0.5, true)]),
+        (0.0, &[(0.8, 1.0, true), (0.7, 0.8, true)]),
+        (0.0, &[(1.0, 1.0, false)]),
+    ];
+    for (amount, shares) in cases {
+        let edit = edit_of(amount, shares);
+        let plain = edit_of(
+            amount,
+            &shares
+                .iter()
+                .map(|&(_, o, on)| (0.0, o, on))
+                .collect::<Vec<_>>(),
+        );
+        let weight = |u: f32, v: f32| {
+            locals_of(&edit)
+                .iter()
+                .map(|l| l.weight_sampled(u, v, None))
+                .fold(0.0f32, f32::max)
+        };
+        // (zoom, the view's size, its center, the picture the CPU
+        // finishes, and the frame pixel the view's corner is at in it)
+        let views = [
+            (
+                1.0f32,
+                (w, h),
+                (w as f32 / 2.0, h as f32 / 2.0),
+                &full,
+                (0, 0),
+            ),
+            (1.0, (64, 48), (80.0, 30.0), &full, (48, 6)),
+            (
+                0.5,
+                (hw, hh),
+                (w as f32 / 2.0, h as f32 / 2.0),
+                &half_image,
+                (0, 0),
+            ),
+        ];
+        for (zoom, (vw, vh), center, picture, (ox, oy)) in views {
+            let shown = draw(&mut renderer, &edit, zoom, (vw, vh), center);
+            let before = draw(&mut renderer, &plain, zoom, (vw, vh), center);
+            let made = cpu(&edit, picture, zoom);
+            let made_plain = cpu(&plain, picture, zoom);
+            let pw = picture.width;
+            let (mut worst, mut moved, mut outside) = (0.0f32, 0usize, 0u8);
+            // What the masks' grain changes, the GPU's against the CPU's,
+            // in levels: their slope, which the readback's rounding
+            // averages out of, so a factor a few percent off shows.
+            let (mut gc, mut cc) = (0.0f64, 0.0f64);
+            for y in 0..vh {
+                for x in 0..vw {
+                    let g = shown.get_pixel(x as u32, y as u32);
+                    let b = before.get_pixel(x as u32, y as u32);
+                    if g != b {
+                        moved += 1;
+                    }
+                    let (px, py) = (x + ox, y + oy);
+                    let (u, v) = ((px as f32 + 0.5) / pw as f32, (py as f32 + 0.5) / pw as f32);
+                    if amount == 0.0 && weight(u, v) == 0.0 {
+                        for k in 0..3 {
+                            outside = outside.max(g[k].abs_diff(b[k]));
+                        }
+                    }
+                    for k in 0..3 {
+                        let c = made[(py * pw + px) * 3 + k];
+                        worst = worst.max((c - f32::from(g[k]) / 255.0).abs());
+                        let by_cpu = f64::from(c - made_plain[(py * pw + px) * 3 + k]) * 255.0;
+                        let by_gpu = f64::from(g[k]) - f64::from(b[k]);
+                        gc += by_gpu * by_cpu;
+                        cc += by_cpu * by_cpu;
+                    }
+                }
+            }
+            let slope = if cc > 0.0 { gc / cc } else { 1.0 };
+            eprintln!(
+                "grain {amount}, shares {shares:?}, zoom {zoom}, view {vw}x{vh}: {moved} moved, \
+                 worst {:.2} levels, the change's slope {slope:.4} over {cc:.0}, outside the masks {outside}",
+                worst * 255.0
+            );
+            assert!(worst < 1.0 / 255.0, "{amount} {shares:?} {zoom}: {worst}");
+            // The masks' Amounts read 3% high in the shader moved it 1.6%
+            // where the sum is held at the top, and the worst pixel past a
+            // level (tried once); the rounding of the two 8-bit reads
+            // moves it under 0.75% on lavapipe.
+            assert!(
+                (slope - 1.0).abs() < 0.01,
+                "{amount} {shares:?} {zoom}: the change's slope {slope}"
+            );
+            assert_eq!(outside, 0, "{amount} {shares:?} {zoom}");
+            if shares.iter().all(|s| s.2) {
+                assert!(moved > vw * vh / 20, "the case moves the picture");
+            } else {
+                assert_eq!(moved, 0, "a Grain switched off adds nothing");
+            }
+        }
+    }
+    // A share of zero is the picture as before, to the bit: so is one
+    // switched off, and one too small to act anywhere, which reads
+    // every pixel's share and finds it the picture's.
+    for amount in [0.6f32, 0.0] {
+        let zero = draw(
+            &mut renderer,
+            &edit_of(amount, &[(0.0, 1.0, true)]),
+            1.0,
+            (w, h),
+            (w as f32 / 2.0, h as f32 / 2.0),
+        );
+        for shares in [
+            [(1.0, 1.0, false)],
+            [(-1.0, 1.0, false)],
+            [(1e-4, 1.0, true)],
+        ] {
+            let other = draw(
+                &mut renderer,
+                &edit_of(amount, &shares),
+                1.0,
+                (w, h),
+                (w as f32 / 2.0, h as f32 / 2.0),
+            );
+            assert!(zero == other, "{amount} {shares:?}");
+        }
+    }
+}
+
 /// Masks' Output sharpen at Radii and Thresholds of their own on the
 /// GPU is the CPU's, at 1:1 and at half as
 /// `a_masks_output_sharpen_on_the_gpu_is_the_cpus` measures it: one mask
@@ -4349,7 +4629,7 @@ impl Rng {
 /// The parts of an edit the parity test draws, a bit each, so a
 /// failing edit can be drawn again with one part left at its
 /// default to see which part the difference is in.
-const PARTS: [&str; 27] = [
+const PARTS: [&str; 28] = [
     "light",
     "light switch",
     "point curves",
@@ -4377,6 +4657,7 @@ const PARTS: [&str; 27] = [
     "baseline",
     "local output sharpen",
     "local output sharpen own",
+    "local grain",
 ];
 
 fn part(name: &str) -> u32 {
@@ -5021,6 +5302,17 @@ fn random_case(
             if past && d.output_sharpen > 0.0 {
                 d.output_sharpen = more;
             }
+        }
+    }
+    // Each mask's Grain, its switch off now and then, the picture's
+    // grain on or off as drawn above: drawn last, for the same reason.
+    for a in &mut edit.adjustments {
+        let grain = greycard_edit::LocalGrain {
+            enabled: !rng.chance(0.15),
+            amount: rng.slider(0.5, -1.0, 1.0, 0.0),
+        };
+        if has("local grain") {
+            a.look.grain = grain;
         }
     }
     Case {
@@ -6370,7 +6662,7 @@ fn the_shader_is_the_cpu_over_random_edits() {
         let reads = greycard_render::export::reads_guide(edit);
         let (iw, ih) = (w as f32, h as f32);
         let vignette = edit.vignette;
-        let grain = edit.grain;
+        let grain = greycard_render::finish::grain_drawn(&edit.grain, &locals).map(|(g, _)| g);
         let frame_at = |x: usize, y: usize| {
             let (u, v) = ((x as f32 + 0.5) / iw, (y as f32 + 0.5) / ih);
             let stops = if vignette.is_off() {
@@ -6378,7 +6670,7 @@ fn the_shader_is_the_cpu_over_random_edits() {
             } else {
                 vignette.amount * vignette.at(u, v, iw / ih)
             };
-            let noise = (!grain.is_off()).then(|| grain.at(u, v, iw / ih));
+            let noise = grain.map(|g| g.at(u, v, iw / ih));
             (stops, noise)
         };
         let look = case.look.as_ref().filter(|l| !l.is_off());
@@ -6971,6 +7263,7 @@ fn case_fields(case: &Case, seen: &mut Moved) {
             tint,
             white_balance,
             detail,
+            grain,
         } = look;
         light_fields(seen, "local.light", light, false);
         curves_fields(seen, "local.curves", curves);
@@ -7012,6 +7305,14 @@ fn case_fields(case: &Case, seen: &mut Moved) {
             output_sharpen,
             output_sharpen_radius,
             output_sharpen_threshold
+        );
+        let greycard_edit::LocalGrain { enabled, amount } = grain;
+        mark_off!(
+            seen,
+            "local.grain",
+            greycard_edit::LocalGrain::default(),
+            enabled,
+            amount
         );
     }
 
