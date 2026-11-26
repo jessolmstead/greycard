@@ -363,6 +363,11 @@ radius, iterations, and threshold: -100 takes the Develop tab's Sharpen
 off under the mask, +100 puts it on once more; with the Develop tab's
 Sharpen off, a positive amount sharpens inside the mask alone.
 
+**Output sharpen** is the mask's own, with its own **Radius** and
+**Threshold**: a negative amount takes the picture's Output sharpen
+away under the mask, and a positive one adds to it there. See
+[Output sharpen](develop.md#output-sharpen).
+
 A mask over the whole frame gives the same picture as the global
 slider, one slider at a time. A mask's **Dehaze** used together with
 the same mask's **Texture**, **Clarity**, or **Structure** comes out a

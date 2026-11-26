@@ -1452,6 +1452,8 @@ clears or a tester asks for it.
       error: no fill can match what the sensor never recorded, and
       the smoothness bar may reject fills that look right
 - [ ] Maybe: MCP
+- [ ] Grain in a mask: its amount and size under the mask, more or
+      less than the picture's (pixls 61420)
 - [ ] A Depth mask: a feathered range, with the Luminance mask's
       controls, over a depth map a model estimates, and a phone's
       embedded depth where the file carries one (issue 217). The map
