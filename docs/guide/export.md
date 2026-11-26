@@ -37,7 +37,7 @@ clear in hand.
 | **Long edge** | **Full**, **4096**, **2048**, **1024**, **Custom** | Full | The size of the picture's longer side, in pixels. An export is never made larger than the picture. |
 | **Pixels** | a number | 1600 | Shown with **Custom**. The sheet shows the size that comes out, such as 1600 × 1067. |
 | **Sharpen** | **Off**, **Low**, **Standard**, **High** | Standard | Sharpens the picture after it is made smaller, since shrinking softens it. It does nothing at **Full** size, and the label is dimmed then. |
-| **Color** | **sRGB**, **Display P3**, **Rec.2020**, **Adobe RGB**, **Gray Gamma 2.2**, **Dot Gain 20%** | sRGB | sRGB for the web and most screens. Display P3 for recent phones and Macs. Rec.2020 for the widest color. Adobe RGB for a print lab or a workflow that asks for it; it has its own gamma, and the file's profile says so. The last two write one grey channel; see [Grey](#grey). |
+| **Color** | **sRGB**, **Display P3**, **Rec.2020**, **Adobe RGB**, **Gray Gamma 2.2** | sRGB | sRGB for the web and most screens. Display P3 for recent phones and Macs. Rec.2020 for the widest color. Adobe RGB for a print lab or a workflow that asks for it; it has its own gamma, and the file's profile says so. Gray Gamma 2.2 writes one grey channel; see [Grey](#grey). |
 | **Embed profile** | on or off | on | Writes the color profile into the file, so other programs show its colors correctly. Leave it on. |
 | **Metadata** | **All**, **No edit**, **None** | All | What the file says about where it came from. See below. |
 | **Subfolder** | a folder name | empty | Where the file goes. See [Where the files go](#where-the-files-go). |
@@ -49,18 +49,19 @@ clear in hand.
 
 ### Grey
 
-**Gray Gamma 2.2** and **Dot Gain 20%** write a picture with no color
-as a greyscale JPEG, PNG, or TIFF under a grey profile. Dot Gain 20% is
-for print.
+**Gray Gamma 2.2** writes every picture as a greyscale JPEG, PNG, or
+TIFF under a grey profile, for a print or a page that asks for one.
+Color in the picture is dropped: toning, the light tint in grain, and
+a watermark in color all become their grey. A picture made black and
+white looks the same as in sRGB, one channel in place of three.
 
-A picture with color anywhere is written in sRGB instead, so toning is
-never lost. Grain counts: it is lightly tinted. So does a watermark in
-color. A WebP is always in sRGB here, since the format has no greyscale
-form.
+A WebP has no greyscale form, so it is written as grey in sRGB.
 
-**Edit in** writes sRGB when a grey space is chosen. greycard itself
-does not read a grey profile yet, so a grey export opened in it shows
-shifted tones.
+The picture on screen keeps its color; only the file is grey.
+
+**Edit in** writes sRGB, in color, when a grey space is chosen. greycard
+itself does not read a grey profile yet, so a grey export opened in it
+shows shifted tones.
 
 ### Metadata
 

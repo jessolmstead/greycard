@@ -1239,7 +1239,7 @@ fn the_export_rows_are_the_export_sheets_own() {
     crate::testing::click_segment(&app, "ExportSheet::space-row", "sRGB");
     assert_eq!(kept().shared.export.space, "sRGB");
     // The keys reach a row that holds no current option: from the row
-    // above into the grey one, through it, and back. An arrow on the way
+    // above into the grey one, and back. An arrow on the way
     // moves whatever else has the keys, and the color row's within it.
     use crate::testing::press;
     use slint::platform::Key;
@@ -1252,8 +1252,6 @@ fn the_export_rows_are_the_export_sheets_own() {
         })
     };
     assert!(round("Gray Gamma 2.2"));
-    press(&app, Key::RightArrow);
-    assert_eq!(space(), "Dot Gain 20%");
     assert!(round("sRGB"));
 }
 

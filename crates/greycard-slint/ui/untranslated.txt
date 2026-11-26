@@ -77,6 +77,5 @@
 "Display P3"
 "Rec.2020"
 "Gray Gamma 2.2"
-"Dot Gain 20%"
 "AgX"
 "B/Y"

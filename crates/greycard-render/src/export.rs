@@ -14,7 +14,6 @@ pub use greycard_core::exif::Rights;
 use greycard_core::exif::{self, Provenance, Tags};
 use greycard_core::image::WorkingImage;
 use greycard_edit::brush::Raster;
-use rayon::prelude::*;
 use std::path::Path;
 
 /// What an export does when a file of that name is already there,
@@ -94,9 +93,10 @@ pub const ADOBE_RGB_GAMMA: f64 = 563.0 / 256.0;
 /// Rec.2020 take the sRGB curve; Adobe RGB takes its own gamma. The
 /// embedded profile says which.
 ///
-/// The grey spaces ([`Space::GREY`]) are one channel under a curve of
-/// their own, for a picture with no color; one in color takes sRGB in
-/// their place ([`Space::in_color`]).
+/// A grey space ([`Space::GREY`]) is one channel under a curve of its
+/// own: the picture is finished as for sRGB and taken to its [`luma`]
+/// at the end, so color anywhere in it, toning and grain's dyes among
+/// it, is dropped.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Space {
     Srgb,
@@ -104,7 +104,6 @@ pub enum Space {
     Rec2020,
     AdobeRgb,
     GreyGamma22,
-    DotGain20,
 }
 
 impl Space {
@@ -123,7 +122,17 @@ impl Space {
             Space::Rec2020 => "Rec.2020",
             Space::AdobeRgb => "Adobe RGB",
             Space::GreyGamma22 => "Gray Gamma 2.2",
-            Space::DotGain20 => "Dot Gain 20%",
+        }
+    }
+
+    /// The name its profile gives itself. Adobe's names are its marks:
+    /// the profile says "compatible", as darktable's and RawTherapee's
+    /// do.
+    fn description(self) -> &'static str {
+        match self {
+            Space::AdobeRgb => "Adobe RGB (compatible)",
+            Space::GreyGamma22 => "Gray Gamma 2.2 (compatible)",
+            _ => self.name(),
         }
     }
 
@@ -134,13 +143,16 @@ impl Space {
             .find(|s| s.name() == name)
     }
 
-    pub const GREY: [Space; 2] = [Space::GreyGamma22, Space::DotGain20];
+    /// The grey spaces.
+    pub const GREY: [Space; 1] = [Space::GreyGamma22];
 
     pub fn is_grey(self) -> bool {
         Self::GREY.contains(&self)
     }
 
-    /// The space of a picture in color: sRGB for a grey one.
+    /// The color space a grey one's picture is finished in, sRGB, for
+    /// what shows or hands over the picture in color; a color space is
+    /// its own.
     pub fn in_color(self) -> Space {
         if self.is_grey() { Space::Srgb } else { self }
     }
@@ -153,7 +165,7 @@ impl Space {
             Space::DisplayP3 => RgbSpace::DISPLAY_P3,
             Space::Rec2020 => RgbSpace::REC2020,
             Space::AdobeRgb => RgbSpace::ADOBE_RGB,
-            Space::GreyGamma22 | Space::DotGain20 => RgbSpace::SRGB,
+            Space::GreyGamma22 => RgbSpace::SRGB,
         }
     }
 
@@ -173,9 +185,6 @@ impl Space {
     /// the spaces under it keep the value as it is, so their files are
     /// what they were.
     pub fn recode(self, v: f32) -> f32 {
-        if self == Space::DotGain20 {
-            return dot_gain_encode(crate::finish::decode(v));
-        }
         match self.gamma() {
             None => v,
             Some(g) => crate::finish::decode(v).max(0.0).powf((1.0 / g) as f32),
@@ -215,8 +224,8 @@ impl Space {
     }
 
     fn cached_icc(self, finish: bool) -> Result<Vec<u8>> {
-        static BUILT: [std::sync::OnceLock<Vec<u8>>; 12] =
-            [const { std::sync::OnceLock::new() }; 12];
+        static BUILT: [std::sync::OnceLock<Vec<u8>>; 10] =
+            [const { std::sync::OnceLock::new() }; 10];
         let slot = &BUILT[self as usize * 2 + usize::from(finish)];
         if let Some(bytes) = slot.get() {
             return Ok(bytes.clone());
@@ -258,13 +267,7 @@ impl Space {
         let mut profile = Profile::new_rgb(&white, &primaries, &[&curve, &curve, &curve])
             .map_err(|e| anyhow::anyhow!("building the {} profile: {e}", self.name()))?;
         let mut description = MLU::new(1);
-        // Adobe's name is its mark: the profile says "compatible", as
-        // darktable's and RawTherapee's do.
-        let named = match self {
-            Space::AdobeRgb => "Adobe RGB (compatible)",
-            _ => self.name(),
-        };
-        description.set_text_ascii(named, Locale::none());
+        description.set_text_ascii(self.description(), Locale::none());
         profile.write_tag(TagSignature::ProfileDescriptionTag, Tag::MLU(&description));
         let mut copyright = MLU::new(1);
         copyright.set_text_ascii("No copyright, use freely", Locale::none());
@@ -327,13 +330,7 @@ impl Space {
         profile.set_color_space(ColorSpaceSignature::RgbData);
         profile.set_pcs(ColorSpaceSignature::XYZData);
         let mut description = MLU::new(1);
-        // Adobe's name is its mark: the profile says "compatible", as
-        // darktable's and RawTherapee's do.
-        let named = match self {
-            Space::AdobeRgb => "Adobe RGB (compatible)",
-            _ => self.name(),
-        };
-        description.set_text_ascii(named, Locale::none());
+        description.set_text_ascii(self.description(), Locale::none());
         let mut copyright = MLU::new(1);
         copyright.set_text_ascii("No copyright, use freely", Locale::none());
         let written = [
@@ -368,36 +365,24 @@ impl Space {
     }
 
     /// A grey space's profile: version 2, as [`Space::build_icc`]'s is,
-    /// one curve and no colorants.
+    /// one curve, its gamma, and no colorants.
     fn build_grey_icc(self) -> Result<Vec<u8>> {
         use lcms2::{
             CIEXYZ, ColorSpaceSignature, Locale, MLU, Profile, ProfileClassSignature, Tag,
             TagSignature, ToneCurve,
         };
-        let (curve, class) = match self.gamma() {
-            Some(g) => (
-                ToneCurve::new_parametric(1, &[g])
-                    .map_err(|e| anyhow::anyhow!("the {} curve: {e}", self.name()))?,
-                ProfileClassSignature::DisplayClass,
-            ),
-            // Ink on paper: a printer's.
-            None => {
-                let table: Vec<u16> = (0..1024)
-                    .map(|i| (dot_gain_decode(i as f64 / 1023.0) * 65535.0).round() as u16)
-                    .collect();
-                (
-                    ToneCurve::new_tabulated(&table),
-                    ProfileClassSignature::OutputClass,
-                )
-            }
-        };
+        let gamma = self
+            .gamma()
+            .with_context(|| format!("the {} curve", self.name()))?;
+        let curve = ToneCurve::new_parametric(1, &[gamma])
+            .map_err(|e| anyhow::anyhow!("the {} curve: {e}", self.name()))?;
         let mut profile = Profile::new_placeholder();
         profile.set_version(2.1);
-        profile.set_device_class(class);
+        profile.set_device_class(ProfileClassSignature::DisplayClass);
         profile.set_color_space(ColorSpaceSignature::GrayData);
         profile.set_pcs(ColorSpaceSignature::XYZData);
         let mut description = MLU::new(1);
-        description.set_text_ascii(self.name(), Locale::none());
+        description.set_text_ascii(self.description(), Locale::none());
         let mut copyright = MLU::new(1);
         copyright.set_text_ascii("No copyright, use freely", Locale::none());
         // No primaries to have a white: the connection space's.
@@ -423,26 +408,20 @@ impl Space {
     }
 }
 
-/// The light a Dot Gain 20% value prints: an ink dot of `a` prints as
-/// `a + 0.8 a (1 - a)`, 20% more at half, and the paper is the rest.
-fn dot_gain_decode(v: f64) -> f64 {
-    let a = 1.0 - v;
-    1.0 - (a + 0.8 * a * (1.0 - a))
+/// The grey of a pixel under the sRGB curve: its luma, Y′, Rec. 709's
+/// weights (sRGB's luminance weights) on the encoded channels rather
+/// than on the linear light. On a neutral pixel the two are the one
+/// value; on a toned one luma is the picture desaturated as the sRGB
+/// export holds it, and the grey file's light through its profile is
+/// that sRGB file's.
+pub(crate) fn luma([r, g, b]: [f32; 3]) -> f32 {
+    0.2126 * r + 0.7152 * g + 0.0722 * b
 }
 
-/// [`dot_gain_decode`] solved for the value.
-fn dot_gain_encode(light: f32) -> f32 {
-    let light = light.clamp(0.0, 1.0);
-    1.0 - (1.8 - (3.24 - 3.2 * (1.0 - light)).max(0.0).sqrt()) / 1.6
-}
-
-/// How far apart a pixel's channels may be, encoded, and the pixel be
-/// neutral: past what the finish rounds off (`grey_tests` measures it), and a
-/// sixteenth of an 8-bit level.
-const NEUTRAL: f32 = 1.0 / 4096.0;
-
-pub(crate) fn is_neutral([r, g, b]: [f32; 3]) -> bool {
-    r.max(g).max(b) - r.min(g).min(b) <= NEUTRAL
+/// A grey space's sample of a pixel the finish encoded under the sRGB
+/// curve: its [`luma`] on `space`'s curve, rounded once.
+fn grey_sample<T: Channel>(px: [f32; 3], space: Space) -> T {
+    T::from_f32(space.recode(luma(px)) * T::MAX)
 }
 
 /// Output sharpening: how much a downsized export is sharpened after
@@ -633,39 +612,6 @@ impl Rendered {
         };
         samples == self.width as usize * self.height as usize
     }
-
-    /// The space it is in, rendered for `settings`: a picture in color
-    /// asked for in a grey one is in sRGB.
-    fn space(&self, settings: &Settings) -> Space {
-        if self.is_grey() {
-            settings.space
-        } else {
-            settings.space.in_color()
-        }
-    }
-}
-
-/// A picture finished for a grey space, `encoded` under the sRGB curve:
-/// one channel in the space when every pixel is neutral; with color
-/// anywhere, the three channels of its sRGB export. Read off the pixels
-/// and not the edit, since the edit cannot say what a look table, a
-/// profile, or the photo itself puts in.
-fn grey_or_color<T: Channel + Send>(encoded: &[f32], space: Space) -> Vec<T> {
-    let pixels = encoded.as_chunks::<3>().0;
-    if pixels.par_iter().all(|p| is_neutral(*p)) {
-        pixels
-            .par_iter()
-            .map(|[r, g, b]| {
-                T::from_f32(space.recode(0.2126 * r + 0.7152 * g + 0.0722 * b) * T::MAX)
-            })
-            .collect()
-    } else {
-        tracing::info!("a picture in color: sRGB in place of {}", space.name());
-        encoded
-            .par_iter()
-            .map(|v| T::from_f32(v * T::MAX))
-            .collect()
-    }
 }
 
 /// The working image, already through the edit's geometry, finished
@@ -752,6 +698,78 @@ pub fn render_framed(
     white: Option<&greycard_edit::WhiteShift>,
     detail: Option<(&crate::detail::BandImages, &crate::detail::DetailMeta)>,
 ) -> Rendered {
+    // The file's own curve, each pixel encoded for it as the finish
+    // hands it over: a grey space's taken to one channel there, so
+    // nothing more of the frame is held than its samples.
+    let space = settings.file_space();
+    let grey = settings.space.is_grey();
+    macro_rules! finished {
+        ($encode:expr) => {
+            finish_framed(
+                image,
+                framed,
+                full_framed,
+                edit,
+                loader,
+                source,
+                settings,
+                learned,
+                clip_level,
+                guide,
+                kind,
+                white,
+                detail,
+                $encode,
+            )
+        };
+    }
+    let (pixels, (width, height)) = match settings.format {
+        Format::Tiff if grey => {
+            let (p, size) = finished!(|px| [grey_sample::<u16>(px, space)]);
+            (Pixels::Sixteen(p), size)
+        }
+        _ if grey => {
+            let (p, size) = finished!(|px| [grey_sample::<u8>(px, space)]);
+            (Pixels::Eight(p), size)
+        }
+        Format::Tiff => {
+            let (p, size) =
+                finished!(|px: [f32; 3]| px.map(|v| (space.recode(v) * 65535.0).round() as u16));
+            (Pixels::Sixteen(p), size)
+        }
+        Format::Jpeg | Format::Png | Format::WebP => {
+            let (p, size) =
+                finished!(|px: [f32; 3]| px.map(|v| (space.recode(v) * 255.0).round() as u8));
+            (Pixels::Eight(p), size)
+        }
+    };
+    Rendered {
+        width,
+        height,
+        pixels,
+    }
+}
+
+/// [`render_framed`]'s picture, each output pixel, three channels under
+/// the sRGB curve, encoded into `N` samples by `encode`; and its size.
+// The picture, the edit and its loader, and each plane the develop made.
+#[allow(clippy::too_many_arguments)]
+fn finish_framed<T: Copy + Default + Send, const N: usize>(
+    image: &WorkingImage,
+    framed: f32,
+    full_framed: f32,
+    edit: &greycard_edit::Edit,
+    loader: &dyn greycard_edit::Loader,
+    source: (u32, u32),
+    settings: &Settings,
+    learned: &std::collections::HashMap<(u64, usize), std::sync::Arc<Raster>>,
+    clip_level: f32,
+    guide: Option<&finish::Guide>,
+    kind: finish::Source,
+    white: Option<&greycard_edit::WhiteShift>,
+    detail: Option<(&crate::detail::BandImages, &crate::detail::DetailMeta)>,
+    encode: impl Fn([f32; 3]) -> [T; N] + Sync,
+) -> (Vec<T>, (u32, u32)) {
     let settings = settings.for_edit(edit);
     let settings = &*settings;
     // The picture from before the Detail section, when it came with
@@ -891,8 +909,6 @@ pub fn render_framed(
         (stops(x, y), noise)
     };
     let m = settings.space.matrix();
-    let grey = settings.may_be_grey();
-    let space = settings.space.in_color();
     // The look table, read once for the whole image; the viewport is
     // handed the same one (the loader keeps it), so the two agree.
     // A look at no strength is no look, and skipping it here spares
@@ -916,61 +932,21 @@ pub fn render_framed(
         .filter(|_| reads_guide(edit))
         .map(|g| (g, sw));
     let detail = detail.map(|(d, meta)| (detail_fitted.as_ref().unwrap_or(d), meta));
-    let pixels = match settings.format {
-        _ if grey => {
-            let encoded = finish::finish_reaching(
-                image,
-                reach,
-                sampled,
-                &global,
-                &locals,
-                position,
-                frame_at,
-                guide,
-                detail,
-                look.as_ref(),
-                &m,
-                |v| v,
-            );
-            match settings.format {
-                Format::Tiff => Pixels::Sixteen(grey_or_color(&encoded, settings.space)),
-                _ => Pixels::Eight(grey_or_color(&encoded, settings.space)),
-            }
-        }
-        Format::Tiff => Pixels::Sixteen(finish::finish_reaching(
-            image,
-            reach,
-            sampled,
-            &global,
-            &locals,
-            position,
-            frame_at,
-            guide,
-            detail,
-            look.as_ref(),
-            &m,
-            |v| (space.recode(v) * 65535.0).round() as u16,
-        )),
-        Format::Jpeg | Format::Png | Format::WebP => Pixels::Eight(finish::finish_reaching(
-            image,
-            reach,
-            sampled,
-            &global,
-            &locals,
-            position,
-            frame_at,
-            guide,
-            detail,
-            look.as_ref(),
-            &m,
-            |v| (space.recode(v) * 255.0).round() as u8,
-        )),
-    };
-    Rendered {
-        width: image.width as u32,
-        height: image.height as u32,
-        pixels,
-    }
+    let pixels = finish::finish_encoded(
+        image,
+        reach,
+        sampled,
+        &global,
+        &locals,
+        position,
+        frame_at,
+        guide,
+        detail,
+        look.as_ref(),
+        &m,
+        encode,
+    );
+    (pixels, (image.width as u32, image.height as u32))
 }
 
 /// What the finish is handed for a frame, before any pixel goes
@@ -1063,7 +1039,7 @@ pub fn border(rendered: &mut Rendered, settings: &Settings) {
         return;
     };
     let (w, h) = (rendered.width, rendered.height);
-    let space = rendered.space(settings);
+    let space = settings.file_space();
     let (width, height) = match &mut rendered.pixels {
         Pixels::Eight(p) => {
             let (out, ow, oh) = border.apply_in(p, w, h, |l| space.recode(l));
@@ -1088,7 +1064,7 @@ pub fn mark(rendered: &mut Rendered, settings: &Settings) -> Result<()> {
         return Ok(());
     };
     let (w, h) = (rendered.width, rendered.height);
-    let space = rendered.space(settings);
+    let space = settings.file_space();
     let start = std::time::Instant::now();
     match &mut rendered.pixels {
         Pixels::Eight(p) => mark.apply(p, w, h, space)?,
@@ -1255,14 +1231,18 @@ impl Settings {
         }
     }
 
-    /// Whether a picture with no color is written as one channel: a grey
-    /// space, no mark of a color, and not a WebP, which has no such
-    /// form (its lossless pixels are always ARGB, where a grey profile
-    /// means nothing).
-    fn may_be_grey(&self) -> bool {
-        self.space.is_grey()
-            && self.format != Format::WebP
-            && !self.watermark.as_ref().is_some_and(Mark::in_color)
+    /// The space whose curve and profile the file's values take: the
+    /// space asked for, but sRGB for a grey one in a WebP. A WebP's
+    /// pixels are always color (its lossless form is ARGB, where a grey
+    /// profile means nothing), so the grey picture goes in as three
+    /// equal channels under sRGB's profile: the same light as the grey
+    /// file's, and no color.
+    pub fn file_space(&self) -> Space {
+        if self.space.is_grey() && self.format == Format::WebP {
+            Space::Srgb
+        } else {
+            self.space
+        }
     }
 
     /// What the sheet asked for, in words, for the export's XMP.
@@ -1314,12 +1294,24 @@ pub fn write(
 ) -> Result<()> {
     use image::codecs::{jpeg::JpegEncoder, png::PngEncoder};
     use image::{ExtendedColorType, ImageEncoder};
-    // The space the pixels are in, which the file's words say too.
+    // A grey space's picture is one channel and a color space's three;
+    // anything else was not rendered for these settings.
+    let grey = rendered.is_grey();
+    if grey != settings.space.is_grey() {
+        bail!(
+            "a picture of {} channels for {}",
+            if grey { 1 } else { 3 },
+            settings.space.name()
+        );
+    }
+    // What the sheet asked for, in its words; the file's own color
+    // facts (its profile, the EXIF's color space) follow the space its
+    // values are in.
+    let output = settings.describe();
     let settings = &Settings {
-        space: rendered.space(settings),
+        space: settings.file_space(),
         ..settings.clone()
     };
-    let grey = rendered.is_grey();
     let eight = if grey {
         ExtendedColorType::L8
     } else {
@@ -1331,7 +1323,6 @@ pub fn write(
         None
     };
     let (w, h) = (rendered.width, rendered.height);
-    let output = settings.describe();
     let source = source.filter(|_| settings.metadata != Metadata::None);
     let edit = origin
         .edit
@@ -1404,7 +1395,7 @@ pub fn write(
         // image-webp straight, not through the image crate, whose
         // encoder takes no XMP: here the packet goes in as a chunk of
         // its own, with the profile and the EXIF.
-        (Pixels::Eight(p), Format::WebP) if !grey => {
+        (Pixels::Eight(p), Format::WebP) => {
             use image_webp::{ColorType, EncodingError, WebPEncoder};
             // libwebp, which most readers are, takes no side over
             // 16383 px; image-webp writes 16384. Refused as image-webp
@@ -1422,7 +1413,9 @@ pub fn write(
             if let Some(packet) = packet(None) {
                 enc.set_xmp_metadata(packet.into_bytes());
             }
-            enc.encode(p, w, h, ColorType::Rgb8)?;
+            // One channel goes in as three equal ones (`file_space`).
+            let kind = if grey { ColorType::L8 } else { ColorType::Rgb8 };
+            enc.encode(p, w, h, kind)?;
         }
         _ => bail!("the pixels are not the format's"),
     }

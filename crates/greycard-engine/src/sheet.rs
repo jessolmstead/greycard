@@ -488,6 +488,22 @@ mod tests {
         assert_eq!(odd.settings(), export::Settings::default());
     }
 
+    /// A preset or a settings file naming a space no longer offered
+    /// (Dot Gain 20%, which never shipped) reads back with its name and
+    /// exports in sRGB, as one from another version does.
+    #[test]
+    fn a_removed_space_exports_in_srgb() {
+        let json = r#"{"name":"Press","export_space":"Dot Gain 20%"}"#;
+        let preset: ExportPreset = serde_json::from_str(json).unwrap();
+        assert_eq!(preset.sheet.space, "Dot Gain 20%");
+        assert_eq!(preset.sheet.settings().space, Space::Srgb);
+        let grey = Sheet {
+            space: Space::GreyGamma22.name().into(),
+            ..Sheet::default()
+        };
+        assert_eq!(grey.settings().space, Space::GreyGamma22);
+    }
+
     /// A WebP preset keeps its format by name, as a PNG one does, and
     /// its quality, which a lossless format has none of, makes no edit.
     #[test]

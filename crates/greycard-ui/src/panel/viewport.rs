@@ -1410,7 +1410,8 @@ pub(crate) fn sync_display(
     // The output space is the export sheet's, and the table takes it
     // to the monitor, through the proof when one is on. The
     // monitor's profile is the panel's.
-    // A grey space is shown as the sRGB a picture in color takes.
+    // A grey space is shown in color, in the sRGB its picture is
+    // finished in before it is taken to one channel.
     let space = export::Space::from_name(app.get_export_space().as_str())
         .unwrap_or(export::Space::Srgb)
         .in_color();

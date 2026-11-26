@@ -14,7 +14,7 @@
 //! Linux, Core Text on the Mac, DirectWrite on Windows) and rasterized
 //! with ab_glyph; both were in the tree before this.
 
-use crate::export::{Space, is_neutral};
+use crate::export::{Space, luma};
 use ab_glyph::{Font, FontRef, ScaleFont};
 use anyhow::{Context, Result, bail};
 use greycard_core::RgbSpace;
@@ -143,8 +143,10 @@ impl Mark {
         }
     }
 
-    /// Draw the mark `target` pixels wide for an export in `space`.
-    pub fn raster(&self, target: u32, space: Space) -> Result<Raster> {
+    /// Draw the mark `target` pixels wide for an export in `space`; for
+    /// a `grey` picture, one channel, its colors taken to their luma
+    /// as the picture's are.
+    pub fn raster(&self, target: u32, space: Space, grey: bool) -> Result<Raster> {
         self.check()?;
         match &self.kind {
             Kind::Text { text, white } => {
@@ -164,22 +166,9 @@ impl Mark {
             Kind::Image { path } => {
                 let picture = image::open(path)
                     .with_context(|| format!("the watermark {}", path.display()))?;
-                Ok(picture_mark(&picture.into_rgba32f(), target, space))
+                Ok(picture_mark(&picture.into_rgba32f(), target, space, grey))
             }
         }
-    }
-
-    /// Whether the mark puts color of its own on a picture. A PNG that
-    /// does not open has none; drawing it says why.
-    pub fn in_color(&self) -> bool {
-        let Kind::Image { path } = &self.kind else {
-            return false;
-        };
-        image::open(path).is_ok_and(|p| {
-            p.into_rgba32f()
-                .pixels()
-                .any(|p| p.0[3] > 0.0 && !is_neutral([p.0[0], p.0[1], p.0[2]]))
-        })
     }
 
     /// Lay the mark over a finished picture, interleaved RGB or one
@@ -191,7 +180,8 @@ impl Mark {
         height: u32,
         space: Space,
     ) -> Result<()> {
-        let (raster, at) = self.fitted(width, height, space)?;
+        let grey = pixels.len() == width as usize * height as usize;
+        let (raster, at) = self.fitted(width, height, space, grey)?;
         composite(pixels, width, height, &raster, at, self.opacity);
         Ok(())
     }
@@ -199,8 +189,15 @@ impl Mark {
     /// The mark drawn and placed on a picture `width` by `height`:
     /// its size by the long edge, shrunk to fit inside the margins
     /// when a narrow picture has no room for it (a 1:2 crop with the
-    /// size at its limit), and its box kept on the picture.
-    pub fn fitted(&self, width: u32, height: u32, space: Space) -> Result<(Raster, (i64, i64))> {
+    /// size at its limit), and its box kept on the picture; `grey` as
+    /// for [`Mark::raster`].
+    pub fn fitted(
+        &self,
+        width: u32,
+        height: u32,
+        space: Space,
+        grey: bool,
+    ) -> Result<(Raster, (i64, i64))> {
         let long = width.max(height);
         let margin = self.margin_on(long);
         let room = (
@@ -208,7 +205,7 @@ impl Mark {
             height.saturating_sub(2 * margin).max(1),
         );
         let mut target = self.width_on(long);
-        let mut raster = self.raster(target, space)?;
+        let mut raster = self.raster(target, space, grey)?;
         // Scaled once by how much it is over, then a pixel at a time
         // for the text's rounding.
         for _ in 0..8 {
@@ -224,7 +221,7 @@ impl Mark {
                 break;
             }
             target = next;
-            raster = self.raster(target, space)?;
+            raster = self.raster(target, space, grey)?;
         }
         let at = place(
             (width, height),
@@ -300,7 +297,7 @@ pub fn composite<T: Channel>(
         return;
     }
     let (w, h) = (width as i64, height as i64);
-    // Three, or the one of a grey picture, whose mark is neutral.
+    // Three, or the one of a grey picture, whose mark is drawn grey.
     let channels = pixels.len() / (width as usize * height as usize).max(1);
     for my in 0..raster.height as i64 {
         let y = at.1 + my;
@@ -330,9 +327,10 @@ pub fn composite<T: Channel>(
 /// A picture mark `target` pixels wide: premultiplied before its
 /// resize, so its soft edges keep no fringe of whatever color its
 /// clear pixels hold, and its colors taken from sRGB, which is what a
-/// PNG without a profile means, into the export's space.
-fn picture_mark(picture: &image::Rgba32FImage, target: u32, space: Space) -> Raster {
-    let convert = (space != Space::Srgb).then(|| {
+/// PNG without a profile means, into the export's space; for a `grey`
+/// picture, their luma on the space's curve, in every channel.
+fn picture_mark(picture: &image::Rgba32FImage, target: u32, space: Space, grey: bool) -> Raster {
+    let convert = (!grey && space != Space::Srgb).then(|| {
         RgbSpace::SRGB
             .to_space_matrix(&space.rgb(), CAT)
             .expect("sRGB reaches every output space")
@@ -343,7 +341,9 @@ fn picture_mark(picture: &image::Rgba32FImage, target: u32, space: Space) -> Ras
     for p in premultiplied.pixels_mut() {
         let a = p.0[3].clamp(0.0, 1.0);
         let mut rgb = [p.0[0], p.0[1], p.0[2]].map(|v| v.clamp(0.0, 1.0));
-        if let Some(m) = &convert {
+        if grey {
+            rgb = [space.recode(luma(rgb)); 3];
+        } else if let Some(m) = &convert {
             let lin = rgb.map(srgb_decode);
             rgb = [0, 1, 2].map(|r| {
                 space.recode(srgb_encode(
@@ -667,7 +667,7 @@ pub(crate) mod tests {
                 margin: 0.02,
                 opacity: 1.0,
             };
-            let (raster, at) = mark.fitted(w, h, Space::Srgb).unwrap();
+            let (raster, at) = mark.fitted(w, h, Space::Srgb, false).unwrap();
             let m = mark.margin_on(h) as i64;
             assert!(raster.width <= w - 2 * m as u32, "{}", raster.width);
             assert!(
@@ -692,7 +692,7 @@ pub(crate) mod tests {
                 margin: 0.05,
                 opacity: 1.0,
             };
-            let (raster, at) = mark.fitted(150, 500, Space::Srgb).unwrap();
+            let (raster, at) = mark.fitted(150, 500, Space::Srgb, false).unwrap();
             assert!(raster.width <= 150 - 50, "{}", raster.width);
             assert_eq!(at.0, 25);
         }
@@ -716,7 +716,7 @@ pub(crate) mod tests {
                 margin: 0.0,
                 opacity: 1.0,
             };
-            assert!(mark.fitted(100, 100, Space::Srgb).is_err());
+            assert!(mark.fitted(100, 100, Space::Srgb, false).is_err());
         }
         crate::testing::remove_dir_retry(&dir);
     }

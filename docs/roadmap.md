@@ -1460,6 +1460,11 @@ clears or a tester asks for it.
 - [ ] Maybe: MCP
 - [ ] Grain in a mask: its amount and size under the mask, more or
       less than the picture's (pixls 61420)
+- [ ] A picture with a grey ICC profile read by its curve, not as
+      sRGB: it changes how such pictures already in a library develop
+      (§751)
+- [ ] Dot Gain 20% as a grey export space, once its curve is compared
+      with the profile it is named after (§751)
 - [ ] A Depth mask: a feathered range, with the Luminance mask's
       controls, over a depth map a model estimates, and a phone's
       embedded depth where the file carries one (issue 217). The map

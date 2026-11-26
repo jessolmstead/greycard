@@ -2301,6 +2301,42 @@ pub fn finish_reaching<T: Copy + Default + Send>(
     to_out: &[[f32; 3]; 3],
     quantize: impl Fn(f32) -> T + Sync,
 ) -> Vec<T> {
+    finish_encoded(
+        image,
+        reach,
+        sampled,
+        global,
+        locals,
+        position,
+        frame,
+        guide,
+        detail,
+        look,
+        to_out,
+        |px| px.map(&quantize),
+    )
+}
+
+/// [`finish_reaching`] with each output pixel, three channels under
+/// the sRGB curve, encoded whole into `N` samples by `encode`: what a
+/// grey export reduces to one channel at once, so no more than its
+/// samples are ever held of the frame.
+// The picture, the looks, the pixel maps, and the output: each its own.
+#[allow(clippy::too_many_arguments)]
+pub fn finish_encoded<T: Copy + Default + Send, const N: usize>(
+    image: &WorkingImage,
+    reach: f32,
+    sampled: Option<&WorkingImage>,
+    global: &Baked,
+    locals: &[Local],
+    position: impl Fn(usize, usize) -> (f32, f32) + Sync,
+    frame: impl Fn(usize, usize) -> (f32, Option<[f32; 3]>) + Sync,
+    guide: Option<(&Guide, f32)>,
+    detail: Option<(&crate::detail::BandImages, &DetailMeta)>,
+    look: Option<&lut::Look>,
+    to_out: &[[f32; 3]; 3],
+    encode: impl Fn([f32; 3]) -> [T; N] + Sync,
+) -> Vec<T> {
     finish_in_bands(
         SHARPEN_BAND,
         image,
@@ -2314,7 +2350,7 @@ pub fn finish_reaching<T: Copy + Default + Send>(
         detail,
         look,
         to_out,
-        quantize,
+        encode,
     )
 }
 
@@ -2326,7 +2362,7 @@ const SHARPEN_BAND: usize = 256;
 
 /// [`finish_reaching`], the output sharpen held `band` rows at a time.
 #[allow(clippy::too_many_arguments)]
-fn finish_in_bands<'l, T: Copy + Default + Send>(
+fn finish_in_bands<'l, T: Copy + Default + Send, const N: usize>(
     band: usize,
     image: &WorkingImage,
     reach: f32,
@@ -2339,7 +2375,7 @@ fn finish_in_bands<'l, T: Copy + Default + Send>(
     detail: Option<(&crate::detail::BandImages, &DetailMeta)>,
     look: Option<&lut::Look>,
     to_out: &[[f32; 3]; 3],
-    quantize: impl Fn(f32) -> T + Sync,
+    encode: impl Fn([f32; 3]) -> [T; N] + Sync,
 ) -> Vec<T> {
     // The mean the mixer and the black and white read a hue from,
     // only when one of them acts.
@@ -2416,7 +2452,7 @@ fn finish_in_bands<'l, T: Copy + Default + Send>(
         )
     };
     let w = image.width;
-    let mut out = vec![T::default(); w * image.height * 3];
+    let mut out = vec![T::default(); w * image.height * N];
     // The picture's sharpen and the masks' shares of it, their terms,
     // and whether a mask's share makes each pixel's amounts its own.
     // Held at zero under AgX's rail, as before the gamut op.
@@ -2425,20 +2461,20 @@ fn finish_in_bands<'l, T: Copy + Default + Send>(
     {
         // One pass, each pixel to its output at once.
         None => out
-            .par_chunks_mut(w * 3)
+            .par_chunks_mut(w * N)
             .zip(image.data.par_chunks(w * 3))
             .enumerate()
             .for_each(|(y, (row_out, row_in))| {
                 let mut on = Vec::with_capacity(locals.len());
                 for (x, (o, px)) in row_out
-                    .as_chunks_mut::<3>()
+                    .as_chunks_mut::<N>()
                     .0
                     .iter_mut()
                     .zip(row_in.as_chunks::<3>().0)
                     .enumerate()
                 {
                     let (c, grain) = display_at(x, y, px, &mut on);
-                    *o = finish_pixel_output(c, global, grain, to_out).map(&quantize);
+                    *o = encode(finish_pixel_output(c, global, grain, to_out));
                 }
             }),
         // A band of rows at a time to the look table, with the rows its
@@ -2501,20 +2537,20 @@ fn finish_in_bands<'l, T: Copy + Default + Send>(
                     band_amounts,
                 );
                 drop(held);
-                out[y0 * w * 3..(y0 + count) * w * 3]
-                    .par_chunks_mut(w * 3)
+                out[y0 * w * N..(y0 + count) * w * N]
+                    .par_chunks_mut(w * N)
                     .zip(sharpened.par_chunks(w))
                     .enumerate()
                     .for_each(|(r, (row_out, row))| {
                         for (x, (o, c)) in row_out
-                            .as_chunks_mut::<3>()
+                            .as_chunks_mut::<N>()
                             .0
                             .iter_mut()
                             .zip(row)
                             .enumerate()
                         {
                             let grain = frame(x, y0 + r).1;
-                            *o = finish_pixel_output(*c, global, grain, to_out).map(&quantize);
+                            *o = encode(finish_pixel_output(*c, global, grain, to_out));
                         }
                     });
             }
@@ -2620,7 +2656,7 @@ mod tests {
                 None,
                 None,
                 &to_out,
-                |v: f32| v,
+                |px: [f32; 3]| px,
             )
         };
         let whole = run(h);
@@ -2690,7 +2726,7 @@ mod tests {
                 None,
                 None,
                 &to_out,
-                |v: f32| v,
+                |px: [f32; 3]| px,
             )
         };
         let masked = run(h);

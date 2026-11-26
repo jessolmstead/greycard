@@ -56,6 +56,8 @@ design note behind it.
   ([§745](https://github.com/jessolmstead/greycard/blob/master/docs/notes/745-the-sharpen-of-what-is-seen-first.md)).
 - After Esc hides a Linear or Radial shape's handles, a drag over the shape pans; its row brings them back (discussion 178,
   [§748](https://github.com/jessolmstead/greycard/blob/master/docs/notes/748-a-shape-esc-put-down-is-out-of-hand.md)).
+- Export has a grey space, Gray Gamma 2.2: one channel under a grey profile, with toning and grain's color dropped. Thanks to @sbusso (PR 216,
+  [§751](https://github.com/jessolmstead/greycard/blob/master/docs/notes/751-greyscale-export.md)).
 - A focus stack develops each frame as the editor does, chromatic
   aberration corrected: finer texture, no color fringes, about 1.8
   times the time

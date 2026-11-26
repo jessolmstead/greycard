@@ -434,7 +434,7 @@ export component ExportSheet inherits Rectangle {
                         HorizontalLayout {
                             spacing: Theme.space-2;
                             Rectangle { width: root.label-column; }
-                            grey-row := Segmented { name: color-words.text; options: ["Gray Gamma 2.2", "Dot Gain 20%"]; enters: true; current <=> root.export-space; }
+                            grey-row := Segmented { name: color-words.text; options: ["Gray Gamma 2.2"]; enters: true; current <=> root.export-space; }
                         }
                         Toggle {
                             label: @tr("Embed profile");
