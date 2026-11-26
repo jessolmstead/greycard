@@ -51,6 +51,15 @@ the reasoning lives in `docs/notes.md`.
       A Mac's display-link frames pass the guard by
 - [ ] On Windows the models' memory guard reads Vulkan's budget while
       the models run on D3D12 (§431); read DXGI's (issue 195)
+- [ ] A fill on unified memory at 102 MP on 24 GB swaps: the fill's
+      mode is chosen from installed RAM alone, nothing is given back
+      after it, and ONNX Runtime's WebGPU provider keeps a released
+      session's buffers while another session lives, so sessions must
+      go together. Choose the mode from the free figure (issue 181),
+      one session at a time with a tiled decoder when short
+- [ ] After a fill about 2.5 GB more stays on the card and 0.5 GB in
+      RAM at 102 MP, likely the retouched picture as a second
+      full-size copy with its upload; hold one where possible
 - [ ] The open frame is held twice, the CPU base beside its upload of
       full floats (about 1 GB and 1.6 GB at 102 MP): drop the CPU base
       while the upload stands and read it back when it is needed, after
