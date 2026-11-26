@@ -750,6 +750,12 @@ pub(crate) fn install(app: &App, state: &Rc<Shared>, worker: &Rc<Worker>) {
             let name = settings::theme_named(&app.get_theme());
             app.set_theme(name.into());
             keep(&state.borrow(), |s| s.theme = name.into());
+            // The curve is a picture drawn here, its chosen point in
+            // the accent: drawn again in the new one.
+            {
+                use crate::panel::curve::{backdrop, draw_curve};
+                app.set_curve_image(draw_curve(&app, backdrop(&app, &state.borrow().develop)));
+            }
             tracing::info!("theme {name}");
         });
     }

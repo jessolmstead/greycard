@@ -885,7 +885,7 @@ export component Viewport inherits Rectangle {
         width: t.w * 1px;
         height: t.h * 1px;
         border-width: t.on ? 2px : 0;
-        border-color: Theme.accent;
+        border-color: Theme.overlay;
         Rectangle {
             x: Theme.space-2;
             y: Theme.space-2;
@@ -1331,7 +1331,7 @@ export component Viewport inherits Rectangle {
         }
     }
     // The people a part may be of, while one is to be picked: each
-    // face outlined, the guess in the accent and heavier.
+    // face outlined, the guess in the overlay blue and heavier.
     if !root.bare: Rectangle {
         for b in root.person-boxes: Rectangle {
             x: b.x * 1px - 4px;
@@ -1340,7 +1340,7 @@ export component Viewport inherits Rectangle {
             height: b.h * 1px + 8px;
             border-radius: 6px;
             border-width: b.guess ? 3px : 1.5px;
-            border-color: b.guess ? Theme.accent : #ffffffd0;
+            border-color: b.guess ? Theme.overlay : #ffffffd0;
             Rectangle {
                 x: parent.border-width;
                 y: parent.border-width;
@@ -1375,7 +1375,7 @@ export component Viewport inherits Rectangle {
             Rectangle {
                 x: i == 0 ? 4px : 5px; y: i == 0 ? 4px : 5px;
                 width: i == 0 ? 12px : 10px; height: i == 0 ? 12px : 10px;
-                background: i == 0 ? Theme.accent : #ffffff;
+                background: i == 0 ? Theme.overlay : #ffffff;
                 border-radius: i == 0 ? 6px : 2px;
                 border-width: 1px;
                 border-color: #00000080;
@@ -1436,7 +1436,7 @@ export component Viewport inherits Rectangle {
             viewbox-y: 0;
             viewbox-width: self.width / 1px;
             viewbox-height: self.height / 1px;
-            stroke: Theme.accent;
+            stroke: Theme.overlay;
             stroke-width: 2px;
             MoveTo { x: leveler.x0 / 1px; y: leveler.y0 / 1px; }
             LineTo { x: leveler.x1 / 1px; y: leveler.y1 / 1px; }
@@ -1506,7 +1506,7 @@ export component Viewport inherits Rectangle {
             viewbox-y: 0;
             viewbox-width: self.width / 1px;
             viewbox-height: self.height / 1px;
-            stroke: Theme.accent;
+            stroke: Theme.overlay;
             stroke-width: 2px;
             MoveTo { x: root.guide-kept[0].x; y: root.guide-kept[0].y; }
             LineTo { x: root.guide-kept[1].x; y: root.guide-kept[1].y; }
@@ -1518,7 +1518,7 @@ export component Viewport inherits Rectangle {
             viewbox-y: 0;
             viewbox-width: self.width / 1px;
             viewbox-height: self.height / 1px;
-            stroke: Theme.accent;
+            stroke: Theme.overlay;
             stroke-width: 2px;
             MoveTo { x: guider.x0 / 1px; y: guider.y0 / 1px; }
             LineTo { x: guider.x1 / 1px; y: guider.y1 / 1px; }

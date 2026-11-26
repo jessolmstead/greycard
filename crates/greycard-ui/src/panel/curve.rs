@@ -693,9 +693,11 @@ pub(crate) fn draw_curve(app: &App, bins: Option<&[u32]>) -> slint::Image {
         // edge, shows its whole handle; the press reaches it all the
         // same (`curve::HIT`).
         let selected = selected_point(app);
+        let accent = app.global::<crate::Theme>().get_accent();
+        let accent = [accent.red(), accent.green(), accent.blue()];
         for (i, p) in points.iter().enumerate() {
             let (radius, ring_width, ring) = if selected == Some(i) {
-                (5.0 * u, (2.5 * u).max(2.5), [0x6e, 0xa8, 0xff])
+                (5.0 * u, (2.5 * u).max(2.5), accent)
             } else {
                 (4.0 * u, u.max(1.0), [0x14, 0x14, 0x14])
             };
@@ -1902,6 +1904,20 @@ mod tests {
             .count();
         assert_eq!(at(c, c), [0xff; 3], "the selected point's middle");
         assert!(accent >= 2, "{accent} pixels of the accent ring");
+        // Under Lambda's orange accent, the ring is orange.
+        app.global::<crate::Theme>().set_name("Lambda".into());
+        let picture = draw_curve(&app, None).to_rgba8().unwrap();
+        let at = |x: usize, y_up: usize| {
+            let p = picture.as_slice()[(n - 1 - y_up) * n + x];
+            [p.r, p.g, p.b]
+        };
+        let orange = (0..(8.0 * scale) as usize)
+            .filter(|&dx| {
+                let [r, _, b] = at(c + dx, c);
+                r >= 0xe0 && b <= 0x60
+            })
+            .count();
+        assert!(orange >= 2, "{orange} pixels of Lambda's ring");
     }
 
     /// The editor's histogram is taken only while the CURVES section

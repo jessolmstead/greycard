@@ -342,7 +342,7 @@ pub fn category_named(name: &str) -> &'static str {
 
 /// The interface's palettes, by the names the Settings sheet shows;
 /// the first is the default.
-pub const THEMES: [&str; 4] = ["Charcoal", "Grey", "Light", "Monocard"];
+pub const THEMES: [&str; 4] = ["Charcoal", "Grey", "Light", "Lambda"];
 
 /// The theme `name` names, or the first for a name that is none.
 pub fn theme_named(name: &str) -> &'static str {

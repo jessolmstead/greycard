@@ -397,6 +397,21 @@ fn the_filter_bar_switch_hides_the_bar_in_the_grid_and_in_culling() {
     drop(state);
 }
 
+/// The tokens the curve's chosen point and the marks on the picture
+/// are drawn in: the blue they were drawn in before either was a
+/// token, in each of the first three themes.
+#[test]
+fn the_first_themes_keep_the_blue_on_the_curve_and_the_picture() {
+    let app = crate::testing::window(0);
+    let theme = app.global::<crate::Theme>();
+    let blue = slint::Color::from_rgb_u8(0x6e, 0xa8, 0xff);
+    for name in &crate::settings::THEMES[..3] {
+        theme.set_name((*name).into());
+        assert_eq!(theme.get_accent(), blue, "{name}'s accent");
+        assert_eq!(theme.get_overlay(), blue, "{name}'s overlay");
+    }
+}
+
 /// The theme row: a click puts its palette in force at once, the
 /// window's `Theme` with it, and a name the settings do not know
 /// goes back to Charcoal.
@@ -423,17 +438,20 @@ fn the_theme_row_sets_the_palette() {
     assert_ne!(light_chosen.1, charcoal_chosen.1);
     crate::testing::click_segment(&app, ROW, "Grey");
     assert_eq!(app.global::<crate::Theme>().get_name(), "Grey");
-    // Monocard is Charcoal's surfaces under another accent, and a fill
-    // at rest that is not the accent.
+    // Lambda is Charcoal's surfaces under another accent, its chosen
+    // row tinted with it, and a fill at rest that is not the accent;
+    // the marks on the picture keep the blue.
     let theme = app.global::<crate::Theme>();
     assert_eq!(theme.get_fill(), theme.get_accent());
     let blue = theme.get_accent();
-    crate::testing::click_segment(&app, ROW, "Monocard");
-    assert_eq!(theme.get_name(), "Monocard");
+    crate::testing::click_segment(&app, ROW, "Lambda");
+    assert_eq!(theme.get_name(), "Lambda");
     assert_eq!(theme.get_surface(), charcoal);
     assert_ne!(theme.get_accent(), blue);
     assert_ne!(theme.get_fill(), theme.get_accent());
+    assert_eq!(theme.get_overlay(), blue);
     assert_ne!(chosen(&theme), charcoal_chosen);
+    assert_ne!(theme.get_selection(), theme.get_hover());
     crate::testing::click_segment(&app, ROW, "Charcoal");
     assert_eq!(app.global::<crate::Theme>().get_surface(), charcoal);
     assert_eq!(theme.get_accent(), blue);

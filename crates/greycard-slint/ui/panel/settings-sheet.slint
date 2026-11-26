@@ -86,7 +86,7 @@ export component SettingsSheet inherits Rectangle {
     in property <int> ui-scale-started;
     in property <bool> ui-scale-by-hand;
     callback ui-scale-changed();
-    /// The palette: "Charcoal", "Grey", "Light", or "Monocard" (`Theme`).
+    /// The palette: "Charcoal", "Grey", "Light", or "Lambda" (`Theme`).
     in-out property <string> theme;
     callback theme-changed();
     /// The scroll bars: "Fade" or "Stay", and "Thin", "Medium", or
@@ -542,8 +542,8 @@ export component SettingsSheet inherits Rectangle {
                                 theme-words := Text { accessible-role: none; text: @tr("Theme"); width: root.interface-label-w; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
                                 theme-row := Segmented {
                                     name: theme-words.text;
-                                    options: ["Charcoal", "Grey", "Light", "Monocard"];
-                                    labels: [@tr("Charcoal"), @tr("Grey"), @tr("theme" => "Light"), "Monocard"];
+                                    options: ["Charcoal", "Grey", "Light", "Lambda"];
+                                    labels: [@tr("Charcoal"), @tr("Grey"), @tr("theme" => "Light"), "Lambda"];
                                     current <=> root.theme;
                                     selected => { root.theme-changed(); }
                                 }

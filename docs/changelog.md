@@ -7,6 +7,8 @@ design note behind it.
 
 ### The window
 
+- Lambda, a fourth theme: Charcoal's greys with an orange accent, from Monocard's styling. Thanks to @sbusso (PR 213,
+  [§750](https://github.com/jessolmstead/greycard/blob/master/docs/notes/750-lambda-a-fourth-theme.md)).
 - Redo can be changed in Settings > Keys: both its keys work until you set one, then only yours does (discussion 204,
   [§749](https://github.com/jessolmstead/greycard/blob/master/docs/notes/749-a-key-moved-beats-a-key-by-default.md)).
 - A key you set for an action now wins over another action's default key, where the order of the list used to decide.

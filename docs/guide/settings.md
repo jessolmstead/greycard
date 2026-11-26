@@ -39,8 +39,9 @@ machine; set `SLINT_SCALE_FACTOR` for one at another size.
 
 The window's panels and text in **Charcoal** (default), a mid
 **Grey**, or **Light**, changed at once; the blue accent is the same
-in all three. **Monocard** is Charcoal with an amber accent, and grey
-for a chosen row and for a slider or a switch at rest. The picture's
+in all three. **Lambda** is Charcoal with an orange accent and grey for
+a slider or a switch at rest; the marks drawn on the picture stay
+blue. The picture's
 surround keeps its own **Canvas** setting, so the theme never changes
 what a picture is judged against.
 
