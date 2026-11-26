@@ -27,6 +27,7 @@ use std::collections::{HashMap, HashSet};
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::time::{Duration, Instant};
 
 /// What an import is asked to do.
 #[derive(Debug, Clone)]
@@ -630,7 +631,37 @@ pub fn progress_line(index: usize, total: usize, name: &str) -> String {
     )
 }
 
-const CHUNK: usize = 1 << 20;
+/// One read of a copy, or of a hash: a beat goes after each. A share
+/// on a slow link took up to 4.8 s over a 1 MB read, so a read is a
+/// quarter of that; on a local disk the two read and hash alike.
+const CHUNK: usize = 256 << 10;
+
+/// How much of a copy to a network mount is written between syncs, at
+/// first. A share's client takes the writes into its cache at once and
+/// sends them at the sync, so a copy synced once at its end says
+/// nothing for as long as the whole file takes over the link (41 s for
+/// 100 MB from a laptop); synced in steps, it beats after each. The
+/// step follows the link ([`next_step`]): a second or so a sync, from
+/// [`STEP_LEAST`] to [`STEP_MOST`]. Local copies sync once: stepped,
+/// they wrote two to four times slower on an SSD.
+const STEP_FIRST: u64 = 1 << 20;
+const STEP_LEAST: u64 = 256 << 10;
+const STEP_MOST: u64 = 2 << 20;
+
+/// The step after a stepped sync of `step` bytes that took `took`:
+/// half when it took over 3 s, twice when under 1 s, within the
+/// bounds. 256 KB is about 9 s at 0.25 Mbit/s, inside a copy's wait;
+/// 2 MB, under a second at 20 Mbit/s, is still one step inside the
+/// wait if the link drops fifteenfold in the middle of a file.
+fn next_step(step: u64, took: Duration) -> u64 {
+    if took > Duration::from_secs(3) {
+        (step / 2).max(STEP_LEAST)
+    } else if took < Duration::from_secs(1) {
+        (step * 2).min(STEP_MOST)
+    } else {
+        step
+    }
+}
 
 /// BLAKE3 over every byte of a file. The index's hash is the head and
 /// the size, which is enough to know a file again but cannot see a
@@ -939,14 +970,22 @@ pub struct Landing<'a> {
     /// Go over a file already at the name (a backup's older sidecar);
     /// otherwise one there is an error and left.
     pub replace: bool,
-    /// Called at every chunk written or read back.
+    /// Called at every chunk written or read back, and after each sync.
     pub beat: &'a dyn Fn(),
     /// Counts the bytes written, for a bar.
     pub bytes: Option<&'a AtomicU64>,
+    /// The copy goes to a network mount: synced in steps as it is
+    /// written ([`next_step`]), a beat after each.
+    pub far: bool,
     /// A test's hand on the temporary once written, before it is read
     /// back.
     #[cfg(test)]
     pub tamper: Option<&'a dyn Fn(&Path)>,
+    /// A test's hand before each sync, with the bytes written since the
+    /// last: a share's slow upload. What it returns, when anything, is
+    /// how long the sync is taken to have been, in place of the clock.
+    #[cfg(test)]
+    pub on_sync: Option<&'a dyn Fn(u64) -> Option<Duration>>,
 }
 
 impl Default for Landing<'_> {
@@ -956,8 +995,11 @@ impl Default for Landing<'_> {
             replace: false,
             beat: &|| {},
             bytes: None,
+            far: false,
             #[cfg(test)]
             tamper: None,
+            #[cfg(test)]
+            on_sync: None,
         }
     }
 }
@@ -990,6 +1032,14 @@ pub fn land_with(
         let mut hasher = blake3::Hasher::new();
         let mut buf = vec![0u8; CHUNK];
         let mut bytes = 0u64;
+        let mut unsynced = 0u64;
+        let mut step = STEP_FIRST;
+        // Each test's hand gets the bytes a sync has to send, and may
+        // say how long it took.
+        #[cfg(test)]
+        let before_sync = |n: u64| how.on_sync.and_then(|hand| hand(n));
+        #[cfg(not(test))]
+        let before_sync = |_: u64| None::<Duration>;
         loop {
             let k = match src.read(&mut buf) {
                 Ok(0) => break,
@@ -1000,10 +1050,22 @@ pub fn land_with(
             hasher.update(&buf[..k]);
             out.write_all(&buf[..k]).context(tr!("writing the copy"))?;
             bytes += k as u64;
+            unsynced += k as u64;
             if let Some(counted) = how.bytes {
                 counted.fetch_add(k as u64, Ordering::Relaxed);
             }
             (how.beat)();
+            // Only pushes the bytes along: the sync that makes the
+            // file whole on the disk is the one below. The beat after
+            // it says the sync is over before the next read begins.
+            if how.far && unsynced >= step {
+                let began = Instant::now();
+                let said = before_sync(unsynced);
+                out.sync_data().context(tr!("writing the copy"))?;
+                step = next_step(step, said.unwrap_or_else(|| began.elapsed()));
+                unsynced = 0;
+                (how.beat)();
+            }
         }
         if let Some(length) = length
             && bytes != length
@@ -1014,7 +1076,11 @@ pub fn land_with(
                 length = length
             ));
         }
+        // On the disk before it is read back and named: what a copy
+        // that has landed means.
+        let _ = before_sync(unsynced);
         out.sync_all().context(tr!("writing the copy"))?;
+        (how.beat)();
         drop_cached(&out);
         drop(out);
         let hash = hasher.finalize().to_hex().to_string();

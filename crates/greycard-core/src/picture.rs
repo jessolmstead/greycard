@@ -114,7 +114,7 @@ pub fn stance_path(path: &Path) -> Result<Stance> {
     if let Some(stance) = head_stance(path)? {
         return Ok(stance);
     }
-    stance_of(&std::fs::read(path)?)
+    stance_of(&crate::decode::read_file(path)?)
 }
 
 /// [`stance_path`] of a picture held whole.
@@ -179,9 +179,10 @@ fn head_stance(path: &Path) -> Result<Option<Stance>> {
             }
             Head::NeedMore(want) => {
                 let had = bytes.len();
-                file.by_ref()
-                    .take(want.saturating_sub(had) as u64)
-                    .read_to_end(&mut bytes)?;
+                crate::decode::read_rest(
+                    &mut file.by_ref().take(want.saturating_sub(had) as u64),
+                    &mut bytes,
+                )?;
                 if bytes.len() == had {
                     return Ok(None);
                 }
@@ -312,7 +313,7 @@ pub fn probe_path(path: &Path) -> Result<Probe> {
         .read_to_end(&mut bytes)?;
     let tiff: Option<Vec<u8>> = match Container::sniff(&bytes) {
         Some(Container::Tiff) => {
-            file.read_to_end(&mut bytes)?;
+            crate::decode::read_rest(&mut file, &mut bytes)?;
             Some(bytes)
         }
         Some(container) => loop {
@@ -321,9 +322,10 @@ pub fn probe_path(path: &Path) -> Result<Probe> {
                 Scan::None => break None,
                 Scan::NeedMore(want) => {
                     let had = bytes.len();
-                    file.by_ref()
-                        .take((want - had) as u64)
-                        .read_to_end(&mut bytes)?;
+                    crate::decode::read_rest(
+                        &mut file.by_ref().take((want - had) as u64),
+                        &mut bytes,
+                    )?;
                     if bytes.len() == had {
                         // The file ends inside a segment: whatever
                         // EXIF it had is not whole.

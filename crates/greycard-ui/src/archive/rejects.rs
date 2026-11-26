@@ -1306,6 +1306,7 @@ mod tests {
                     bytes: &count,
                     before_frame: Some(&hand),
                     tamper: None,
+                    on_sync: None,
                 };
                 run_moves(&nas, &entries, Some(&db), &hooks, beat)
             },

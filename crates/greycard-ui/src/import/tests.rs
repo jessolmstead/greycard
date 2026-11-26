@@ -1,4 +1,5 @@
 use super::*;
+use std::time::Duration;
 
 /// A folder of this test's own under the temporary directory,
 /// emptied first, as the file system spells it (macOS's temporary
@@ -1211,4 +1212,280 @@ fn a_name_from_file_data_stays_inside_the_destination() {
     f.camera = "../x".into();
     let rel = relative(&o, Path::new("/card/IMG_0001.CR3"), &f).unwrap();
     assert_eq!(rel, Path::new("_._x/2026-01-01 .._x/_._x-IMG_0001.CR3"));
+}
+
+/// Bytes no two of which repeat soon: `n` of them from `seed`.
+fn noise(n: usize, seed: u64) -> Vec<u8> {
+    let mut s = seed | 1;
+    (0..n)
+        .map(|_| {
+            s ^= s << 13;
+            s ^= s >> 7;
+            s ^= s << 17;
+            s as u8
+        })
+        .collect()
+}
+
+/// What a landing did, in order, as a test sees it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Did {
+    Read,
+    Beat,
+    Sync(u64),
+}
+
+/// A reader of `bytes` that writes each read into `log`.
+struct Logged<'a>(&'a [u8], &'a std::cell::RefCell<Vec<Did>>);
+
+impl Read for Logged<'_> {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        self.1.borrow_mut().push(Did::Read);
+        self.0.read(buf)
+    }
+}
+
+/// `n` bytes landed at `to` with `far`, each sync taken to have lasted
+/// `took`: what was done, the hash and the byte count.
+fn land_logged(n: usize, to: &Path, far: bool, took: Duration) -> (Vec<Did>, String, u64) {
+    let body = noise(n, n as u64 + 7);
+    let log = std::cell::RefCell::new(Vec::new());
+    let beat = || log.borrow_mut().push(Did::Beat);
+    let on_sync = |pending: u64| {
+        // Every sync comes before the copy has its name.
+        assert!(!to.exists(), "synced after it was named");
+        log.borrow_mut().push(Did::Sync(pending));
+        Some(took)
+    };
+    let how = Landing {
+        beat: &beat,
+        far,
+        on_sync: Some(&on_sync),
+        ..Landing::default()
+    };
+    let (hash, bytes) = land_with(
+        &mut Logged(&body, &log),
+        None,
+        Some(n as u64),
+        to,
+        None,
+        &how,
+    )
+    .unwrap();
+    assert_eq!(std::fs::read(to).unwrap(), body);
+    assert_eq!(hash, blake3::hash(&body).to_hex().to_string());
+    assert_eq!(hash, hash_whole(to).unwrap());
+    (log.into_inner(), hash, bytes)
+}
+
+fn syncs(log: &[Did]) -> Vec<u64> {
+    log.iter()
+        .filter_map(|d| match d {
+            Did::Sync(n) => Some(*n),
+            _ => None,
+        })
+        .collect()
+}
+
+/// The step follows the link: half after a sync over 3 s, twice after
+/// one under 1 s, between a quarter megabyte and two.
+#[test]
+fn the_step_halves_when_slow_and_doubles_when_quick() {
+    let (s, mb) = (Duration::from_secs(1), 1u64 << 20);
+    assert_eq!(next_step(mb, s / 2), 2 * mb);
+    assert_eq!(next_step(2 * mb, s / 2), 2 * mb);
+    assert_eq!(next_step(mb + 1, s / 2), 2 * mb);
+    assert_eq!(next_step(mb, 2 * s), mb);
+    assert_eq!(next_step(mb, 4 * s), mb / 2);
+    assert_eq!(next_step(mb / 4, 40 * s), mb / 4);
+}
+
+/// A copy to a share syncs in steps that follow how long each sync
+/// took, a beat right after each before the next read, so no sync
+/// sends the whole file; the last, the one that makes it whole on the
+/// disk, comes before it is read back and named. Its bytes and their
+/// hash are the source's, at a size that is no multiple of a step and
+/// at none at all; a local copy syncs once.
+#[test]
+fn a_copy_to_a_share_syncs_in_steps_and_lands_the_same_bytes() {
+    let root = dir("steps");
+    let (mb, kb) = (1u64 << 20, 1u64 << 10);
+    let (quick, slow, middling) = (
+        Duration::from_millis(500),
+        Duration::from_secs(5),
+        Duration::from_secs(2),
+    );
+    for (n, far, took, want) in [
+        // Quick: 1, then 2 MB at most.
+        (
+            13 * mb + 12_345,
+            true,
+            quick,
+            vec![mb, 2 * mb, 2 * mb, 2 * mb, 2 * mb, 2 * mb, 2 * mb, 12_345],
+        ),
+        // Slow: halved down to a quarter megabyte.
+        (
+            2 * mb + 100,
+            true,
+            slow,
+            vec![mb, 512 * kb, 256 * kb, 256 * kb, 100],
+        ),
+        // In between: the step it has.
+        (3 * mb, true, middling, vec![mb, mb, mb, 0]),
+        (0, true, quick, vec![0]),
+        (5 * mb + 1, false, quick, vec![5 * mb + 1]),
+    ] {
+        let to = root.join(format!("{n}-{far}-{}.CR3", took.as_millis()));
+        let (log, _, bytes) = land_logged(n as usize, &to, far, took);
+        assert_eq!(bytes, n);
+        assert_eq!(syncs(&log), want, "{n} {far} {took:?}");
+        // A beat straight after every sync, before anything is read.
+        for (i, d) in log.iter().enumerate() {
+            if matches!(d, Did::Sync(_)) {
+                assert_eq!(log.get(i + 1), Some(&Did::Beat), "{n}: {log:?}");
+            }
+        }
+    }
+    no_temporaries(&root);
+    greycard_render::testing::remove_dir_retry(&root);
+}
+
+/// A share whose client sends the writes only at a sync, with a watch
+/// eight times a step's upload and shorter than the whole file's:
+/// synced in steps, the copy beats through it and is never set aside.
+/// And a read-back that is still a read-back: a copy changed after it
+/// was written is refused, stepped or not.
+#[test]
+fn a_slow_upload_beats_through_its_syncs() {
+    use crate::archive::{Heard, supervise};
+    let root = dir("upload");
+    let n = 21 * STEP_FIRST as usize + 999;
+    let body = noise(n, 3);
+    let to = root.join("IMG_0001.CR3");
+    let (tx, rx) = std::sync::mpsc::channel();
+    let job_to = to.clone();
+    supervise(
+        "test upload",
+        Duration::from_millis(1600),
+        move |beat| {
+            // 100 ms a megabyte: 200 ms for the largest step, over 2 s
+            // for the whole file at once.
+            let on_sync = |pending: u64| {
+                std::thread::sleep(Duration::from_millis(pending * 100 / (1 << 20)));
+                None
+            };
+            let how = Landing {
+                beat: &**beat,
+                far: true,
+                on_sync: Some(&on_sync),
+                ..Landing::default()
+            };
+            land_with(&mut &body[..], None, None, &job_to, None, &how).map_err(|e| format!("{e:#}"))
+        },
+        move |h| {
+            let _ = tx.send(match h {
+                Heard::Done { result, late } => Some((result, late)),
+                Heard::Aside | Heard::Lost => None,
+            });
+        },
+    )
+    .unwrap();
+    let (result, late) = rx
+        .recv_timeout(Duration::from_secs(30))
+        .unwrap()
+        .expect("set aside while it was moving");
+    assert!(!late);
+    assert_eq!(result.unwrap().1, n as u64);
+
+    let bad = root.join("IMG_0002.CR3");
+    let tamper = |p: &Path| std::fs::write(p, b"not the same").unwrap();
+    let how = Landing {
+        far: true,
+        tamper: Some(&tamper),
+        ..Landing::default()
+    };
+    let e = land_with(
+        &mut &noise(3 * STEP_FIRST as usize + 5, 9)[..],
+        None,
+        None,
+        &bad,
+        None,
+        &how,
+    )
+    .unwrap_err();
+    assert!(format!("{e:#}").contains("does not read back"), "{e:#}");
+    assert!(!bad.exists());
+    no_temporaries(&root);
+    greycard_render::testing::remove_dir_retry(&root);
+}
+
+/// A share on a slow link takes seconds over a read: each read of the
+/// copy and of a hash asks for no more than a quarter megabyte, so a
+/// read as slow as that (250 ms each here, against a watch of 2 s)
+/// beats in time.
+#[test]
+fn a_slow_read_beats_in_time() {
+    use crate::archive::{Heard, supervise};
+    use std::sync::Arc;
+    use std::sync::atomic::AtomicUsize;
+    struct Slow(Vec<u8>, usize, Arc<AtomicUsize>);
+    impl Read for Slow {
+        fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+            self.2.fetch_max(buf.len(), Ordering::Relaxed);
+            std::thread::sleep(Duration::from_millis(buf.len() as u64 * 1000 / (1 << 20)));
+            let k = buf.len().min(self.0.len() - self.1);
+            buf[..k].copy_from_slice(&self.0[self.1..self.1 + k]);
+            self.1 += k;
+            Ok(k)
+        }
+    }
+    let root = dir("slow-read");
+    let body = noise((1 << 20) + 777, 5);
+    let to = root.join("IMG_0001.CR3");
+    let (tx, rx) = std::sync::mpsc::channel();
+    let most = Arc::new(AtomicUsize::new(0));
+    let (job_body, job_to, job_most) = (body.clone(), to.clone(), most.clone());
+    supervise(
+        "test slow read",
+        Duration::from_secs(2),
+        move |beat| {
+            let how = Landing {
+                beat: &**beat,
+                ..Landing::default()
+            };
+            let landed = land_with(
+                &mut Slow(job_body.clone(), 0, job_most.clone()),
+                None,
+                None,
+                &job_to,
+                None,
+                &how,
+            )
+            .map_err(|e| format!("{e:#}"));
+            let hashed = hash_reader_beating(&mut Slow(job_body, 0, job_most), &**beat)
+                .map_err(|e| e.to_string());
+            (landed, hashed)
+        },
+        move |h| {
+            let _ = tx.send(match h {
+                Heard::Done { result, late } => Some((result, late)),
+                Heard::Aside | Heard::Lost => None,
+            });
+        },
+    )
+    .unwrap();
+    let ((landed, hashed), late) = rx
+        .recv_timeout(Duration::from_secs(30))
+        .unwrap()
+        .expect("set aside while it was reading");
+    assert!(!late);
+    assert!(
+        most.load(Ordering::Relaxed) <= 256 << 10,
+        "a read too big to beat in time"
+    );
+    let want = blake3::hash(&body).to_hex().to_string();
+    assert_eq!(landed.unwrap().0, want);
+    assert_eq!(hashed.unwrap().0, want);
+    assert_eq!(std::fs::read(&to).unwrap(), body);
+    greycard_render::testing::remove_dir_retry(&root);
 }

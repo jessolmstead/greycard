@@ -24,11 +24,11 @@ use greycard_library::Change;
 use slint::{ComponentHandle, ModelRc, VecModel};
 
 use super::{Running, frames_word, look_at, send, some_names, start_timer};
-use crate::archive::Heard;
 use crate::archive::rejects::{self as core, Deletes, Entry, Item, Look, Moves};
+use crate::archive::{COPY_WAIT, Heard};
 use crate::delete::{self, How, Offer, TRASH_SUPPORTED};
 use crate::panel::browser::file_name;
-use crate::roots::{ROOT_WAIT, View};
+use crate::roots::View;
 use crate::worker::Worker;
 use crate::{App, Shared, State, archive, tr};
 
@@ -198,6 +198,7 @@ pub(crate) fn ask(state: &Rc<Shared>, app: &App, choice: usize) {
     let sent = send(
         app,
         "archive rejects look",
+        COPY_WAIT,
         token,
         move |beat| {
             let answered = look_at(std::slice::from_ref(&archive), beat)[0];
@@ -231,7 +232,7 @@ fn land_look(
                 tr!(
                     "{} timed out after {} s; nothing was done",
                     asked.label,
-                    ROOT_WAIT.as_secs()
+                    COPY_WAIT.as_secs()
                 )
                 .into(),
             );
@@ -509,6 +510,7 @@ fn start(
     let sent = send(
         app,
         "archive rejects",
+        COPY_WAIT,
         token,
         move |beat| {
             let answered = look_at(std::slice::from_ref(&archive), beat)[0];
@@ -585,7 +587,7 @@ fn land_run(state: &Rc<Shared>, app: &App, _worker: &Rc<Worker>, token: u64, hea
                     tr!(
                         "{} timed out after {} s; stopping after this frame",
                         r.label,
-                        ROOT_WAIT.as_secs()
+                        COPY_WAIT.as_secs()
                     )
                     .into(),
                 );
@@ -1032,7 +1034,7 @@ pub(crate) fn install(app: &App, state: &Rc<Shared>) {
 mod tests {
     use std::cell::RefCell;
 
-    use super::super::tests::{ASIDE_NEXT, SENT, land_sent};
+    use super::super::tests::{ASIDE_NEXT, SENT, WAITS, land_sent};
     use super::*;
     use crate::testing::{press, state_for, window};
     use greycard_edit::{Placement, SIDECAR_FOLDER, Sidecar};
@@ -1565,9 +1567,19 @@ mod tests {
         }
         assert!(!c.app.get_archive_running());
         assert!(
-            c.app.get_status().contains("timed out"),
+            c.app.get_status().contains("timed out after 30 s"),
             "{}",
             c.app.get_status()
+        );
+        // The look reads the copies' heads on the archive, and the run
+        // moves them: both have a copy's wait.
+        let waits = WAITS.with(|w| w.borrow().clone());
+        assert_eq!(
+            waits,
+            [
+                ("archive rejects look".into(), COPY_WAIT),
+                ("archive rejects".into(), COPY_WAIT)
+            ],
         );
         let held: Vec<_> = SENT.with(|s| s.borrow_mut().drain(..).collect());
         c.app.invoke_archive_rejects_asked(0);

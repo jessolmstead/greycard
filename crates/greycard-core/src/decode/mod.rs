@@ -105,6 +105,98 @@ pub fn probe_ends_path(path: impl AsRef<Path>) -> Result<Probe> {
     rawler_backend::probe_ends_path(path.as_ref())
 }
 
+/// One read of a whole file while a beat is set ([`beating_reads`]).
+const BEAT_READ: usize = 256 << 10;
+
+thread_local! {
+    /// The beat [`beating_reads`] set on this thread.
+    static READ_BEAT: std::cell::RefCell<Option<std::sync::Arc<dyn Fn()>>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+/// Run `f` with every whole-file read the decoder makes on this thread
+/// read a quarter megabyte at a time, `beat` called after each: a raw's
+/// fallback when its pieces will not do, a TIFF's probe and stance, a
+/// picture's EXIF grown past its head. A job over a slow share is told
+/// by it from one that stopped answering. Set for `f` alone, and put
+/// back as it was after, a panic too. Only this thread's reads beat: a
+/// read `f` hands to another thread does not.
+pub fn beating_reads<R>(beat: std::sync::Arc<dyn Fn()>, f: impl FnOnce() -> R) -> R {
+    struct Back(Option<std::sync::Arc<dyn Fn()>>);
+    impl Drop for Back {
+        fn drop(&mut self) {
+            let was = self.0.take();
+            READ_BEAT.with(|b| *b.borrow_mut() = was);
+        }
+    }
+    let _back = Back(READ_BEAT.with(|b| b.borrow_mut().replace(beat)));
+    f()
+}
+
+/// The beat [`beating_reads`] set on this thread, if any.
+fn read_beat() -> Option<std::sync::Arc<dyn Fn()>> {
+    READ_BEAT.with(|b| b.borrow().clone())
+}
+
+/// The rest of `r` onto `buf`: a quarter megabyte a read with a beat
+/// after each under [`beating_reads`], else in one `read_to_end` as
+/// before.
+pub(crate) fn read_rest(r: &mut dyn std::io::Read, buf: &mut Vec<u8>) -> std::io::Result<()> {
+    match read_beat() {
+        Some(beat) => read_onto(r, buf, &*beat),
+        None => r.read_to_end(buf).map(|_| ()),
+    }
+}
+
+/// The whole file at `path`, as [`read_rest`] reads.
+pub(crate) fn read_file(path: &Path) -> std::io::Result<Vec<u8>> {
+    match read_beat() {
+        Some(beat) => {
+            let mut file = std::fs::File::open(path)?;
+            let hint = file.metadata().map_or(0, |m| m.len() as usize);
+            read_beating(&mut file, hint, &*beat)
+        }
+        None => std::fs::read(path),
+    }
+}
+
+/// All of `r`, a quarter megabyte a read, `beat` after each; `hint` is
+/// how many bytes to make room for.
+pub fn read_beating(
+    r: &mut dyn std::io::Read,
+    hint: usize,
+    beat: &dyn Fn(),
+) -> std::io::Result<Vec<u8>> {
+    // Room for the last read's quarter megabyte too, so the last
+    // resize does not move it all.
+    let mut buf = Vec::with_capacity(hint + BEAT_READ);
+    read_onto(r, &mut buf, beat)?;
+    Ok(buf)
+}
+
+/// [`read_beating`] onto the end of `buf`.
+fn read_onto(r: &mut dyn std::io::Read, buf: &mut Vec<u8>, beat: &dyn Fn()) -> std::io::Result<()> {
+    loop {
+        let at = buf.len();
+        buf.resize(at + BEAT_READ, 0);
+        match r.read(&mut buf[at..]) {
+            Ok(0) => {
+                buf.truncate(at);
+                return Ok(());
+            }
+            Ok(k) => {
+                buf.truncate(at + k);
+                beat();
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::Interrupted => buf.truncate(at),
+            Err(e) => {
+                buf.truncate(at);
+                return Err(e);
+            }
+        }
+    }
+}
+
 /// What the library's index reads of a raw, its probe, its kind of
 /// mosaic, and its maker's style, from the pieces of the file they are
 /// in; see `rawler_backend::index_read_path`.

@@ -5344,9 +5344,10 @@ pub fn maps_under(dir: &Path) -> u64 {
 
 /// The whole file at `path` read into memory, not mapped, as rawler's
 /// source, and its length: a volume that goes away under it is an
-/// error from `read`, not a SIGBUS.
+/// error from `read`, not a SIGBUS. Under [`super::beating_reads`], a
+/// quarter megabyte a read with a beat after each.
 fn read_whole(path: &Path) -> Result<(RawSource, u64)> {
-    let buf = std::fs::read(path)?;
+    let buf = super::read_file(path)?;
     let len = buf.len() as u64;
     Ok((
         RawSource::new_from_shared_vec(std::sync::Arc::new(buf)).with_path(path),

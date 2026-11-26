@@ -54,6 +54,12 @@ pub const TEMPORARY: &str = ".greycard-backup";
 /// hour without a write is no copy under way.
 const STALE_AFTER: Duration = Duration::from_secs(60 * 60);
 
+/// How long a copy or a move on an archive may say nothing before it is
+/// set aside. A look at a root has the roots' 3 s; a copy over a slow
+/// link beats once a read or a sync step, a second or two apart at
+/// 20 Mbit/s, and a share that answers that slowly is slow, not gone.
+pub const COPY_WAIT: Duration = Duration::from_secs(30);
+
 /// A job's word that it is still moving: shared, so a wait on the
 /// library's lock can say it too.
 pub type Beat = Arc<dyn Fn() + Send + Sync>;
@@ -870,6 +876,10 @@ pub struct Hooks<'a> {
     /// read back.
     #[cfg(test)]
     pub tamper: Option<&'a dyn Fn(&Path)>,
+    /// A test's hand before each sync of a copy, with the bytes it has
+    /// to send; what it returns stands for how long the sync took.
+    #[cfg(test)]
+    pub on_sync: Option<&'a dyn Fn(u64) -> Option<Duration>>,
 }
 
 impl<'a> Hooks<'a> {
@@ -882,6 +892,8 @@ impl<'a> Hooks<'a> {
             before_frame: None,
             #[cfg(test)]
             tamper: None,
+            #[cfg(test)]
+            on_sync: None,
         }
     }
 }
@@ -919,13 +931,15 @@ pub struct Report {
 /// Remove the temporaries a run before left in `folder`: an hour since
 /// their last write, and not of a process running here (a copy set
 /// aside, or another window's). Another machine's live copy writes to
-/// its temporary at every chunk, so the hour keeps it too.
-pub fn sweep(folder: &Path) -> Vec<PathBuf> {
+/// its temporary at every chunk, so the hour keeps it too. A beat at
+/// every entry: a big folder on a slow share lists for a while.
+pub fn sweep(folder: &Path, beat: &dyn Fn()) -> Vec<PathBuf> {
     let mut gone = Vec::new();
     let Ok(entries) = std::fs::read_dir(folder) else {
         return gone;
     };
     for e in entries.flatten() {
+        beat();
         let name = e.file_name().to_string_lossy().into_owned();
         if !(name.starts_with('.')
             && name.ends_with(TEMPORARY)
@@ -957,13 +971,15 @@ pub fn sweep(folder: &Path) -> Vec<PathBuf> {
 /// beside `to`, the whole file's BLAKE3 as it streams, read back past
 /// the cache, named `to` only when the two agree, `from`'s mtime kept.
 /// `replace` lets it go over a file at `to` (an older sidecar); otherwise
-/// one there is an error and left. The whole hash and the size.
+/// one there is an error and left. `far`, `to` is on a network mount,
+/// and the copy is synced in steps. The whole hash and the size.
 pub fn copy_file(
     from: &Path,
     to: &Path,
     replace: bool,
     hooks: &Hooks<'_>,
     counted: bool,
+    far: bool,
 ) -> Result<(String, u64), String> {
     let mut src = std::fs::File::open(from).map_err(|e| tr!("reading it: {e}", e = e))?;
     let meta = src.metadata().map_err(|e| tr!("reading it: {e}", e = e))?;
@@ -972,8 +988,11 @@ pub fn copy_file(
         replace,
         beat: hooks.beat,
         bytes: counted.then_some(hooks.bytes),
+        far,
         #[cfg(test)]
         tamper: hooks.tamper,
+        #[cfg(test)]
+        on_sync: hooks.on_sync,
     };
     crate::import::land_with(
         &mut src,
@@ -984,6 +1003,21 @@ pub fn copy_file(
         &how,
     )
     .map_err(|e| format!("{e:#}"))
+}
+
+/// Whether `path` is on a network mount, asked of the nearest folder of
+/// it there is (a destination folder is made by the copy), its links
+/// resolved: a link or a junction into a share is the share.
+fn on_network(path: &Path) -> bool {
+    remote_by(path, &|p| crate::mounts::remote(p).is_some())
+}
+
+/// [`on_network`] by `remote`, which is asked of a canonical folder.
+fn remote_by(path: &Path, remote: &dyn Fn(&Path) -> bool) -> bool {
+    path.ancestors()
+        .find(|a| a.is_dir())
+        .and_then(|a| dunce::canonicalize(a).ok())
+        .is_some_and(|a| remote(&a))
 }
 
 /// Run a plan: one frame at a time, its sidecars after it, the cancel
@@ -1019,7 +1053,15 @@ pub fn run(plan: &Plan, hooks: &Hooks<'_>) -> Report {
     }
     for f in &folders {
         (hooks.beat)();
-        report.stale.extend(sweep(f));
+        report.stale.extend(sweep(f, hooks.beat));
+    }
+    // Stepped only where the writes go over the network: a backup's
+    // archive. A bring-back writes to a local disk and syncs once; its
+    // reads of the share beat as they go.
+    (hooks.beat)();
+    let far = on_network(&plan.ask.dest);
+    if far {
+        tracing::debug!("archive: writing to a network mount; each copy is synced in steps");
     }
     let mut written: Vec<PathBuf> = Vec::new();
     for (n, item) in plan.items.iter().enumerate() {
@@ -1044,14 +1086,14 @@ pub fn run(plan: &Plan, hooks: &Hooks<'_>) -> Report {
                     report.taken.push(item.frame.clone());
                     continue;
                 }
-                match copy_file(&item.frame, to, false, hooks, true) {
+                match copy_file(&item.frame, to, false, hooks, true, far) {
                     Ok((whole, size)) => {
                         report
                             .copied
                             .push((item.frame.clone(), to.clone(), size, whole));
                         note(to, &mut written);
                         for s in sidecars {
-                            match copy_file(&s.from, &s.to, false, hooks, false) {
+                            match copy_file(&s.from, &s.to, false, hooks, false, far) {
                                 Ok(_) => {
                                     report.sidecar_files += 1;
                                     note(&s.to, &mut written);
@@ -1105,7 +1147,7 @@ pub fn run(plan: &Plan, hooks: &Hooks<'_>) -> Report {
                     // Over the older copy only when this file was judged
                     // the newer; a new name never goes over one that
                     // appeared since.
-                    match copy_file(&s.from, &s.to, s.replace, hooks, false) {
+                    match copy_file(&s.from, &s.to, s.replace, hooks, false, far) {
                         Ok(_) => {
                             report.sidecar_files += 1;
                             note(&s.to, &mut written);
@@ -1153,7 +1195,7 @@ pub fn run(plan: &Plan, hooks: &Hooks<'_>) -> Report {
         }
         for (a, b) in pairs {
             (hooks.beat)();
-            let done = greycard_library::carry::across(&a, &b);
+            let done = greycard_library::carry::across(&a, &b, hooks.beat);
             if done.apart > 0 {
                 tracing::info!(
                     "archive: {} carried sets in {} went their own ways; joined when read",
@@ -1204,7 +1246,7 @@ pub fn record(index: &Path, report: &Report, beat: &Beat) {
     };
     for (from, to, size, whole) in &report.copied {
         beat();
-        if let Err(e) = lib.index_file(to) {
+        if let Err(e) = lib.index_file_beating(to, beat.clone()) {
             tracing::warn!("archive: {}: {e}", to.display());
         }
         beat();

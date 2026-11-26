@@ -714,6 +714,7 @@ fn a_copy_that_stalls_mid_run_is_set_aside_and_stops_after_its_frame() {
                 bytes: &bytes,
                 before_frame: Some(&hand),
                 tamper: None,
+                on_sync: None,
             };
             run(&plan, &hooks)
         },
@@ -737,6 +738,143 @@ fn a_copy_that_stalls_mid_run_is_set_aside_and_stops_after_its_frame() {
         }
         Heard::Aside | Heard::Lost => panic!("set aside twice, or lost"),
     }
+    greycard_render::testing::remove_dir_retry(&dir);
+}
+
+/// A share that stops answering inside a copy's sync, the one that
+/// does not beat, is still set aside once the wait is up, and the
+/// run, let go, ends its frame and reports the rest not copied.
+#[test]
+fn a_copy_whose_sync_hangs_is_set_aside_and_reports_the_rest() {
+    let dir = scratch("sync-hang");
+    let (local, nas) = (dir.join("local"), dir.join("nas"));
+    std::fs::create_dir_all(&nas).unwrap();
+    shoot(&local);
+    let db = dir.join("library.sqlite");
+    index(&db, &[&local, &nas]);
+    let plan = plan(&backup_ask(&local, &nas, &db, false), &no_beat());
+    let cancel = Arc::new(AtomicBool::new(false));
+    let held = Arc::new(AtomicBool::new(true));
+    let (tx, rx) = mpsc::channel();
+    let (job_cancel, hold) = (cancel.clone(), held.clone());
+    supervise(
+        "test sync hang",
+        Duration::from_millis(500),
+        move |beat| {
+            let bytes = AtomicU64::new(0);
+            let on_sync = |_: u64| {
+                while hold.load(Ordering::SeqCst) {
+                    std::thread::sleep(Duration::from_millis(5));
+                }
+                None
+            };
+            let hooks = Hooks {
+                on_sync: Some(&on_sync),
+                ..Hooks::new(&**beat, &job_cancel, &bytes)
+            };
+            run(&plan, &hooks)
+        },
+        move |h| {
+            let _ = tx.send(h);
+        },
+    )
+    .unwrap();
+    assert!(matches!(
+        rx.recv_timeout(Duration::from_secs(10)).unwrap(),
+        Heard::Aside
+    ));
+    cancel.store(true, Ordering::SeqCst);
+    held.store(false, Ordering::SeqCst);
+    match rx.recv_timeout(Duration::from_secs(10)).unwrap() {
+        Heard::Done { result, late } => {
+            assert!(late);
+            assert_eq!(result.copied.len(), 1, "the frame in hand lands");
+            assert_eq!(result.canceled, 2);
+            let (from, to, _, whole) = &result.copied[0];
+            assert_eq!(&crate::import::hash_whole(from).unwrap(), whole);
+            assert_eq!(&crate::import::hash_whole(to).unwrap(), whole);
+        }
+        Heard::Aside | Heard::Lost => panic!("set aside twice, or lost"),
+    }
+    greycard_render::testing::remove_dir_retry(&dir);
+}
+
+/// A link into a share is the share: the folder asked about is the one
+/// the link leads to, found from the nearest folder there is.
+#[cfg(unix)]
+#[test]
+fn a_link_into_a_share_is_far() {
+    let dir = scratch("far-link");
+    let share = dir.join("share");
+    std::fs::create_dir_all(share.join("year")).unwrap();
+    let link = dir.join("archive");
+    std::os::unix::fs::symlink(&share, &link).unwrap();
+    let canonical = dunce::canonicalize(&share).unwrap();
+    let remote = |p: &Path| p.starts_with(&canonical);
+    assert!(remote_by(&link.join("year/new shoot/a.cr3"), &remote));
+    assert!(remote_by(&link, &remote));
+    assert!(!remote_by(&dir.join("local/shoot"), &remote));
+    greycard_render::testing::remove_dir_retry(&dir);
+}
+
+/// The index of a landed copy that has to read it whole, over a share
+/// as slow as 250 ms a quarter megabyte, beats at every read: under a
+/// 2 s watch it is never set aside.
+#[test]
+fn an_index_read_whole_off_a_slow_share_beats_in_time() {
+    struct Slow(usize);
+    impl std::io::Read for Slow {
+        fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+            assert!(buf.len() <= 256 << 10, "a read too big to beat in time");
+            std::thread::sleep(Duration::from_millis(buf.len() as u64 * 1000 / (1 << 20)));
+            let k = buf.len().min(self.0);
+            buf[..k].fill(7);
+            self.0 -= k;
+            Ok(k)
+        }
+    }
+    let n = (3 << 20) + 5;
+    let (tx, rx) = mpsc::channel();
+    supervise(
+        "test index read",
+        Duration::from_secs(2),
+        move |beat| greycard_core::decode::read_beating(&mut Slow(n), n, &**beat).map(|b| b.len()),
+        move |h| {
+            let _ = tx.send(match h {
+                Heard::Done { result, late } => Some((result.unwrap(), late)),
+                Heard::Aside | Heard::Lost => None,
+            });
+        },
+    )
+    .unwrap();
+    assert_eq!(
+        rx.recv_timeout(Duration::from_secs(30)).unwrap(),
+        Some((n, false))
+    );
+}
+
+/// A big folder on a slow share lists for a while: the sweep beats at
+/// every entry, not the folder once, and still takes only a stale
+/// temporary of no process running here.
+#[test]
+fn the_sweep_beats_at_every_entry() {
+    let dir = scratch("sweep-beats");
+    let n = 40;
+    for i in 0..n {
+        std::fs::write(dir.join(format!("IMG_{i:04}.CR3")), b"x").unwrap();
+    }
+    let stale = dir.join(format!(".IMG_9999.CR3{TEMPORARY}"));
+    std::fs::write(&stale, b"half").unwrap();
+    std::fs::File::options()
+        .write(true)
+        .open(&stale)
+        .unwrap()
+        .set_modified(SystemTime::now() - STALE_AFTER - Duration::from_secs(60))
+        .unwrap();
+    let beats = std::cell::Cell::new(0usize);
+    let gone = sweep(&dir, &|| beats.set(beats.get() + 1));
+    assert_eq!(gone, [stale]);
+    assert_eq!(beats.get(), n + 1);
     greycard_render::testing::remove_dir_retry(&dir);
 }
 

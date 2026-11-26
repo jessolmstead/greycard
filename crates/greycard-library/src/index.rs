@@ -814,6 +814,19 @@ impl Library {
             takes,
         )
     }
+
+    /// [`Library::index_file`] with `beat` called as the file is read:
+    /// at every quarter megabyte where its reading falls back to the
+    /// whole file. The file's reads are on this thread, a pass with no
+    /// network reads having no threads of its own, so the decoder's
+    /// beat for the thread reaches them.
+    pub fn index_file_beating(
+        &mut self,
+        path: &Path,
+        beat: std::sync::Arc<dyn Fn()>,
+    ) -> Result<Report> {
+        greycard_core::decode::beating_reads(beat, || self.index_file(path))
+    }
 }
 
 fn row_from(r: &rusqlite::Row<'_>, from: usize) -> rusqlite::Result<Row> {
@@ -8901,6 +8914,39 @@ pub(crate) mod tests {
             "{report:?}"
         );
         drop(lib);
+        greycard_core::testing::remove_dir_retry(&dir);
+    }
+
+    /// A copy whose reading falls back to the whole file (a raw whose
+    /// pieces will not read, a TIFF, which is always read whole) reads
+    /// it a quarter megabyte at a time under a beat, so a job indexing
+    /// a copy it landed on a slow share says it is moving; the plain
+    /// index_file is as it was.
+    #[test]
+    fn a_whole_read_under_a_beat_beats_as_it_reads() {
+        let dir = scratch("beating-index");
+        let n = 3 << 20;
+        let mut tiff = b"II*\0".to_vec();
+        tiff.resize(n, 0x5a);
+        for (name, bytes) in [("IMG_0001.CR3", vec![0x5a; n]), ("scan.tif", tiff)] {
+            let junk = dir.join(name);
+            std::fs::write(&junk, bytes).unwrap();
+            let mut lib = Library::open_in_memory().unwrap();
+            let beats = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+            let counted = beats.clone();
+            let _ = lib.index_file_beating(
+                &junk,
+                std::sync::Arc::new(move || {
+                    counted.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                }),
+            );
+            let beaten = beats.load(std::sync::atomic::Ordering::Relaxed);
+            assert!(beaten >= n / (256 << 10), "{name}: {beaten} beats");
+            // Set for that call alone.
+            let _ = lib.index_file(&junk);
+            assert_eq!(beats.load(std::sync::atomic::Ordering::Relaxed), beaten);
+            drop(lib);
+        }
         greycard_core::testing::remove_dir_retry(&dir);
     }
 }

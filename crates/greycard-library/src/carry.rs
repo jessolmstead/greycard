@@ -1124,8 +1124,10 @@ pub struct Across {
 /// lacks, or holds behind, goes across; one that `to` holds ahead comes
 /// back; a deletion takes the copies it has seen on the other side. Two
 /// that went their own ways are left, and a later build's. What is in
-/// `to` alone stays there: it may be a copy `from` gave up.
-pub fn across(from: &Path, to: &Path) -> Across {
+/// `to` alone stays there: it may be a copy `from` gave up. `beat` is
+/// called after every file read or written: a job on a slow share is
+/// told by it from one that stopped answering.
+pub fn across(from: &Path, to: &Path, beat: &dyn Fn()) -> Across {
     let mut done = Across::default();
     if !to.is_dir() {
         return done;
@@ -1134,9 +1136,18 @@ pub fn across(from: &Path, to: &Path) -> Across {
     let Ok(names) = list(&fs) else {
         return done;
     };
+    beat();
+    let read_there = |folder: &Path, name: &str, up_to: u32| {
+        let read = read_there(folder, name, up_to);
+        beat();
+        read
+    };
     let copy = |name: &str, a: &Path, b: &Path| -> bool {
         let read = std::fs::read_to_string(a.join(name));
-        match read.map(|text| write_atomic(&b.join(name), &text)) {
+        beat();
+        let wrote = read.map(|text| write_atomic(&b.join(name), &text));
+        beat();
+        match wrote {
             Ok(Ok(())) => true,
             Ok(Err(e)) | Err(e) => {
                 log::warn!("carried set {}: {e}", b.join(name).display());
@@ -1372,7 +1383,7 @@ mod tests {
         let desk = laptop.join("desk-copy");
         std::fs::create_dir_all(&desk).unwrap();
         assert_eq!(
-            across(&shoot, &desk),
+            across(&shoot, &desk, &|| {}),
             Across {
                 written: 1,
                 apart: 0
@@ -1593,15 +1604,19 @@ mod tests {
         std::fs::create_dir_all(&there).unwrap();
         let c = picks(&here);
         put(&here, &Item::Collection(c.clone())).unwrap();
-        assert_eq!(across(&here, &there).written, 1);
-        assert_eq!(across(&here, &there), Across::default(), "the same now");
+        assert_eq!(across(&here, &there, &|| {}).written, 1);
+        assert_eq!(
+            across(&here, &there, &|| {}),
+            Across::default(),
+            "the same now"
+        );
         // Edited over there: it comes back.
         let mut theirs = c.clone();
         theirs.name = "Renamed there".into();
         theirs.stamp(400, "desk");
         let theirs_item = Item::Collection(theirs);
         assert_eq!(put(&there, &theirs_item).unwrap(), Wrote::Written);
-        assert_eq!(across(&here, &there).written, 1);
+        assert_eq!(across(&here, &there, &|| {}).written, 1);
         let Ok(Parsed::Item(Item::Collection(back))) = read_folder(&here)[0].parse() else {
             panic!()
         };
@@ -1618,12 +1633,39 @@ mod tests {
         std::fs::remove_file(sets_dir(&there).join(file_name(&c.id, Kind::Collection))).unwrap();
         put(&there, &Item::Collection(b)).unwrap();
         assert_eq!(
-            across(&here, &there),
+            across(&here, &there, &|| {}),
             Across {
                 written: 0,
                 apart: 1
             }
         );
+        greycard_core::testing::remove_dir_retry(&root);
+    }
+
+    /// A folder of sets on a slow share says it is moving at every file:
+    /// each one read on either side and each one written beats, not the
+    /// folder once.
+    #[test]
+    fn across_beats_at_every_file() {
+        let root = scratch("across-beats");
+        let (here, there) = (root.join("here"), root.join("there"));
+        std::fs::create_dir_all(&here).unwrap();
+        std::fs::create_dir_all(&there).unwrap();
+        let n = 6;
+        for i in 0..n {
+            let mut c = Collection::new(&format!("Set {i}"));
+            c.stamp(100 + i as u64, "laptop");
+            put(&here, &Item::Collection(c)).unwrap();
+        }
+        let beats = std::cell::Cell::new(0usize);
+        let done = across(&here, &there, &|| beats.set(beats.get() + 1));
+        assert_eq!(done.written, n);
+        // Each: ours read, theirs looked for (none), ours read again
+        // and written there.
+        assert!(beats.get() > 3 * n, "{} beats", beats.get());
+        let before = beats.get();
+        across(&here, &there, &|| beats.set(beats.get() + 1));
+        assert!(beats.get() - before >= 2 * n, "the same: still read");
         greycard_core::testing::remove_dir_retry(&root);
     }
 
@@ -1667,13 +1709,13 @@ mod tests {
         assert_eq!(put(&d, &ours).unwrap(), Wrote::Later);
         assert_eq!(bury(&d, &Gone::of(&ours)).unwrap(), Wrote::Later);
         bury(&other, &Gone::of(&Item::Collection(c.clone()))).unwrap();
-        across(&other, &d);
+        across(&other, &d, &|| {});
         assert_eq!(std::fs::read_to_string(&file).unwrap(), later);
         std::fs::remove_file(&file).unwrap();
         std::fs::write(&gone, later_gone).unwrap();
         assert_eq!(put(&d, &ours).unwrap(), Wrote::Later);
         assert_eq!(bury(&d, &Gone::of(&ours)).unwrap(), Wrote::Later);
-        across(&other, &d);
+        across(&other, &d, &|| {});
         assert_eq!(std::fs::read_to_string(&gone).unwrap(), later_gone);
         assert!(!file.exists());
         greycard_core::testing::remove_dir_retry(&d);

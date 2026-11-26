@@ -265,6 +265,8 @@ design note behind it.
   now opens uncorrected until a lens is picked (issue 197).
 - Edit in and the archive menus, when too long for the window, end with All apps... or All archives..., a list to search.
 - A library index from a newer greycard is left untouched, and the notice gives the reason first and stays through a folder opened (issue 199).
+- Back up and Bring back work over a slow link to a network archive, where they stopped after one frame with a timeout
+  ([§754](https://github.com/jessolmstead/greycard/blob/master/docs/notes/754-archive-copies-over-a-slow-link.md)).
 - A DNG with a linearization table, such as some DxO PureRAW files,
   no longer develops six stops dark and magenta.
 - A camera DNG that lists a tiny thumbnail first, a Leica M11's, shows

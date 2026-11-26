@@ -15,12 +15,13 @@ use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::time::Duration;
 
 use crate::tr;
 use greycard_library::{Change, Pairing, Roots};
 use slint::{ComponentHandle, ModelRc, VecModel};
 
-use crate::archive::{self, Ask, Beat, Direction, Frames, Heard, Plan, Report};
+use crate::archive::{self, Ask, Beat, COPY_WAIT, Direction, Frames, Heard, Plan, Report};
 
 pub(crate) mod rejects;
 use crate::panel::browser::{chosen_frames, file_name};
@@ -782,7 +783,8 @@ fn common_folder(frames: &[PathBuf]) -> Option<PathBuf> {
 
 /// The look at what the sheet's ask would do, off the window's thread:
 /// the two sides' roots looked at first with the roots' 3 s look, then
-/// the plan.
+/// the plan. The plan can read frames whole on the archive to settle a
+/// doubt, so the job has a copy's wait.
 fn look(st: &mut State, app: &App) {
     let Some(asked) = st.archive.asked.clone() else {
         return;
@@ -804,6 +806,7 @@ fn look(st: &mut State, app: &App) {
     let sent = send(
         app,
         "archive look",
+        COPY_WAIT,
         token,
         move |beat| {
             let roots: Vec<PathBuf> = looked.iter().map(|(r, _)| r.clone()).collect();
@@ -858,13 +861,13 @@ fn land_look(
             tracing::warn!(
                 "archive: the look at {} said nothing for {} s; set aside",
                 asked.label,
-                ROOT_WAIT.as_secs()
+                COPY_WAIT.as_secs()
             );
             app.set_status(
                 tr!(
                     "{label} timed out after {seconds} s; nothing was copied",
                     label = asked.label,
-                    seconds = ROOT_WAIT.as_secs()
+                    seconds = COPY_WAIT.as_secs()
                 )
                 .into(),
             );
@@ -1218,6 +1221,7 @@ fn start(st: &mut State, app: &App, asked: Asked, plan: Plan) {
     let sent = send(
         app,
         "archive copy",
+        COPY_WAIT,
         token,
         move |beat| {
             let hooks = archive::Hooks::new(&**beat, &cancel, &bytes);
@@ -1327,7 +1331,7 @@ fn land_run(state: &Rc<Shared>, app: &App, _worker: &Rc<Worker>, token: u64, hea
                     tr!(
                         "{label} timed out after {seconds} s; stopping after this frame",
                         label = r.label,
-                        seconds = ROOT_WAIT.as_secs()
+                        seconds = COPY_WAIT.as_secs()
                     )
                     .into(),
                 );
@@ -1507,6 +1511,7 @@ pub(crate) fn want_count(st: &mut State, app: &App) {
     send(
         app,
         "archive count",
+        ROOT_WAIT,
         token,
         move |beat| {
             let answered = look_at(&paired, beat);
@@ -1627,6 +1632,7 @@ pub(crate) fn delete_line(st: &mut State, app: &App, frames: &[PathBuf]) {
     send(
         app,
         "archive delete look",
+        ROOT_WAIT,
         token,
         move |beat| {
             // Every archive looked at together, the wait beating, so one
@@ -1864,12 +1870,13 @@ type Landing<R> = fn(&Rc<Shared>, &App, &Rc<Worker>, u64, Heard<R>);
 fn send<R: Send + 'static>(
     app: &App,
     name: &str,
+    wait: Duration,
     token: u64,
     job: impl FnOnce(&Beat) -> R + Send + 'static,
     land: Landing<R>,
 ) -> bool {
     let app_weak = app.as_weak();
-    let watched = archive::supervise(name, ROOT_WAIT, job, move |heard| {
+    let watched = archive::supervise(name, wait, job, move |heard| {
         let app_weak = app_weak.clone();
         let _ = slint::invoke_from_event_loop(move || {
             let (Some(app), Some(state), Some(worker)) = (
@@ -1898,11 +1905,13 @@ fn send<R: Send + 'static>(
 #[cfg(test)]
 fn send<R: Send + 'static>(
     _app: &App,
-    _name: &str,
+    name: &str,
+    wait: Duration,
     token: u64,
     job: impl FnOnce(&Beat) -> R + Send + 'static,
     land: Landing<R>,
 ) -> bool {
+    tests::WAITS.with(|w| w.borrow_mut().push((name.to_owned(), wait)));
     let aside = tests::ASIDE_NEXT.with(|a| a.replace(false));
     tests::SENT.with(|s| {
         s.borrow_mut().push(Box::new(move |state, app, worker| {
@@ -2002,6 +2011,8 @@ pub(crate) mod tests {
         pub(crate) static SENT: RefCell<Vec<Sent>> = RefCell::new(Vec::new());
         /// The next job sent is heard as set aside first, then late.
         pub(crate) static ASIDE_NEXT: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+        /// The name and the wait of every job sent, in order.
+        pub(crate) static WAITS: RefCell<Vec<(String, Duration)>> = const { RefCell::new(Vec::new()) };
     }
 
     /// Run the jobs sent off and land them, as the threads and the event
@@ -2367,6 +2378,15 @@ pub(crate) mod tests {
         land_sent(&state, &app, &worker);
         assert_eq!(app.get_delete_archive(), "It is on nas.");
         app.invoke_delete_answered(0);
+        // It lists and stats the archive, and reads nothing there: the
+        // roots' wait.
+        let waits = WAITS.with(|w| w.borrow().clone());
+        let looks: Vec<_> = waits
+            .iter()
+            .filter(|(n, _)| n == "archive delete look")
+            .collect();
+        assert_eq!(looks.len(), 2, "{waits:?}");
+        assert!(looks.iter().all(|(_, w)| *w == ROOT_WAIT), "{waits:?}");
         crate::testing::remove_scratch(state, &dir);
     }
 
@@ -2435,9 +2455,19 @@ pub(crate) mod tests {
         assert_eq!(land_once(&state, &app, &worker), 1);
         assert!(!app.get_archive_running());
         assert!(
-            app.get_status().contains("timed out"),
+            app.get_status().contains("timed out after 30 s"),
             "{}",
             app.get_status()
+        );
+        // What reads files has a copy's wait: the copy, and the plan's
+        // look, which can read frames whole.
+        let waits = WAITS.with(|w| w.borrow().clone());
+        assert_eq!(
+            waits,
+            [
+                ("archive look".into(), COPY_WAIT),
+                ("archive copy".into(), COPY_WAIT)
+            ]
         );
         // Meanwhile, no other copy to that archive.
         app.invoke_archive_header_pressed(0);
@@ -2522,6 +2552,16 @@ pub(crate) mod tests {
                 "Back up to nas (2 frames not on nas)...",
                 "Back up to cloud (4 frames not on cloud)..."
             ]
+        );
+        // The count lists and stats the archives and reads nothing
+        // there: the roots' wait.
+        let waits = WAITS.with(|w| w.borrow().clone());
+        assert_eq!(waits.last(), Some(&("archive count".into(), ROOT_WAIT)));
+        assert!(
+            waits
+                .iter()
+                .all(|(n, w)| n != "archive count" || *w == ROOT_WAIT),
+            "{waits:?}"
         );
         crate::testing::remove_scratch(state, &dir);
     }
