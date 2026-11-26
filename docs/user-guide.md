@@ -190,14 +190,19 @@ click an action's key, then press the new one, modifiers and all;
 the turn ([ ]) are a key each way; the step's Shift form follows its
 keys, and the step moved is the Loupe's: the grid and the lightbox
 keep the arrows. With a brush or a repair in hand the brackets size
-it wherever the turn is bound. The
+it wherever the turn is bound. Redo has two keys, Ctrl+Shift+Z and
+Ctrl+Y; moved, it has only its new key, which may be one of the two,
+and both come back when it is set to Ctrl+Shift+Z again or on
+**Reset to defaults**. The
 other lines with more than one key (the up and down arrows, the
-ratings, flags, and labels, + −, F6 to F8, Redo, and the filter's),
+ratings, flags, and labels, + −, F6 to F8, and the filter's),
 **Enter**, **Tab**, and **F11** cannot be moved, but an action can
 take one; **Delete** or **Backspace** alone, while a key listens,
 means None; a focused slider keeps its own keys. **Esc** cannot be
 taken. A key that does two things says so in red; of two actions,
-the higher in the list gets the press. **Reset to defaults** puts
+the one you moved there gets the press, and of two both moved there
+or both by default, the higher in the list; an action moved onto a
+moved step's Shift form gets it. **Reset to defaults** puts
 every key back. The tables below are the defaults; the **?** sheet
 shows your own.
 

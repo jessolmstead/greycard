@@ -155,8 +155,10 @@ fn every_key_the_handler_binds_is_on_the_sheet_and_every_line_is_bound() {
         !handler.contains("e.text =="),
         "the key handler compares the event's text: bind the key in keys::TABLE and compare the chord"
     );
+    // An action's alternates reach it as its default.
     let table: BTreeSet<String> = table_chords()
         .into_iter()
+        .filter(|c| !actions().iter().any(|a| a.alternates.contains(c)))
         .chain(BRUSH.iter().map(|(_, n)| *n))
         .map(String::from)
         .collect();
@@ -1030,7 +1032,7 @@ fn the_actions_are_the_tables_lines() {
     for b in &lines {
         assert!(b.action.is_none() || b.pair.is_none(), "{}", b.does);
         let ids = actions_of(b);
-        assert_eq!(b.chords.len(), ids.len(), "{}", b.does);
+        let mut held = 0;
         for (i, (id, _)) in ids.into_iter().enumerate() {
             let a = actions()
                 .iter()
@@ -1038,10 +1040,30 @@ fn the_actions_are_the_tables_lines() {
                 .expect("each line's action");
             assert_eq!(a.default, b.chords[i], "{}: one default", a.id);
             assert!(bindable(a.default) && here(a.default, false) && here(a.default, true));
+            held += 1 + a.alternates.len();
+            for c in a.alternates {
+                assert!(bindable(c) && here(c, false) && here(c, true), "{c}");
+            }
         }
+        assert_eq!(b.chords.len(), held, "{}", b.does);
     }
-    let defaults: BTreeSet<&str> = actions().iter().map(|a| a.default).collect();
-    assert_eq!(defaults.len(), actions().len(), "two actions, one default");
+    let defaults: BTreeSet<&str> = actions()
+        .iter()
+        .flat_map(|a| std::iter::once(a.default).chain(a.alternates.iter().copied()))
+        .collect();
+    let held: usize = actions().iter().map(|a| 1 + a.alternates.len()).sum();
+    assert_eq!(defaults.len(), held, "two actions, one default");
+    // Redo alone has a second default.
+    let alternated: Vec<_> = actions()
+        .iter()
+        .filter(|a| !a.alternates.is_empty())
+        .map(|a| (a.id, a.default, a.alternates))
+        .collect();
+    assert_eq!(
+        alternated,
+        [("redo", "Ctrl+Shift+Z", &["Ctrl+Y"][..])],
+        "the only action with two defaults"
+    );
     // J's two lines are one action.
     let j = actions().iter().find(|a| a.default == "J").unwrap();
     assert_eq!(j.does.len(), 2);
@@ -1112,7 +1134,9 @@ fn a_rebinding_moves_the_action_and_frees_its_old_chord() {
 }
 
 /// Two actions on one chord, or an action on a fixed key: each says
-/// what else has it, and the first in the table takes the press.
+/// what else has it. The press goes to an action moved onto the
+/// chord before one holding it by default, and between two moved
+/// there the first in the table.
 #[test]
 fn a_shared_chord_is_reported() {
     let mut map = Keymap::default();
@@ -1129,8 +1153,18 @@ fn a_shared_chord_is_reported() {
     assert_eq!(found.len(), 2);
     assert_eq!(
         map.resolve("Ctrl+Z", false, LOUPE),
-        "Ctrl+Z",
-        "undo is first"
+        "R",
+        "the crop was put there, undo holds it by default"
+    );
+    // Both moved there: the first in the table.
+    let mut both = map.clone();
+    assert!(both.set("undo", "Ctrl+K"));
+    assert!(both.set("crop", "Ctrl+K"));
+    assert!(both.set("library", "Ctrl+K"));
+    assert_eq!(
+        both.resolve("Ctrl+K", false, LOUPE),
+        "G",
+        "library is first"
     );
     let rows = binding_rows(&map, false);
     let also = |id: &str| rows.iter().find(|r| r.id == id).unwrap().also.to_string();
@@ -1148,6 +1182,232 @@ fn a_shared_chord_is_reported() {
     assert!(map.conflicts(false).is_empty());
     assert_eq!(map.resolve("R", false, LOUPE), "R");
     assert_eq!(map.resolve("1", false, LOUPE), "1");
+}
+
+/// Redo's row and its line on the keys sheet, by its words.
+fn redo_keys(map: &Keymap, mac: bool) -> (String, String) {
+    let row = binding_rows(map, mac)
+        .into_iter()
+        .find(|r| r.id == "redo")
+        .expect("redo's row");
+    let line = rows_in(map, "", mac)
+        .into_iter()
+        .find(|r| !r.heading && r.does == crate::i18n::text("Redo"))
+        .expect("redo's line");
+    (row.keys.to_string(), line.keys.to_string())
+}
+
+/// Redo has two defaults, Ctrl+Shift+Z and Ctrl+Y: both redo while it
+/// is unmoved, and its row says the first. Moved, its new chord alone
+/// redoes, the two are free, another action takes either with no
+/// conflict, and Reset to defaults brings both back.
+#[test]
+fn redo_moved_lets_go_of_both_defaults_and_reset_brings_them_back() {
+    let mut map = Keymap::default();
+    for c in ["Ctrl+Shift+Z", "Ctrl+Y"] {
+        assert_eq!(map.resolve(c, false, LOUPE), "Ctrl+Shift+Z", "{c}");
+        assert_eq!(map.resolve(c, true, GRID), "Ctrl+Shift+Z", "{c}");
+    }
+    // The Settings row says both, as the keys sheet does, on a wide
+    // chip; once moved, one chord on a chip of one.
+    let or = |a: &str, b: &str| crate::tr!("{} or {}", a, b);
+    let both = or("Ctrl+Shift+Z", "Ctrl+Y");
+    assert_eq!(redo_keys(&map, false), (both.clone(), both));
+    let both = or("Cmd+Shift+Z", "Cmd+Y");
+    assert_eq!(redo_keys(&map, true), (both.clone(), both));
+    let wide = |map: &Keymap| {
+        binding_rows(map, false)
+            .into_iter()
+            .filter(|r| r.wide)
+            .map(|r| r.id.to_string())
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(wide(&map), ["redo"]);
+
+    assert!(map.set("redo", "Ctrl+U"));
+    assert_eq!(map.resolve("Ctrl+U", false, LOUPE), "Ctrl+Shift+Z");
+    for c in ["Ctrl+Shift+Z", "Ctrl+Y"] {
+        assert_eq!(map.resolve(c, false, LOUPE), "", "{c} is free");
+    }
+    assert_eq!(redo_keys(&map, false), ("Ctrl+U".into(), "Ctrl+U".into()));
+    assert_eq!(redo_keys(&map, true), ("Cmd+U".into(), "Cmd+U".into()));
+    assert!(wide(&map).is_empty());
+    assert!(map.conflicts(false).is_empty());
+    // Either default, now free, is another action's without a word.
+    assert!(map.set("crop", "Ctrl+Y"));
+    assert!(map.set("mat", "Ctrl+Shift+Z"));
+    assert_eq!(map.resolve("Ctrl+Y", false, LOUPE), "R");
+    assert_eq!(map.resolve("Ctrl+Shift+Z", false, LOUPE), "F");
+    assert!(map.conflicts(false).is_empty());
+    assert!(map.conflicts(true).is_empty());
+    let saved = map.saved();
+    assert_eq!(saved.get("redo").map(String::as_str), Some("Ctrl+U"));
+    assert_eq!(Keymap::from_saved(&saved), map);
+
+    // Moved onto its second default, that alone redoes.
+    let mut second = Keymap::default();
+    assert!(second.set("redo", "Ctrl+Y"));
+    assert_eq!(second.resolve("Ctrl+Y", false, LOUPE), "Ctrl+Shift+Z");
+    assert_eq!(second.resolve("Ctrl+Shift+Z", false, LOUPE), "");
+    assert_eq!(
+        redo_keys(&second, false),
+        ("Ctrl+Y".into(), "Ctrl+Y".into())
+    );
+    // Bound to no key: none redoes, and the sheet says None.
+    assert!(second.clear("redo"));
+    for c in ["Ctrl+Shift+Z", "Ctrl+Y"] {
+        assert_eq!(second.resolve(c, false, LOUPE), "", "{c}");
+    }
+    assert_eq!(redo_keys(&second, false), (no_chord(), no_chord()));
+
+    map.reset();
+    assert_eq!(map, Keymap::default());
+    for c in ["Ctrl+Shift+Z", "Ctrl+Y"] {
+        assert_eq!(map.resolve(c, false, LOUPE), "Ctrl+Shift+Z", "{c}");
+    }
+    assert!(map.saved().is_empty());
+}
+
+/// While Redo is unmoved both its defaults are taken: an action on
+/// either says Redo has it and Redo says the action does, but the
+/// press is the action's, which the user put there; Redo keeps the
+/// other default.
+#[test]
+fn an_action_on_either_of_redos_defaults_conflicts() {
+    for c in ["Ctrl+Shift+Z", "Ctrl+Y"] {
+        let mut map = Keymap::default();
+        assert!(map.set("crop", c));
+        let found = map.conflicts(false);
+        let of = |id: &str| {
+            found
+                .iter()
+                .find(|(a, _)| a.id == id)
+                .map(|(_, o)| o.clone())
+        };
+        assert_eq!(of("crop"), Some(vec!["Redo"]), "{c}");
+        assert_eq!(of("redo"), Some(vec!["Crop, and Done"]), "{c}");
+        assert_eq!(found.len(), 2, "{c}");
+        assert_eq!(map.resolve(c, false, LOUPE), "R", "{c}: the crop's");
+        let other = if c == "Ctrl+Y" {
+            "Ctrl+Shift+Z"
+        } else {
+            "Ctrl+Y"
+        };
+        assert_eq!(map.resolve(other, false, LOUPE), "Ctrl+Shift+Z", "{other}");
+        let rows = binding_rows(&map, false);
+        let redo = rows.iter().find(|r| r.id == "redo").unwrap();
+        assert!(redo.warn);
+        assert_eq!(redo.also, "Also: Crop, and Done");
+    }
+}
+
+/// A 0.12 file that put Export on Ctrl+Y, which Redo's second default
+/// then gave up to it: Ctrl+Y still exports, Ctrl+Shift+Z still
+/// redoes.
+#[test]
+fn a_012_file_with_export_on_ctrl_y_keeps_exporting() {
+    let saved: BTreeMap<String, String> = [("export".to_string(), "Ctrl+Y".to_string())].into();
+    let map = Keymap::from_saved(&saved);
+    for view in [LOUPE, GRID] {
+        assert_eq!(map.resolve("Ctrl+Y", false, view), "Ctrl+Shift+E");
+        assert_eq!(map.resolve("Ctrl+Shift+Z", false, view), "Ctrl+Shift+Z");
+    }
+}
+
+/// The step moved onto Ctrl+Z: its Shift form, Ctrl+Shift+Z, steps
+/// and adds in the Loupe as before Redo could move, over Redo's
+/// default; the grid keeps Ctrl+Shift+Z for Redo.
+#[test]
+fn a_moved_steps_shift_form_beats_redos_default() {
+    let mut map = Keymap::default();
+    assert!(map.set("previous-frame", "Ctrl+Z"));
+    assert_eq!(map.resolve("Ctrl+Z", false, LOUPE), "Left");
+    assert_eq!(map.resolve("Ctrl+Shift+Z", false, LOUPE), "Shift+Left");
+    assert_eq!(map.resolve("Ctrl+Y", false, LOUPE), "Ctrl+Shift+Z");
+    assert_eq!(map.resolve("Ctrl+Shift+Z", false, GRID), "Ctrl+Shift+Z");
+}
+
+/// Settings from before Redo could be moved, with no line for it:
+/// Redo is at its defaults, the rest as saved.
+#[test]
+fn settings_without_redo_leave_it_at_its_defaults() {
+    let saved: BTreeMap<String, String> = [("crop".to_string(), "K".to_string())].into();
+    let map = Keymap::from_saved(&saved);
+    for c in ["Ctrl+Shift+Z", "Ctrl+Y"] {
+        assert_eq!(map.resolve(c, false, LOUPE), "Ctrl+Shift+Z", "{c}");
+    }
+    assert_eq!(map.resolve("K", false, LOUPE), "R");
+    assert_eq!(map.saved(), saved);
+}
+
+/// `key` pressed with Ctrl held, Shift too when `shift`.
+fn with_ctrl(app: &App, key: &str, shift: bool) {
+    let mods: &[Key] = if shift {
+        &[Key::Control, Key::Shift]
+    } else {
+        &[Key::Control]
+    };
+    for m in mods {
+        app.window()
+            .dispatch_event(WindowEvent::KeyPressed { text: (*m).into() });
+    }
+    press(app, key);
+    for m in mods.iter().rev() {
+        app.window()
+            .dispatch_event(WindowEvent::KeyReleased { text: (*m).into() });
+    }
+}
+
+/// Through the window: Ctrl+Shift+Z and Ctrl+Y each redo a rating;
+/// Redo bound in the Settings sheet to Ctrl+U, that alone does, and
+/// Reset to defaults brings the two back.
+#[test]
+fn redo_bound_in_the_settings_sheet_is_what_the_window_goes_by() {
+    let (app, state, _worker) = settings_window();
+    app.set_settings_open(false);
+    slint::platform::update_timers_and_animations();
+    let rating = || state.borrow().sidecars[0].meta.rating;
+    // A rating made and undone, then `redo` pressed: whether it redid.
+    let redoes = |redo: &dyn Fn()| {
+        app.invoke_meta_key("3".into());
+        assert_eq!(rating(), 3);
+        app.invoke_undo();
+        assert_eq!(rating(), 0);
+        redo();
+        let did = rating() == 3;
+        if !did {
+            app.invoke_redo();
+        }
+        did
+    };
+    assert!(redoes(&|| with_ctrl(&app, "z", true)), "Ctrl+Shift+Z");
+    assert!(redoes(&|| with_ctrl(&app, "y", false)), "Ctrl+Y");
+
+    app.set_settings_open(true);
+    row_of(&app, "redo").invoke_accessible_default_action();
+    assert_eq!(value(&row_of(&app, "redo")), listening());
+    with_ctrl(&app, "u", false);
+    assert_eq!(value(&row_of(&app, "redo")), "Ctrl+U");
+    press(&app, Key::Escape);
+    assert!(!app.get_settings_open());
+    slint::platform::update_timers_and_animations();
+    assert!(redoes(&|| with_ctrl(&app, "u", false)), "Ctrl+U");
+    assert!(
+        !redoes(&|| with_ctrl(&app, "z", true)),
+        "Ctrl+Shift+Z let go"
+    );
+    assert!(!redoes(&|| with_ctrl(&app, "y", false)), "Ctrl+Y let go");
+    assert!(
+        rows("", false)
+            .iter()
+            .any(|r| r.keys == "Ctrl+U" && r.does == crate::i18n::text("Redo")),
+        "the keys sheet shows the binding"
+    );
+
+    app.invoke_keys_reset();
+    assert!(redoes(&|| with_ctrl(&app, "z", true)), "Ctrl+Shift+Z back");
+    assert!(redoes(&|| with_ctrl(&app, "y", false)), "Ctrl+Y back");
+    assert!(!redoes(&|| with_ctrl(&app, "u", false)), "Ctrl+U nobody's");
 }
 
 /// Through the window: the Settings sheet's row listens for the

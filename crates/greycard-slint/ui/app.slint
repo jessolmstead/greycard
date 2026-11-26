@@ -3797,15 +3797,12 @@ export component App inherits Window {
             }
             // Undo and redo move the frame under the sheet, and a sheet
             // reads that frame: a sync would carry the undone state.
-            // Under a sheet they are nobody's.
+            // Under a sheet they are nobody's. Ctrl+Y, redo's second
+            // default, reads as its first.
             if (chord == "Ctrl+Z" || chord == "Ctrl+Shift+Z") {
                 if (!root.sheet-open()) {
                     if (chord == "Ctrl+Shift+Z") { root.redo(); } else { root.undo(); }
                 }
-                return accept;
-            }
-            if (chord == "Ctrl+Y") {
-                if (!root.sheet-open()) { root.redo(); }
                 return accept;
             }
             // Copy and paste the settings: Ctrl+C and Ctrl+V (Command

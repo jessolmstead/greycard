@@ -42,10 +42,12 @@ component BindChip inherits Rectangle {
     in property <string> keys;
     in property <string> does;
     in property <bool> warn;
+    /// Two chips' width, for a chord and its alternates.
+    in property <bool> wide;
     callback listen();
     // Keys: the binding's field while it listens
     property <string> shown: self.on ? @tr("Press a key") : root.keys;
-    width: 112px;
+    width: self.wide ? 2 * 112px + Theme.space-1 : 112px;
     height: Theme.control-height;
     border-radius: Theme.radius-md;
     border-width: 1px;
@@ -1267,9 +1269,10 @@ export component SettingsSheet inherits Rectangle {
                                         wrap: word-wrap;
                                         // Its own width, so a wrapped line counts in the
                                         // sheet's height and Reset to defaults stays in reach.
-                                        // A pair's second chord takes another chip's.
+                                        // A pair's second chord takes another chip's, as
+                                        // a wide chip does.
                                         width: root.pane-w - 2 * Theme.space-5 - Theme.scrollbar-band - 112px - Theme.space-2
-                                            - (row.id2 != "" ? 112px + Theme.space-1 : 0);
+                                            - (row.id2 != "" || row.wide ? 112px + Theme.space-1 : 0);
                                     }
                                     HorizontalLayout {
                                         spacing: Theme.space-1;
@@ -1280,6 +1283,7 @@ export component SettingsSheet inherits Rectangle {
                                             keys: row.keys;
                                             does: row.does;
                                             warn: row.warn;
+                                            wide: row.wide;
                                             listen => { root.listen(row.id); }
                                         }
                                         if row.id2 != "": second-bind-chip := BindChip {

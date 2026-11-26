@@ -84,6 +84,26 @@ const fn act(
     }
 }
 
+/// A line the user may rebind whose default is more than one chord:
+/// the first is the action's default, the rest its alternates, which
+/// work beside it while the action is unmoved and are let go of once
+/// it is moved (Redo's Ctrl+Y). `shown` writes them at the default.
+const fn acts(
+    action: &'static str,
+    chords: &'static [&'static str],
+    shown: &'static str,
+    does: &'static str,
+) -> Binding {
+    Binding {
+        chords,
+        shown: Some(shown),
+        does,
+        action: Some(action),
+        pair: None,
+        raw: false,
+    }
+}
+
 /// A line on the keys as pressed (`Binding::raw`).
 const fn raw(chords: &'static [&'static str], shown: &'static str, does: &'static str) -> Binding {
     Binding {
@@ -358,7 +378,8 @@ pub(crate) const TABLE: &[Group] = &[
         title: marked::tr!("Editing"),
         lines: &[
             act("undo", &["Ctrl+Z"], marked::tr!("Undo")),
-            shown(
+            acts(
+                "redo",
                 &["Ctrl+Shift+Z", "Ctrl+Y"],
                 "Ctrl+Shift+Z or Ctrl+Y",
                 marked::tr!("Redo"),
@@ -532,6 +553,9 @@ fn bound(name: &str, mac: bool) -> bool {
 pub(crate) struct Action {
     pub(crate) id: &'static str,
     pub(crate) default: &'static str,
+    /// The chords that do it too while it is unmoved, and are free
+    /// once it is moved ([`acts`]).
+    pub(crate) alternates: &'static [&'static str],
     pub(crate) does: Vec<&'static str>,
     pub(crate) group: usize,
     /// The second of a pair's actions, on the first: the two are one
@@ -560,6 +584,12 @@ static ACTIONS: LazyLock<Vec<Action>> = LazyLock::new(|| {
                     None => out.push(Action {
                         id,
                         default,
+                        // An action's line's chords after its default.
+                        alternates: if b.action.is_some() {
+                            &b.chords[1..]
+                        } else {
+                            &[]
+                        },
                         does: vec![b.does],
                         group,
                         second: b.pair.filter(|_| i == 0).map(|p| p[1]),
@@ -633,10 +663,13 @@ pub(crate) fn actions() -> &'static [Action] {
     &ACTIONS
 }
 
-/// Whether `chord` is an action's default: it then reaches the
-/// handler only by that action, wherever the action is bound now.
+/// Whether `chord` is an action's default, or an alternate of one: it
+/// then reaches the handler only by that action, wherever the action
+/// is bound now.
 fn is_default(chord: &str) -> bool {
-    actions().iter().any(|a| a.default == chord)
+    actions()
+        .iter()
+        .any(|a| a.default == chord || a.alternates.contains(&chord))
 }
 
 /// What an action's lines say it does, in one, in the window's words.
@@ -671,6 +704,23 @@ impl Keymap {
         self.moved.get(a.id).map_or(a.default, String::as_str)
     }
 
+    /// Every chord that does `a` now: its default and alternates while
+    /// it is unmoved, the one it was moved to, or none.
+    fn chords(&self, a: &Action) -> Vec<&str> {
+        match self.moved.get(a.id) {
+            Some(c) if c.is_empty() => Vec::new(),
+            Some(c) => vec![c.as_str()],
+            None => std::iter::once(a.default)
+                .chain(a.alternates.iter().copied())
+                .collect(),
+        }
+    }
+
+    /// Whether `chord` does `a` now.
+    fn holds(&self, a: &Action, chord: &str) -> bool {
+        self.chords(a).contains(&chord)
+    }
+
     fn chord_of_id(&self, id: &str) -> &str {
         actions()
             .iter()
@@ -702,7 +752,9 @@ impl Keymap {
 
     /// Bind action `id` to `chord`, a chord's name as [`parse`] gives
     /// it; false, and nothing changed, for an unknown action or a
-    /// chord nothing can press. Bound to its default, it is unmoved.
+    /// chord nothing can press. Bound to its default, it is unmoved,
+    /// its alternates with it; bound to any other, an alternate among
+    /// them, that chord alone does it.
     pub(crate) fn set(&mut self, id: &str, chord: &str) -> bool {
         let Some(a) = actions().iter().find(|a| a.id == id) else {
             return false;
@@ -752,7 +804,8 @@ impl Keymap {
 
     /// What the handler reads for a press named `name` in `view`: a
     /// bracket's brush name with a brush in hand; the default of the
-    /// action bound to it, the first in the table when two are; an
+    /// action bound to it, one moved onto it before one holding it by
+    /// default and else the first in the table when two are; an
     /// action's Shift form for that chord with Shift; the name itself
     /// when it is one of the table's fixed chords; empty when nothing
     /// has it.
@@ -766,21 +819,36 @@ impl Keymap {
             return n.to_string();
         }
         let map = self.in_view(view.loupe);
+        // The Shift form on `name`, and whether its step was moved.
         let form = SHIFT_FORMS
             .iter()
             .find(|(_, id)| shift_form(map.chord_of_id(id)).as_deref() == Some(name))
-            .map(|(form, _)| form.to_string());
+            .map(|(form, id)| (form.to_string(), map.moved.contains_key(id)));
         // Outside the Loupe the step is the selection's, on its
         // defaults: its Shift form comes before an action there.
         if !view.loupe
-            && let Some(form) = form
+            && let Some((form, _)) = form
         {
             return form;
         }
-        if let Some(a) = actions().iter().find(|a| map.chord_of(a) == name) {
+        // A chord the user put an action on, or a moved step's Shift
+        // form, before one an action holds by default; the table's
+        // order between two of a kind.
+        let holder = |moved: bool| {
+            actions()
+                .iter()
+                .find(|a| map.moved.contains_key(a.id) == moved && map.holds(a, name))
+        };
+        if let Some(a) = holder(true) {
             return a.default.to_string();
         }
-        if let Some(form) = form {
+        if let Some((form, true)) = &form {
+            return form.clone();
+        }
+        if let Some(a) = holder(false) {
+            return a.default.to_string();
+        }
+        if let Some((form, _)) = form {
             return form;
         }
         let follows = SHIFT_FORMS.iter().any(|(form, _)| *form == name);
@@ -792,16 +860,20 @@ impl Keymap {
     }
 
     /// A chord of the table as bound now: an action's default as
-    /// its action is, a Shift form as its action's chord with Shift,
-    /// any other as itself; empty for none.
-    fn now(&self, chord: &'static str) -> String {
+    /// its action is, an alternate as itself while its action is
+    /// unmoved and gone (`None`) once it is moved, a Shift form as its
+    /// action's chord with Shift, any other as itself; empty for none.
+    fn now(&self, chord: &'static str) -> Option<String> {
         if let Some(a) = actions().iter().find(|a| a.default == chord) {
-            return self.chord_of(a).to_string();
+            return Some(self.chord_of(a).to_string());
         }
-        match SHIFT_FORMS.iter().find(|(form, _)| *form == chord) {
+        if let Some(a) = actions().iter().find(|a| a.alternates.contains(&chord)) {
+            return (!self.moved.contains_key(a.id)).then(|| chord.to_string());
+        }
+        Some(match SHIFT_FORMS.iter().find(|(form, _)| *form == chord) {
             Some((_, id)) => shift_form(self.chord_of_id(id)).unwrap_or_default(),
             None => chord.to_string(),
-        }
+        })
     }
 
     /// Each action whose chord something else has too, with what the
@@ -812,7 +884,7 @@ impl Keymap {
         // that `a` would take it from.
         let on = |a: &Action, chord: &str, others: &mut Vec<&'static str>| {
             for b in actions() {
-                if b.id != a.id && self.chord_of(b) == chord {
+                if b.id != a.id && self.holds(b, chord) {
                     others.push(b.does[0]);
                 }
             }
@@ -855,18 +927,17 @@ impl Keymap {
         };
         let mut out = Vec::new();
         for a in actions() {
-            let c = self.chord_of(a);
-            // Two actions on no key share nothing.
-            if c.is_empty() {
-                continue;
-            }
+            // Each chord that does it, alternates too; two actions on
+            // no key share nothing.
             let mut others = Vec::new();
-            on(a, c, &mut others);
-            // A step's own Shift form takes its chord too.
-            if SHIFT_FORMS.iter().any(|(_, id)| *id == a.id)
-                && let Some(f) = shift_form(c)
-            {
-                on(a, &f, &mut others);
+            for c in self.chords(a) {
+                on(a, c, &mut others);
+                // A step's own Shift form takes its chord too.
+                if SHIFT_FORMS.iter().any(|(_, id)| *id == a.id)
+                    && let Some(f) = shift_form(c)
+                {
+                    on(a, &f, &mut others);
+                }
             }
             let mut seen = Vec::new();
             others.retain(|o| {
@@ -1133,7 +1204,7 @@ fn platform(text: &str, mac: bool) -> String {
 /// A line's keys as the sheet writes them, as bound now: a line with
 /// a chord moved is written chord by chord.
 fn keys_of(b: &Binding, map: &Keymap, mac: bool) -> String {
-    let moved = !b.raw && b.chords.iter().any(|c| map.now(c) != *c);
+    let moved = !b.raw && b.chords.iter().any(|c| map.now(c).as_deref() != Some(*c));
     match b.shown {
         Some(s) if !moved => {
             let s = platform(&shown_words(s), mac);
@@ -1148,7 +1219,8 @@ fn keys_of(b: &Binding, map: &Keymap, mac: bool) -> String {
             .chords
             .iter()
             .filter(|c| here(c, mac))
-            .map(|c| said(&map.now(c), mac))
+            .filter_map(|c| map.now(c))
+            .map(|c| said(&c, mac))
             .collect::<Vec<_>>()
             .join(", "),
     }
@@ -1255,10 +1327,21 @@ pub(crate) fn binding_rows(map: &Keymap, mac: bool) -> Vec<BindRow> {
                 // Keys sheet: a second key for the same action
                 platform(&tr!("Also: {}", others.join("; ")), mac)
             };
+            // Every chord that does it, as the keys sheet joins two:
+            // an unmoved action's alternates beside its default.
+            let chords = map.chords(a);
+            let keys = match chords.split_first() {
+                Some((first, rest)) => rest.iter().fold(said(first, mac), |out, c| {
+                    // Keys sheet: two keys that do the same
+                    tr!("{} or {}", out, said(c, mac))
+                }),
+                None => said("", mac),
+            };
             out.push(BindRow {
                 heading: false,
                 id: a.id.into(),
-                keys: said(map.chord_of(a), mac).into(),
+                keys: keys.into(),
+                wide: chords.len() > 1,
                 id2: id2.into(),
                 keys2: keys2.into(),
                 does: platform(&does_of(a), mac).into(),

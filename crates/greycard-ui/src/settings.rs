@@ -1585,6 +1585,27 @@ mod tests {
         crate::testing::remove_dir_retry(&dir);
     }
 
+    /// Redo moved is written and read back as any action is; a file
+    /// from 0.12, with no line for it, leaves it at its defaults.
+    #[test]
+    fn redo_rebound_round_trips_and_an_older_file_keeps_its_defaults() {
+        let mut map = crate::keys::Keymap::default();
+        assert!(map.set("redo", "Ctrl+U"));
+        let text = serde_json::to_string(&Settings {
+            keys: map.saved(),
+            ..Settings::default()
+        })
+        .unwrap();
+        assert!(text.contains(r#""keys":{"redo":"Ctrl+U"}"#), "{text}");
+        let read: Settings = serde_json::from_str(&text).unwrap();
+        assert_eq!(crate::keys::Keymap::from_saved(&read.keys), map);
+        let old: Settings =
+            serde_json::from_str(r#"{"ui_scale": 150, "keys": {"undo": "Ctrl+U"}}"#).unwrap();
+        let mut want = crate::keys::Keymap::default();
+        assert!(want.set("undo", "Ctrl+U"));
+        assert_eq!(crate::keys::Keymap::from_saved(&old.keys), want);
+    }
+
     /// The keys rebound are under `keys`, only the ones moved: a file
     /// with none moved has no `keys` at all.
     #[test]

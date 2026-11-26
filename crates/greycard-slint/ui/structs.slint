@@ -16,7 +16,8 @@ export struct KeyRow {
 /// empty when nothing does; `warn` when anything does, the row's own
 /// pair among them, which has no words. A pair's second action (the
 /// turn's right) and its chord are `id2` and `keys2`, empty on a row
-/// of one.
+/// of one. `wide` when `keys` holds more than one chord (Redo at its
+/// two defaults), whose chip then takes a pair's two chips' width.
 export struct BindRow {
     heading: bool,
     id: string,
@@ -26,6 +27,7 @@ export struct BindRow {
     does: string,
     also: string,
     warn: bool,
+    wide: bool,
 }
 
 /// A line of the Settings sheet's Models category: the model as the

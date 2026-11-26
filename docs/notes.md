@@ -760,3 +760,4 @@ in its section; the roadmap and the changelog only point at it.
 - [§746. The stack's placing, blind to a difference in blur](notes/746-the-stacks-placing-blind-to-blur.md) (2026-11-25)
 - [§747. A blown specular's spill, held down](notes/747-a-blown-speculars-spill-held-down.md) (2026-11-25)
 - [§748. A shape Esc put down is out of hand](notes/748-a-shape-esc-put-down-is-out-of-hand.md) (2026-11-26)
+- [§749. A key moved beats a key by default](notes/749-a-key-moved-beats-a-key-by-default.md) (2026-11-26)

@@ -7,6 +7,9 @@ design note behind it.
 
 ### The window
 
+- Redo can be changed in Settings > Keys: both its keys work until you set one, then only yours does (discussion 204,
+  [§749](https://github.com/jessolmstead/greycard/blob/master/docs/notes/749-a-key-moved-beats-a-key-by-default.md)).
+- A key you set for an action now wins over another action's default key, where the order of the list used to decide.
 - Defringe's Purple and Green read as group headings, set apart from the sliders under them (discussion 59).
 - Japanese, Chinese, and Korean text is drawn in its own region's
   typeface where the system has one; Linux needs a CJK font installed

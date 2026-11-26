@@ -1698,9 +1698,6 @@ clears or a tester asks for it.
 - [ ] Collection sets that fold and unfold under COLLECTIONS: today a
       slash in a name only sorts and mutes the set's name, and a big
       catalog import brings hundreds (discussion 59, 2026-11-23)
-- [ ] Redo among the keys that can be changed: it is fixed because it
-      has two defaults; one key to move and Ctrl+Y kept as a second,
-      or more than one key an action (discussion 204)
 - [ ] A stitch for a sheet copied in parts: the film shifted under a
       fixed camera wants a flat, shift-only fit and no projection
       (discussion 59, 2026-11-23)
