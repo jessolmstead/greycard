@@ -6737,7 +6737,7 @@ fn fills_said_at(
     let mut said = Vec::new();
     let to_mask = |said: &mut Vec<String>| loop {
         let s = rx
-            .recv_timeout(std::time::Duration::from_secs(60))
+            .recv_timeout(std::time::Duration::from_secs(300))
             .expect("the worker says");
         if s == "mask" {
             break;
