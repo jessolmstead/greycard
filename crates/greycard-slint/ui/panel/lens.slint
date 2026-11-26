@@ -249,7 +249,7 @@ export component LensSection inherits Section {
         text: round(root.lens-defringe-threshold);
         changed(v) => { root.develop-changed(); }
     }
-    Rectangle { height: Theme.space-1; }
+    Rectangle { height: Theme.space-3; }
     // Which hues count as a fringe. The two
     // windows are the two sides of an axial
     // aberration; a chroma that departs from
@@ -257,12 +257,16 @@ export component LensSection inherits Section {
     // is a red berry on a grey wall, and is
     // left alone. The dropper reads a click's
     // deviation hue and moves the nearer
-    // window's center to it.
+    // window's center to it. Each window's
+    // name is set as a mask card's heading is,
+    // so its three rows read as one group.
     Text {
-        text: @tr("Purple");
+        text: @tr("Purple").to-uppercase();
+        accessible-label: @tr("Purple");
         color: root.lens-defringe ? Theme.text-secondary : Theme.text-muted;
         font-size: Theme.font-xs;
         font-weight: Theme.weight-semibold;
+        letter-spacing: 0.8px;
         vertical-alignment: center;
         horizontal-alignment: left;
     }
@@ -307,12 +311,14 @@ export component LensSection inherits Section {
         text: round(root.lens-defringe-purple-amount * 100) + "%";
         changed(v) => { root.develop-changed(); }
     }
-    Rectangle { height: Theme.space-1; }
+    Rectangle { height: Theme.space-3; }
     Text {
-        text: @tr("Green");
+        text: @tr("Green").to-uppercase();
+        accessible-label: @tr("Green");
         color: root.lens-defringe ? Theme.text-secondary : Theme.text-muted;
         font-size: Theme.font-xs;
         font-weight: Theme.weight-semibold;
+        letter-spacing: 0.8px;
         vertical-alignment: center;
         horizontal-alignment: left;
     }

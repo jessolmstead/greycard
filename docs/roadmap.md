@@ -1507,8 +1507,6 @@ clears or a tester asks for it.
 - [ ] Turn the picture by dragging on it in the Crop tab, as Lightroom
       does (discussion 59)
 - [ ] A key for a named export preset (discussion 59)
-- [ ] Defringe's Purple and Green labels set apart from the sliders
-      under them, and other sub-labels with them (discussion 59)
 - [ ] HEIC/HEIF as pictures: HEVC is patent-encumbered, so nothing of
       ours ships a decoder; macOS through ImageIO, Linux and Windows
       through a libheif found at runtime and loaded by name as ONNX

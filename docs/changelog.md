@@ -7,6 +7,7 @@ design note behind it.
 
 ### The window
 
+- Defringe's Purple and Green read as group headings, set apart from the sliders under them (discussion 59).
 - Japanese, Chinese, and Korean text is drawn in its own region's
   typeface where the system has one; Linux needs a CJK font installed
   ([§727](https://github.com/jessolmstead/greycard/blob/master/docs/notes/727-cjk-text-in-its-region-s-typeface.md)).
