@@ -51,6 +51,12 @@ the reasoning lives in `docs/notes.md`.
       A Mac's display-link frames pass the guard by
 - [ ] On Windows the models' memory guard reads Vulkan's budget while
       the models run on D3D12 (§431); read DXGI's (issue 195)
+- [ ] The open frame is held twice, the CPU base beside its upload of
+      full floats (about 1 GB and 1.6 GB at 102 MP): drop the CPU base
+      while the upload stands and read it back when it is needed, after
+      measuring what a readback costs
+- [ ] The upload and the dehaze's copy are four channels with nothing
+      in the fourth (about 400 MB each at 102 MP): three planes
 - [ ] The learned denoiser's buffers stay on the card for the session
       after one denoise; give them back when idle or hidden
 - [ ] A WebGPU out of memory that loses no device is not handled: step
