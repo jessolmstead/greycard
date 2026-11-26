@@ -2806,7 +2806,7 @@ fn capture_the_strips_set() {
         slint::Image::from_rgba8(px)
     };
     testing::drawing_backend();
-    for theme in ["Charcoal", "Grey", "Light"] {
+    for theme in crate::settings::THEMES {
         for scale in [1.0f32, 2.0] {
             for current_bright in [false, true] {
                 let app = testing::window(5);

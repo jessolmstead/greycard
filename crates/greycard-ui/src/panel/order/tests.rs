@@ -1836,7 +1836,7 @@ fn capture_the_section_headers() {
             app.set_panel_tab("Develop".into());
         }),
     ];
-    for theme in ["Charcoal", "Grey", "Light"] {
+    for theme in crate::settings::THEMES {
         app.global::<crate::Theme>().set_name(theme.into());
         for scale in [1.0f32, 2.0] {
             app.window()

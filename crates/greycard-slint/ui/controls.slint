@@ -208,7 +208,7 @@ export component Switch inherits Rectangle {
     }
     property <bool> active: enabled && (ta.has-hover || ta.pressed || fs.has-focus);
     background: !root.enabled ? Theme.border
-        : root.shown ? (root.active ? Theme.accent-hover : Theme.accent)
+        : root.shown ? (root.active ? Theme.accent-hover : Theme.fill)
         : (root.active ? Theme.hover : Theme.border-strong);
     border-width: fs.has-focus ? 2px : 0;
     border-color: Theme.focus-ring;
@@ -1643,7 +1643,7 @@ export component EditSlider inherits Rectangle {
             background: !root.enabled ? Theme.text-muted
                 : ta.pressed ? Theme.accent-pressed
                 : root.active ? Theme.accent-hover
-                : Theme.accent;
+                : Theme.fill;
         }
         // The foot out of reach, drawn as a disabled track over the
         // fill.
@@ -2026,7 +2026,7 @@ export component RangeSlider inherits Rectangle {
             x: root.x-of(root.shown-low) - root.inset;
             width: root.x-of(root.shown-high) - root.x-of(root.shown-low);
             height: 100%;
-            background: ta.pressed ? Theme.accent-pressed : root.active ? Theme.accent-hover : Theme.accent;
+            background: ta.pressed ? Theme.accent-pressed : root.active ? Theme.accent-hover : Theme.fill;
         }
     }
     // Under the touch area, so a press on a handle is the drag's and
@@ -2189,7 +2189,7 @@ export component Toggle inherits Rectangle {
         height: 18px;
         border-radius: 9px;
         background: !root.enabled ? Theme.border
-            : root.checked ? (root.active ? Theme.accent-hover : Theme.accent)
+            : root.checked ? (root.active ? Theme.accent-hover : Theme.fill)
             : (root.active ? Theme.hover : Theme.border-strong);
         border-width: fs.has-focus ? 2px : 0;
         border-color: Theme.focus-ring;
@@ -3159,7 +3159,7 @@ export component SizeSlider inherits Rectangle {
             width: root.at * parent.width;
             height: 100%;
             border-radius: parent.border-radius;
-            background: ta.pressed ? Theme.accent-pressed : root.active ? Theme.accent-hover : Theme.accent;
+            background: ta.pressed ? Theme.accent-pressed : root.active ? Theme.accent-hover : Theme.fill;
         }
     }
     Rectangle {

@@ -12,6 +12,11 @@
 // fill and the focus ring, which would not show there. The
 // accent's fills are the one blue in all three, and the picture's
 // surround is the viewport's own setting, not the theme's.
+//
+// Monocard is Charcoal's surfaces and text under an amber accent:
+// 7.3:1 on its surface, and 5:1 on a chosen row's fill there, which is
+// grey (text 9.8:1, text-secondary 4.9:1). A slider or a switch at rest
+// fills in text-secondary.
 
 struct Tones {
     canvas: color,
@@ -28,6 +33,14 @@ struct Tones {
     text-secondary: color,
     text-muted: color,
     text-strong: color,
+    accent: color,
+    accent-hover: color,
+    accent-pressed: color,
+    accent-muted: color,
+    accent-dark: color,
+    accent-dark-muted: color,
+    selection-ring: color,
+    fill: color,
     accent-text: color,
     selection: color,
     focus-ring: color,
@@ -104,8 +117,9 @@ export global MenuFit {
 }
 
 export global Theme {
-    /// The palette by name: "Charcoal", "Grey", or "Light"; any other
-    /// reads as Charcoal. Set from the Settings sheet's Theme row.
+    /// The palette by name: "Charcoal", "Grey", "Light", or "Monocard";
+    /// any other reads as Charcoal. Set from the Settings sheet's Theme
+    /// row.
     in-out property <string> name: "Charcoal";
     out property <bool> light: name == "Light";
 
@@ -114,7 +128,11 @@ export global Theme {
         hover: #2e2e2e, hover-veil: #ffffff0d, pressed: #353535,
         border: #303030, border-strong: #3d3d3d, sheet: #232323,
         text: #ececec, text-secondary: #a9a9a9, text-muted: #737373,
-        text-strong: #ffffff, accent-text: #6ea8ff,
+        text-strong: #ffffff,
+        accent: #6ea8ff, accent-hover: #8dbbff, accent-pressed: #5b95ec,
+        accent-muted: #6ea8ff40, accent-dark: #174a96,
+        accent-dark-muted: #174a9666, selection-ring: #6ea8ff99,
+        fill: #6ea8ff, accent-text: #6ea8ff,
         selection: #6ea8ff26, focus-ring: #6ea8ff99,
         warn-red: #e0645c, warn-yellow: #dcb63c, ok-green: #55b46e,
         scrollbar-thumb: #a0a0a0, scrollbar-thumb-hover: #c4c4c4,
@@ -125,7 +143,11 @@ export global Theme {
         hover: #4c4c4c, hover-veil: #ffffff10, pressed: #555555,
         border: #4e4e4e, border-strong: #5c5c5c, sheet: #404040,
         text: #f2f2f2, text-secondary: #c2c2c2, text-muted: #909090,
-        text-strong: #ffffff, accent-text: #6ea8ff,
+        text-strong: #ffffff,
+        accent: #6ea8ff, accent-hover: #8dbbff, accent-pressed: #5b95ec,
+        accent-muted: #6ea8ff40, accent-dark: #174a96,
+        accent-dark-muted: #174a9666, selection-ring: #6ea8ff99,
+        fill: #6ea8ff, accent-text: #6ea8ff,
         selection: #6ea8ff26, focus-ring: #6ea8ff99,
         warn-red: #e0645c, warn-yellow: #dcb63c, ok-green: #55b46e,
         scrollbar-thumb: #b0b0b0, scrollbar-thumb-hover: #d4d4d4,
@@ -136,14 +158,37 @@ export global Theme {
         hover: #c8c8c8, hover-veil: #00000010, pressed: #bcbcbc,
         border: #bababa, border-strong: #a4a4a4, sheet: #cbcbcb,
         text: #161616, text-secondary: #444444, text-muted: #666666,
-        text-strong: #000000, accent-text: #174a96,
+        text-strong: #000000,
+        accent: #6ea8ff, accent-hover: #8dbbff, accent-pressed: #5b95ec,
+        accent-muted: #6ea8ff40, accent-dark: #174a96,
+        accent-dark-muted: #174a9666, selection-ring: #6ea8ff99,
+        fill: #6ea8ff, accent-text: #174a96,
         selection: #1f5fbf38, focus-ring: #174a96,
         warn-red: #a12a22, warn-yellow: #6e5600, ok-green: #1f6531,
         scrollbar-thumb: #666666, scrollbar-thumb-hover: #484848,
         scrollbar-track: #bdbdbd, scrollbar-track-rest: #bababa,
     };
+    // Charcoal's surfaces and text, and its red, yellow, and green
+    // words, with a darkroom safelight's amber for the accent and greys
+    // for a fill at rest and a chosen row.
+    property <Tones> monocard: {
+        canvas: #0f0f0f, base: #171717, surface: #1e1e1e, raised: #262626,
+        hover: #2e2e2e, hover-veil: #ffffff0d, pressed: #353535,
+        border: #303030, border-strong: #3d3d3d, sheet: #232323,
+        text: #ececec, text-secondary: #a9a9a9, text-muted: #737373,
+        text-strong: #ffffff,
+        accent: #d8a24a, accent-hover: #e6b866, accent-pressed: #c08f3d,
+        accent-muted: #d8a24a40, accent-dark: #6f4700,
+        accent-dark-muted: #6f470066, selection-ring: #d8a24a99,
+        fill: #a9a9a9, accent-text: #d8a24a,
+        selection: #ffffff1f, focus-ring: #d8a24a99,
+        warn-red: #e0645c, warn-yellow: #dcb63c, ok-green: #55b46e,
+        scrollbar-thumb: #a0a0a0, scrollbar-thumb-hover: #c4c4c4,
+        scrollbar-track: #2c2c2c, scrollbar-track-rest: #2c2c2c,
+    };
     property <Tones> now: name == "Light" ? light-palette
         : name == "Grey" ? grey
+        : name == "Monocard" ? monocard
         : charcoal;
 
     // Surfaces, back to front.
@@ -195,31 +240,35 @@ export global Theme {
     out property <color> peaking: #3cff28;
 
     // Accent.
-    out property <color> accent: #6ea8ff;
-    out property <color> accent-hover: #8dbbff;
-    out property <color> accent-pressed: #5b95ec;
-    out property <color> accent-muted: #6ea8ff40;
+    out property <color> accent: now.accent;
+    out property <color> accent-hover: now.accent-hover;
+    out property <color> accent-pressed: now.accent-pressed;
+    out property <color> accent-muted: now.accent-muted;
+    // A slider's fill and a switch that is on, at rest: the accent, or
+    // Monocard's grey.
+    out property <color> fill: now.fill;
     // The ring of a frame in the strip's set and not current: the
     // accent at 60%, a full ring the eye finds over a dark picture or
     // a bright one, and still a step below the current frame's
     // (`accent-text`, the accent itself on the dark themes and
-    // Light's darker blue there, and a pixel wider). The same in
-    // every theme.
-    out property <color> selection-ring: #6ea8ff99;
+    // Light's darker blue there, and a pixel wider).
+    out property <color> selection-ring: now.selection-ring;
     // The accent on a ground light in every theme (the lightbox on a
-    // white canvas), where the blue itself is lost: Light's darker
-    // blue, 8.6:1 on white, and its muted ring.
-    out property <color> accent-dark: #174a96;
-    out property <color> accent-dark-muted: #174a9666;
-    // A chosen row's fill and the keyboard's focus: the blue on the
-    // dark themes, darker on Light, where it would not show.
+    // white canvas), where the accent itself is lost: Light's darker
+    // blue, 8.6:1 on white, or Monocard's brown, 8.1:1, and its muted
+    // ring.
+    out property <color> accent-dark: now.accent-dark;
+    out property <color> accent-dark-muted: now.accent-dark-muted;
+    // A chosen row's fill and the keyboard's focus: the blue on
+    // Charcoal and Grey, darker on Light, where it would not show; grey
+    // and the amber on Monocard.
     out property <color> selection: now.selection;
     out property <color> focus-ring: now.focus-ring;
     // The accent as words, darker on Light where the blue itself
     // would not read.
     out property <color> accent-text: now.accent-text;
     // Ink over an accent fill (a primary button's words, a tick),
-    // and a switch's knob: the same in every theme, as the accent is.
+    // and a switch's knob: the same in every theme.
     out property <color> on-accent: #101010;
     out property <color> knob: #ffffff;
 
