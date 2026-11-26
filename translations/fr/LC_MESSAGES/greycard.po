@@ -36,276 +36,276 @@ msgid "Name, or Set/Name"
 msgstr "Nom, ou Ensemble/Nom"
 
 #. The preset group sheet's button when a new group is made
-#: crates/greycard-slint/ui/app.slint:1521
+#: crates/greycard-slint/ui/app.slint:1523
 msgid "Create"
 msgstr "Créer"
 
 #. The camera match sheet's Fit button; it also reads 'Fit N groups'
-#: crates/greycard-slint/ui/app.slint:2414
+#: crates/greycard-slint/ui/app.slint:2420
 msgid "Fit"
 msgstr "Ajuster"
 
 #. The status line as shown.
-#: crates/greycard-slint/ui/app.slint:2452
+#: crates/greycard-slint/ui/app.slint:2458
 msgid "preparing..."
 msgstr "préparation..."
 
-#: crates/greycard-slint/ui/app.slint:2537
+#: crates/greycard-slint/ui/app.slint:2543
 msgid "Proof: {}"
 msgstr "Épreuvage : {}"
 
-#: crates/greycard-slint/ui/app.slint:2537
+#: crates/greycard-slint/ui/app.slint:2543
 msgid "Proof: {} · gamut"
 msgstr "Épreuvage : {} · gamut"
 
-#: crates/greycard-slint/ui/app.slint:2540
+#: crates/greycard-slint/ui/app.slint:2546
 msgid "File"
 msgstr "Fichier"
 
 #. The five canvas shades, in Settings and the View menu
-#: crates/greycard-slint/ui/app.slint:2565
+#: crates/greycard-slint/ui/app.slint:2571
 msgid "Black"
 msgstr "Noir"
 
 #. The five canvas shades, in Settings and the View menu
-#: crates/greycard-slint/ui/app.slint:2565
+#: crates/greycard-slint/ui/app.slint:2571
 msgid "Dark grey"
 msgstr "Gris foncé"
 
 #. The five canvas shades, in Settings and the View menu
-#: crates/greycard-slint/ui/app.slint:2565
+#: crates/greycard-slint/ui/app.slint:2571
 msgid "Light grey"
 msgstr "Gris clair"
 
 #. The five canvas shades, in Settings and the View menu
-#: crates/greycard-slint/ui/app.slint:2565
+#: crates/greycard-slint/ui/app.slint:2571
 msgid "Mid grey"
 msgstr "Gris moyen"
 
 #. The five canvas shades, in Settings and the View menu
-#: crates/greycard-slint/ui/app.slint:2565
+#: crates/greycard-slint/ui/app.slint:2571
 msgid "White"
 msgstr "Blanc"
 
 #. The download ask's yes button, for a model or the lens database
-#: crates/greycard-slint/ui/app.slint:2676
+#: crates/greycard-slint/ui/app.slint:2682
 msgid "Download"
 msgstr "Télécharger"
 
 #. The download ask's button that declines for now
-#: crates/greycard-slint/ui/app.slint:2678
+#: crates/greycard-slint/ui/app.slint:2684
 msgid "Not now"
 msgstr "Pas maintenant"
 
 #. The models ask's button that downloads every model
-#: crates/greycard-slint/ui/app.slint:2685
+#: crates/greycard-slint/ui/app.slint:2691
 msgid "Download all"
 msgstr "Tout télécharger"
 
-#: crates/greycard-slint/ui/app.slint:4291
+#: crates/greycard-slint/ui/app.slint:4294
 msgid "Queued for export, shown as it will export. Edit it from its folder."
 msgstr ""
 "Ajoutée à la file d'exportation, cette photo est affichée telle qu'elle sera "
 "exportée. Modifiez-la depuis son dossier."
 
 #. The Loupe's mode button at the top of the develop panel
-#: crates/greycard-slint/ui/app.slint:4302
+#: crates/greycard-slint/ui/app.slint:4305
 msgid "Cull"
 msgstr "Tri"
 
-#: crates/greycard-slint/ui/app.slint:4307
+#: crates/greycard-slint/ui/app.slint:4310
 msgid "Cull mode"
 msgstr "Mode tri"
 
 #. Develop, Crop, Masks, and Retouch
-#: crates/greycard-slint/ui/app.slint:4326
+#: crates/greycard-slint/ui/app.slint:4329
 msgid "Panel tabs"
 msgstr "Onglets du panneau"
 
 #. The Loupe's mode buttons at the top of the develop panel
-#: crates/greycard-slint/ui/app.slint:4329
+#: crates/greycard-slint/ui/app.slint:4332
 msgid "Crop"
 msgstr "Recadrage"
 
 #. The Loupe's mode buttons at the top of the develop panel
-#: crates/greycard-slint/ui/app.slint:4329
+#: crates/greycard-slint/ui/app.slint:4332
 msgid "Develop"
 msgstr "Développement"
 
 #. The Loupe's mode buttons at the top of the develop panel
-#: crates/greycard-slint/ui/app.slint:4329
+#: crates/greycard-slint/ui/app.slint:4332
 msgid "Masks"
 msgstr "Masques"
 
 #. The Loupe's mode buttons at the top of the develop panel
-#: crates/greycard-slint/ui/app.slint:4329
+#: crates/greycard-slint/ui/app.slint:4332
 msgid "Retouch"
 msgstr "Retouche"
 
 #. View menu
-#: crates/greycard-slint/ui/app.slint:5536
+#: crates/greycard-slint/ui/app.slint:5538
 msgid "Full screen"
 msgstr "Plein écran"
 
 #. View menu
-#: crates/greycard-slint/ui/app.slint:5536
+#: crates/greycard-slint/ui/app.slint:5538
 msgid "Full screen (F11)"
 msgstr "Plein écran (F11)"
 
 #. File menu
-#: crates/greycard-slint/ui/app.slint:5544
+#: crates/greycard-slint/ui/app.slint:5546
 msgid "Export..."
 msgstr "Exporter..."
 
 #. File menu
-#: crates/greycard-slint/ui/app.slint:5544
+#: crates/greycard-slint/ui/app.slint:5546
 msgid "Stop export"
 msgstr "Arrêter l'exportation"
 
 #. View menu
-#: crates/greycard-slint/ui/app.slint:5675
+#: crates/greycard-slint/ui/app.slint:5677
 msgid "Right panel"
 msgstr "Panneau droit"
 
 #. View menu
-#: crates/greycard-slint/ui/app.slint:5677
+#: crates/greycard-slint/ui/app.slint:5679
 msgid "Hide panel"
 msgstr "Masquer le panneau"
 
 #. View menu
-#: crates/greycard-slint/ui/app.slint:5677
+#: crates/greycard-slint/ui/app.slint:5679
 msgid "Show panel"
 msgstr "Afficher le panneau"
 
 #. View menu: the filmstrip
-#: crates/greycard-slint/ui/app.slint:5714
+#: crates/greycard-slint/ui/app.slint:5716
 msgid "Filmstrip"
 msgstr "Film fixe"
 
 #. View menu: the filmstrip
-#: crates/greycard-slint/ui/app.slint:5716
+#: crates/greycard-slint/ui/app.slint:5718
 msgid "Hide filmstrip"
 msgstr "Masquer le film fixe"
 
 #. View menu: the filmstrip
-#: crates/greycard-slint/ui/app.slint:5716
+#: crates/greycard-slint/ui/app.slint:5718
 msgid "Show filmstrip"
 msgstr "Afficher le film fixe"
 
 #. Frame menu: {} is Back up or Bring back, over a list of archives
-#: crates/greycard-slint/ui/app.slint:5878
+#: crates/greycard-slint/ui/app.slint:5880
 msgid "{} to"
 msgstr "{} vers"
 
 #. The view button at the top left: the grid
-#: crates/greycard-slint/ui/app.slint:5924
+#: crates/greycard-slint/ui/app.slint:5926
 msgid "Library"
 msgstr "Bibliothèque"
 
-#: crates/greycard-slint/ui/app.slint:5928
+#: crates/greycard-slint/ui/app.slint:5930
 msgid "Library view"
 msgstr "Vue Bibliothèque"
 
 #. The view button at the top left: one frame
-#: crates/greycard-slint/ui/app.slint:5942
+#: crates/greycard-slint/ui/app.slint:5944
 msgid "Loupe"
 msgstr "Loupe"
 
-#: crates/greycard-slint/ui/app.slint:5946
+#: crates/greycard-slint/ui/app.slint:5948
 msgid "Loupe view"
 msgstr "Vue Loupe"
 
 #. File menu
-#: crates/greycard-slint/ui/app.slint:6034
+#: crates/greycard-slint/ui/app.slint:6036
 msgid "Open folder..."
 msgstr "Ouvrir un dossier..."
 
 #. File menu
-#: crates/greycard-slint/ui/app.slint:6067
+#: crates/greycard-slint/ui/app.slint:6069
 msgid "Import..."
 msgstr "Importer..."
 
-#: crates/greycard-slint/ui/app.slint:6090
+#: crates/greycard-slint/ui/app.slint:6092
 msgid "Stop import"
 msgstr "Arrêter l'importation"
 
-#: crates/greycard-slint/ui/app.slint:6090
+#: crates/greycard-slint/ui/app.slint:6092
 msgid "Stopping..."
 msgstr "Arrêt en cours..."
 
-#: crates/greycard-slint/ui/app.slint:6091
+#: crates/greycard-slint/ui/app.slint:6093
 msgid "Importing the catalog..."
 msgstr "Importation du catalogue..."
 
 #. File menu, under Import
-#: crates/greycard-slint/ui/app.slint:6112
+#: crates/greycard-slint/ui/app.slint:6114
 msgid "From a card or folder..."
 msgstr "Depuis une carte ou un dossier..."
 
 #. File menu, under Import
-#: crates/greycard-slint/ui/app.slint:6117
+#: crates/greycard-slint/ui/app.slint:6119
 msgid "A Lightroom catalog..."
 msgstr "Un catalogue Lightroom..."
 
 #. Help menu: a newer version is out; {} is its number
-#: crates/greycard-slint/ui/app.slint:6476
+#: crates/greycard-slint/ui/app.slint:6478
 msgid "{} is available"
 msgstr "{} est disponible"
 
 #. Help menu: under the version note
-#: crates/greycard-slint/ui/app.slint:6485
+#: crates/greycard-slint/ui/app.slint:6487
 msgid "Not now: do not offer {} again"
 msgstr "Pas maintenant : ne plus proposer {}"
 
-#: crates/greycard-slint/ui/app.slint:6493
+#: crates/greycard-slint/ui/app.slint:6495
 msgid "Settings..."
 msgstr "Paramètres..."
 
-#: crates/greycard-slint/ui/app.slint:6501
+#: crates/greycard-slint/ui/app.slint:6503
 msgid "Help"
 msgstr "Aide"
 
-#: crates/greycard-slint/ui/app.slint:6504
+#: crates/greycard-slint/ui/app.slint:6506
 msgid "Help menu"
 msgstr "Menu Aide"
 
 #. Help menu: the keys sheet, with the key that opens it
-#: crates/greycard-slint/ui/app.slint:6525
+#: crates/greycard-slint/ui/app.slint:6527
 msgid "Keys (?)"
 msgstr "Raccourcis (?)"
 
-#: crates/greycard-slint/ui/app.slint:6529
+#: crates/greycard-slint/ui/app.slint:6531
 msgid "User guide"
 msgstr "Guide d'utilisation"
 
-#: crates/greycard-slint/ui/app.slint:6534
+#: crates/greycard-slint/ui/app.slint:6536
 msgid "Report a problem..."
 msgstr "Signaler un problème..."
 
-#: crates/greycard-slint/ui/app.slint:6604
+#: crates/greycard-slint/ui/app.slint:6606
 msgid "Left panel"
 msgstr "Panneau gauche"
 
-#: crates/greycard-slint/ui/app.slint:6940
+#: crates/greycard-slint/ui/app.slint:6942
 #, fuzzy
 msgid "Search apps"
 msgstr "Rechercher un raccourci"
 
-#: crates/greycard-slint/ui/app.slint:6940
+#: crates/greycard-slint/ui/app.slint:6942
 #, fuzzy
 msgid "Search archives"
 msgstr "Rechercher un raccourci"
 
-#: crates/greycard-slint/ui/app.slint:6941
+#: crates/greycard-slint/ui/app.slint:6943
 #, fuzzy
 msgid "No matching apps."
 msgstr "Rien à copier."
 
-#: crates/greycard-slint/ui/app.slint:6941
+#: crates/greycard-slint/ui/app.slint:6943
 msgid "No matching archives."
 msgstr ""
 
-#: crates/greycard-slint/ui/app.slint:7289
+#: crates/greycard-slint/ui/app.slint:7291
 msgid "Edit in"
 msgstr "Modifier dans"
 
@@ -319,84 +319,84 @@ msgid "{} value"
 msgstr "Valeur de {}"
 
 #. Spoken by a screen reader for a thumbnail: its stars
-#: crates/greycard-slint/ui/controls.slint:2869
+#: crates/greycard-slint/ui/controls.slint:2873
 msgid "{n} star"
 msgid_plural "{n} stars"
 msgstr[0] "{n} étoile"
 msgstr[1] "{n} étoiles"
 
 #. Spoken by a screen reader for a thumbnail: its flag
-#: crates/greycard-slint/ui/controls.slint:2871
+#: crates/greycard-slint/ui/controls.slint:2875
 msgid "pick"
 msgstr "retenue"
 
 #. Spoken by a screen reader for a thumbnail: its flag
-#: crates/greycard-slint/ui/controls.slint:2871
+#: crates/greycard-slint/ui/controls.slint:2875
 msgid "reject"
 msgstr "rejetée"
 
 #. Spoken by a screen reader for a thumbnail: its label
-#: crates/greycard-slint/ui/controls.slint:2875
+#: crates/greycard-slint/ui/controls.slint:2879
 msgid "green"
 msgstr "vert"
 
 #. Spoken by a screen reader for a thumbnail: its label
-#: crates/greycard-slint/ui/controls.slint:2875
+#: crates/greycard-slint/ui/controls.slint:2879
 msgid "red"
 msgstr "rouge"
 
 #. Spoken by a screen reader for a thumbnail: its label
-#: crates/greycard-slint/ui/controls.slint:2875
+#: crates/greycard-slint/ui/controls.slint:2879
 msgid "yellow"
 msgstr "jaune"
 
 #. Spoken by a screen reader for a thumbnail: its label
-#: crates/greycard-slint/ui/controls.slint:2877
+#: crates/greycard-slint/ui/controls.slint:2881
 msgid "blue"
 msgstr "bleu"
 
 #. Spoken by a screen reader for a thumbnail: its label
-#: crates/greycard-slint/ui/controls.slint:2877
+#: crates/greycard-slint/ui/controls.slint:2881
 msgid "purple"
 msgstr "violet"
 
 #. Spoken by a screen reader: a thumbnail's badge
-#: crates/greycard-slint/ui/controls.slint:2964
+#: crates/greycard-slint/ui/controls.slint:2968
 msgid "Edited"
 msgstr "Modifiée"
 
 #. Spoken by a screen reader: a thumbnail's badge
-#: crates/greycard-slint/ui/controls.slint:2978
+#: crates/greycard-slint/ui/controls.slint:2982
 msgid "Exported"
 msgstr "Exportée"
 
 #. Spoken by a screen reader: a thumbnail's badge
-#: crates/greycard-slint/ui/controls.slint:2992
+#: crates/greycard-slint/ui/controls.slint:2996
 msgid "In a collection"
 msgstr "Dans une collection"
 
 #. Spoken by a screen reader: a thumbnail's badge
-#: crates/greycard-slint/ui/controls.slint:3003
+#: crates/greycard-slint/ui/controls.slint:3007
 msgid "With the camera's JPEG"
 msgstr "Avec le JPEG de l'appareil"
 
 #. Spoken by a screen reader: a thumbnail's stack badge
-#: crates/greycard-slint/ui/controls.slint:3031
+#: crates/greycard-slint/ui/controls.slint:3035
 msgid "Frame {} of a stack of {}, open"
 msgstr "Photo {} d'une pile de {}, ouverte"
 
 #. Spoken by a screen reader: a thumbnail's stack badge
-#: crates/greycard-slint/ui/controls.slint:3033
+#: crates/greycard-slint/ui/controls.slint:3037
 msgid "Stack of {}"
 msgstr "Pile de {}"
 
 #. Spoken by a screen reader: a thumbnail's version badge
-#: crates/greycard-slint/ui/controls.slint:3080
+#: crates/greycard-slint/ui/controls.slint:3084
 msgid "Version {}"
 msgstr "Version {}"
 
 #. Spoken by a screen reader: a scroll bar
-#: crates/greycard-slint/ui/controls.slint:3534
+#: crates/greycard-slint/ui/controls.slint:3538
 msgid "Scroll"
 msgstr "Défiler"
 
@@ -1227,158 +1227,158 @@ msgstr "Standard"
 msgid "Frames with Output sharpen use it instead"
 msgstr ""
 
-#: crates/greycard-slint/ui/panel/deliver.slint:433
+#: crates/greycard-slint/ui/panel/deliver.slint:440
 msgid "Embed profile"
 msgstr "Incorporer le profil"
 
-#: crates/greycard-slint/ui/panel/deliver.slint:438
+#: crates/greycard-slint/ui/panel/deliver.slint:445
 msgid "Metadata"
 msgstr "Métadonnées"
 
 #. Export metadata: all, all but greycard's edit record, or none
-#: crates/greycard-slint/ui/panel/deliver.slint:440
+#: crates/greycard-slint/ui/panel/deliver.slint:447
 msgctxt "metadata"
 msgid "All"
 msgstr "Toutes"
 
 #. Export metadata: all, all but greycard's edit record, or none
-#: crates/greycard-slint/ui/panel/deliver.slint:440
+#: crates/greycard-slint/ui/panel/deliver.slint:447
 msgid "No edit"
 msgstr "Sans modifications"
 
 #. Export metadata: all, all but greycard's edit record, or none
-#: crates/greycard-slint/ui/panel/deliver.slint:440
+#: crates/greycard-slint/ui/panel/deliver.slint:447
 msgctxt "metadata"
 msgid "None"
 msgstr "Aucun"
 
-#: crates/greycard-slint/ui/panel/deliver.slint:446
+#: crates/greycard-slint/ui/panel/deliver.slint:453
 msgid "Subfolder"
 msgstr "Sous-dossier"
 
 #. Export subfolder: none, the folder itself
-#: crates/greycard-slint/ui/panel/deliver.slint:452
+#: crates/greycard-slint/ui/panel/deliver.slint:459
 msgid "None: the folder below"
 msgstr "Aucun : le dossier ci-dessous"
 
-#: crates/greycard-slint/ui/panel/deliver.slint:458
+#: crates/greycard-slint/ui/panel/deliver.slint:465
 msgid "Saved in {} beside each original."
 msgstr "Enregistré dans {}, à côté de chaque original."
 
-#: crates/greycard-slint/ui/panel/deliver.slint:487
+#: crates/greycard-slint/ui/panel/deliver.slint:494
 msgid "If it exists"
 msgstr "Si le fichier existe"
 
-#: crates/greycard-slint/ui/panel/deliver.slint:488
+#: crates/greycard-slint/ui/panel/deliver.slint:495
 msgid "Increment"
 msgstr "Incrémenter"
 
-#: crates/greycard-slint/ui/panel/deliver.slint:488
+#: crates/greycard-slint/ui/panel/deliver.slint:495
 msgid "Overwrite"
 msgstr "Écraser"
 
-#: crates/greycard-slint/ui/panel/deliver.slint:488
+#: crates/greycard-slint/ui/panel/deliver.slint:495
 msgid "Skip"
 msgstr "Ignorer"
 
-#: crates/greycard-slint/ui/panel/deliver.slint:492
+#: crates/greycard-slint/ui/panel/deliver.slint:499
 msgid "Watermark"
 msgstr "Filigrane"
 
 #. Export watermark: off, a text, or a PNG
-#: crates/greycard-slint/ui/panel/deliver.slint:494
+#: crates/greycard-slint/ui/panel/deliver.slint:501
 msgid "Image"
 msgstr "Image"
 
 #. Export watermark: off, a text, or a PNG
-#: crates/greycard-slint/ui/panel/deliver.slint:494
+#: crates/greycard-slint/ui/panel/deliver.slint:501
 msgid "Text"
 msgstr "Texte"
 
 #. Export watermark: the text's default, which the user replaces
-#: crates/greycard-slint/ui/panel/deliver.slint:504
+#: crates/greycard-slint/ui/panel/deliver.slint:511
 msgid "© Your Name"
 msgstr "© Votre nom"
 
-#: crates/greycard-slint/ui/panel/deliver.slint:512
+#: crates/greycard-slint/ui/panel/deliver.slint:519
 msgid "No PNG chosen"
 msgstr "Aucun PNG sélectionné"
 
-#: crates/greycard-slint/ui/panel/deliver.slint:520
+#: crates/greycard-slint/ui/panel/deliver.slint:527
 msgid "Choose..."
 msgstr "Choisir..."
 
 #. three by three grid of places
-#: crates/greycard-slint/ui/panel/deliver.slint:535
+#: crates/greycard-slint/ui/panel/deliver.slint:542
 msgid "Position"
 msgstr "Position"
 
 #. Export watermark: the slider
-#: crates/greycard-slint/ui/panel/deliver.slint:550
+#: crates/greycard-slint/ui/panel/deliver.slint:557
 msgid "Size"
 msgstr "Taille"
 
 #. Export watermark: the slider
-#: crates/greycard-slint/ui/panel/deliver.slint:562
+#: crates/greycard-slint/ui/panel/deliver.slint:569
 msgid "Margin"
 msgstr "Marge"
 
 #. Export watermark: the slider
-#: crates/greycard-slint/ui/panel/deliver.slint:574
+#: crates/greycard-slint/ui/panel/deliver.slint:581
 msgid "Opacity"
 msgstr "Opacité"
 
 #. reader: the row has no box of its own to be one.
-#: crates/greycard-slint/ui/panel/deliver.slint:593
+#: crates/greycard-slint/ui/panel/deliver.slint:600
 msgid "Border"
 msgstr "Bordure"
 
 #. Export border: a border in the canvas shade
-#: crates/greycard-slint/ui/panel/deliver.slint:602
+#: crates/greycard-slint/ui/panel/deliver.slint:609
 msgid "Match"
 msgstr "Adapter"
 
 #. Export border: the slider
-#: crates/greycard-slint/ui/panel/deliver.slint:660
+#: crates/greycard-slint/ui/panel/deliver.slint:667
 msgid "Width"
 msgstr "Largeur"
 
-#: crates/greycard-slint/ui/panel/deliver.slint:672
+#: crates/greycard-slint/ui/panel/deliver.slint:679
 msgid "Added outside the picture; the file is {} × {}."
 msgstr "Ajouté à l'extérieur de la photo ; le fichier mesure {} × {}."
 
-#: crates/greycard-slint/ui/panel/deliver.slint:673
+#: crates/greycard-slint/ui/panel/deliver.slint:680
 msgid "Added outside the picture."
 msgstr "Ajouté à l'extérieur de la photo."
 
-#: crates/greycard-slint/ui/panel/deliver.slint:690
+#: crates/greycard-slint/ui/panel/deliver.slint:697
 msgid "Folder"
 msgstr "Dossier"
 
-#: crates/greycard-slint/ui/panel/deliver.slint:712
+#: crates/greycard-slint/ui/panel/deliver.slint:719
 msgid "Add to queue"
 msgstr "Ajouter à la file"
 
 #. Export queue: the set now exporting; {} is its name
-#: crates/greycard-slint/ui/panel/deliver.slint:758
+#: crates/greycard-slint/ui/panel/deliver.slint:765
 msgid "{}, running"
 msgstr "{}, en cours"
 
 #. Export queue: remove the set named {}
-#: crates/greycard-slint/ui/panel/deliver.slint:775
+#: crates/greycard-slint/ui/panel/deliver.slint:782
 msgid "Remove {}"
 msgstr "Retirer {}"
 
-#: crates/greycard-slint/ui/panel/deliver.slint:811
+#: crates/greycard-slint/ui/panel/deliver.slint:818
 msgid "Export the queue"
 msgstr "Exporter la file"
 
 #. Export queue: the button that empties it
-#: crates/greycard-slint/ui/panel/deliver.slint:817
+#: crates/greycard-slint/ui/panel/deliver.slint:824
 msgid "Clear"
 msgstr "Effacer"
 
-#: crates/greycard-slint/ui/panel/deliver.slint:825
+#: crates/greycard-slint/ui/panel/deliver.slint:832
 msgid "Clear the queue of {n} set?"
 msgid_plural "Clear the queue of {n} sets?"
 msgstr[0] "Vider la file de {n} ensemble ?"
@@ -2142,12 +2142,12 @@ msgid "Defringe"
 msgstr "Correction des franges"
 
 #. Defringe: the slider for the hue it centers on
-#: crates/greycard-slint/ui/panel/lens.slint:272
+#: crates/greycard-slint/ui/panel/lens.slint:276
 msgid "Center"
 msgstr "Centre"
 
 #. Defringe: the dropper that reads the hue off the picture
-#: crates/greycard-slint/ui/panel/lens.slint:365
+#: crates/greycard-slint/ui/panel/lens.slint:371
 msgid "Pick hue"
 msgstr "Prélever une teinte"
 
@@ -2757,375 +2757,375 @@ msgid "Selection"
 msgstr "Sélection"
 
 #. Keys: the binding's field while it listens
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:47
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:49
 msgid "Press a key"
 msgstr "Appuyez sur une touche"
 
 #. Sidecars: the move row's count
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:266
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:268
 msgid "{n} sidecar"
 msgid_plural "{n} sidecars"
 msgstr[0] "{n} fichier annexe"
 msgstr[1] "{n} fichiers annexes"
 
 #. Sidecars: what the move row moves
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:269
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:271
 msgid "the open frame"
 msgstr "la photo ouverte"
 
 #. Sidecars: what the move row moves
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:271
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:273
 msgid "the {n} open frame"
 msgid_plural "the {n} open frames"
 msgstr[0] "la {n} photo ouverte"
 msgstr[1] "les {n} photos ouvertes"
 
 #. Settings: the category names on the sheet's left
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:291
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:293
 msgid "About"
 msgstr "À propos"
 
 #. Settings: the category names on the sheet's left
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:291
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:293
 msgid "Editing"
 msgstr "Édition"
 
 #. Settings: the category names on the sheet's left
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:291
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:293
 msgid "Interface"
 msgstr "Interface"
 
 #. Settings: the category names on the sheet's left
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:291
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:293
 msgid "Models"
 msgstr "Modèles"
 
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:411
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:413
 msgid "Settings"
 msgstr "Paramètres"
 
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:503
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:505
 msgid "INTERFACE"
 msgstr "INTERFACE"
 
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:521
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:523
 msgid "Type and controls, on top of the system's own scaling."
 msgstr "Texte et commandes, en plus de la mise à l'échelle du système."
 
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:527
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:529
 msgid "SLINT_SCALE_FACTOR is set, and wins over this."
 msgstr "SLINT_SCALE_FACTOR est défini et prévaut sur ce réglage."
 
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:533
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:535
 msgid "Applies at the next start."
 msgstr "S'applique au prochain démarrage."
 
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:540
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:542
 msgid "Theme"
 msgstr "Thème"
 
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:544
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:546
 msgid "Charcoal"
 msgstr "Anthracite"
 
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:544
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:546
 msgid "Grey"
 msgstr "Gris"
 
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:544
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:546
 msgctxt "theme"
 msgid "Light"
 msgstr "Clair"
 
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:551
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:553
 msgid "Scroll bars"
 msgstr "Barres de défilement"
 
 #. Scroll bars: fade when idle, or stay
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:556
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:558
 msgid "Fade"
 msgstr "Fondu"
 
 #. Scroll bars: fade when idle, or stay
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:556
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:558
 msgid "Stay"
 msgstr "Toujours visibles"
 
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:563
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:565
 msgid "Scroll bar size"
 msgstr "Taille des barres de défilement"
 
 #. Scroll bar size
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:568
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:570
 msgid "Medium"
 msgstr "Moyenne"
 
 #. Scroll bar size
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:568
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:570
 msgid "Thin"
 msgstr "Fine"
 
 #. Scroll bar size
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:568
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:570
 msgid "Wide"
 msgstr "Large"
 
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:575
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:577
 msgid "Language"
 msgstr "Langue"
 
 #. Interface: the develop panel's sections
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:593
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:595
 msgid "One section open at a time"
 msgstr "Une seule section ouverte à la fois"
 
 #. their first order, after dragging them
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:601
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:603
 msgid "Reset section order"
 msgstr "Rétablir l'ordre des sections par défaut"
 
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:619
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:621
 msgid "LIBRARY"
 msgstr "BIBLIOTHÈQUE"
 
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:626
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:628
 msgid "Start in"
 msgstr "Ouvrir sur"
 
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:630
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:632
 msgid "Chosen folder"
 msgstr "Dossier choisi"
 
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:630
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:632
 msgid "Last folder"
 msgstr "Dernier dossier"
 
 #. that picks the view greycard opens in, Loupe or Library
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:648
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:650
 msgid "Start view"
 msgstr "Vue au démarrage"
 
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:656
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:658
 msgid "Show the filter bar"
 msgstr "Afficher la barre de filtres"
 
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:662
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:664
 msgid "Cell size"
 msgstr "Taille des vignettes"
 
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:673
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:675
 msgid "Resize with the wheel"
 msgstr "Redimensionner avec la molette"
 
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:679
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:681
 msgid "SIDECARS"
 msgstr "FICHIERS ANNEXES"
 
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:686
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:688
 msgid "Edits go"
 msgstr "Enregistrer les modifications"
 
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:690
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:692
 msgid "Beside the raw"
 msgstr "À côté du RAW"
 
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:690
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:692
 msgid "Hidden folder"
 msgstr "Dossier masqué"
 
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:700
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:702
 msgid "In a hidden .greycard folder."
 msgstr "Dans un dossier masqué .greycard."
 
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:701
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:703
 msgid "IMG_0001.CR3.gcd, beside the raw."
 msgstr "IMG_0001.CR3.gcd, à côté du RAW."
 
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:707
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:709
 msgid "Sidecars move when next saved."
 msgstr "Les fichiers annexes seront déplacés au prochain enregistrement."
 
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:716
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:718
 msgid "Sidecars are not written this run (--no-sidecars), so none are moved."
 msgstr ""
 "Les fichiers annexes ne sont pas écrits pendant cette session (--no-"
 "sidecars) ; aucun ne sera déplacé."
 
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:718
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:720
 msgid "Counting the sidecars of {}..."
 msgstr "Décompte des fichiers annexes de {}..."
 
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:720
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:722
 msgid "Every sidecar of {} is in the chosen place."
 msgstr "Tous les fichiers annexes de {} sont à l'emplacement choisi."
 
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:721
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:723
 msgid "{} of {} is in the other place."
 msgid_plural "{} of {} are in the other place."
 msgstr[0] "{} sur {} se trouve à l'autre emplacement."
 msgstr[1] "{} sur {} se trouvent à l'autre emplacement."
 
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:727
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:729
 msgid "Move the open frame's sidecar"
 msgstr "Déplacer le fichier annexe de la photo ouverte"
 
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:727
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:729
 msgid "Move the open frames' sidecars"
 msgstr "Déplacer les fichiers annexes des photos ouvertes"
 
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:739
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:741
 msgid "Move {}"
 msgstr "Déplacer {}"
 
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:755
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:757
 msgid "Write XMP sidecars"
 msgstr "Écrire les fichiers annexes XMP"
 
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:760
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:762
 msgid "Rating, label and keywords, for Lightroom and darktable."
 msgstr "Notes, étiquettes et mots-clés, pour Lightroom et darktable."
 
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:773
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:775
 msgid "Treat a JPEG beside its raw as a separate frame"
 msgstr "Traiter un JPEG placé à côté de son RAW comme une photo distincte"
 
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:779
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:781
 msgid "IMG_0001.JPG is a frame of its own, with its own rating."
 msgstr "IMG_0001.JPG est une photo distincte, avec sa propre note."
 
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:780
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:782
 msgid "IMG_0001.JPG goes with IMG_0001.CR3: one frame, marked +JPEG."
 msgstr "IMG_0001.JPG accompagne IMG_0001.CR3 : une seule photo, marquée +JPEG."
 
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:787
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:789
 msgid "THUMBNAILS"
 msgstr "VIGNETTES"
 
 #. Thumbnails: before the size field
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:811
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:813
 msgid "Keep up to"
 msgstr "Conserver jusqu'à"
 
 #. Thumbnails: after the size field
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:821
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:823
 msgid "MB, 0 for none"
 msgstr "Mo, 0 pour aucune limite"
 
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:825
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:827
 msgid "Previews up to"
 msgstr "Aperçus jusqu'à"
 
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:837
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:839
 msgid "Previews let you cull offline drives; about 0.5 MB a frame."
 msgstr ""
 "Les aperçus permettent de trier les disques hors ligne ; environ 0,5 Mo par "
 "photo."
 
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:844
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:846
 msgid "NETWORK FOLDERS"
 msgstr "DOSSIERS RÉSEAU"
 
 #. Network folders: before the minutes field
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:852
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:854
 msgid "Rescan every"
 msgstr "Réanalyser toutes les"
 
 #. Network folders: after the minutes field
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:862
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:864
 msgid "minutes, 0 for never"
 msgstr "minutes, 0 pour jamais"
 
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:865
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:867
 msgid "Shares can't be watched, so they're rescanned."
 msgstr ""
 "Les dossiers partagés ne peuvent pas être surveillés ; ils sont donc "
 "réanalysés."
 
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:979
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:981
 msgid "Lens corrections on new edits"
 msgstr "Corrections de l'objectif sur les nouveaux développements"
 
 #. Editing: the aspect a new crop opens at
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:997
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:999
 msgid "Last used"
 msgstr "Dernier utilisé"
 
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:1004
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:1006
 msgid "An uncropped frame's crop opens at the aspect last picked."
 msgstr ""
 "Le recadrage d'une photo non recadrée s'ouvre au dernier format choisi."
 
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:1006
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:1008
 msgid "An uncropped frame's crop opens free, any shape."
 msgstr "Le recadrage d'une photo non recadrée s'ouvre en mode libre."
 
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:1007
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:1009
 msgid "An uncropped frame's crop opens at the frame's own shape."
 msgstr "Le recadrage d'une photo non recadrée s'ouvre au format de la photo."
 
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:1057
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:1059
 msgid "Restores removed built-in presets."
 msgstr "Restaure les paramètres prédéfinis intégrés supprimés."
 
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:1064
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:1066
 msgid "EXPORT"
 msgstr "EXPORTATION"
 
 #. Export presets: the button that adds one
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:1120
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:1133
 msgid "Add..."
 msgstr "Ajouter..."
 
 #. Editing: the name every export carries
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:1129
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:1142
 msgid "Author"
 msgstr "Auteur"
 
 #. Editing: the copyright notice every export carries
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:1140
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:1153
 msgid "Copyright"
 msgstr "Copyright"
 
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:1160
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:1173
 msgid "MODELS"
 msgstr "MODÈLES"
 
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:1234
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:1247
 msgid "KEYS"
 msgstr "RACCOURCIS"
 
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:1294
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:1309
 msgid "Reset to defaults"
 msgstr "Rétablir les valeurs par défaut"
 
 #. About: the version row
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:1318
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:1333
 msgid "Version"
 msgstr "Version"
 
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:1323
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:1338
 msgid "UPDATES"
 msgstr "MISES À JOUR"
 
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:1329
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:1344
 msgid "Check for a new version at launch"
 msgstr "Vérifier les mises à jour au démarrage"
 
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:1334
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:1349
 msgid "Once a day; sends only the version number."
 msgstr "Une fois par jour ; seul le numéro de version est envoyé."
 
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:1350
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:1365
 msgid "Check now"
 msgstr "Vérifier maintenant"
 
 #. About: the cache folder's row
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:1405
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:1420
 msgid "Caches"
 msgstr "Caches"
 
 #. About: the log folder's row
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:1428
+#: crates/greycard-slint/ui/panel/settings-sheet.slint:1443
 msgid "Log"
 msgstr "Journal"
 
@@ -3183,28 +3183,28 @@ msgid "Clear shift"
 msgstr "Effacer le décalage"
 
 #. The word over the stand-in picture while the frame develops
-#: crates/greycard-slint/ui/panel/viewport.slint:802
+#: crates/greycard-slint/ui/panel/viewport.slint:807
 msgid "camera preview"
 msgstr "aperçu de l'appareil"
 
-#: crates/greycard-slint/ui/panel/viewport.slint:870
+#: crates/greycard-slint/ui/panel/viewport.slint:875
 msgid "Soft proof on (S turns it off)"
 msgstr "Épreuvage écran activé (S pour le désactiver)"
 
 #. People mask: the button over the picture that takes everyone in it
-#: crates/greycard-slint/ui/panel/viewport.slint:1357
+#: crates/greycard-slint/ui/panel/viewport.slint:1362
 msgid "All people"
 msgstr "Toutes les personnes"
 
-#: crates/greycard-slint/ui/panel/viewport.slint:1530
+#: crates/greycard-slint/ui/panel/viewport.slint:1535
 msgid "Now the second line"
 msgstr "Puis la deuxième ligne"
 
-#: crates/greycard-slint/ui/panel/viewport.slint:1532
+#: crates/greycard-slint/ui/panel/viewport.slint:1537
 msgid "Drag along two lines that should stand upright"
 msgstr "Tracez deux lignes le long d'éléments qui devraient être verticaux"
 
-#: crates/greycard-slint/ui/panel/viewport.slint:1533
+#: crates/greycard-slint/ui/panel/viewport.slint:1538
 msgid "Drag along two lines that should lie flat"
 msgstr "Tracez deux lignes le long d'éléments qui devraient être horizontaux"
 
@@ -3767,88 +3767,88 @@ msgstr "{} (avec {})"
 msgid "the backup copy"
 msgstr "la copie de sauvegarde"
 
-#: crates/greycard-ui/src/keys.rs:139
+#: crates/greycard-ui/src/keys.rs:159
 msgid "Add a frame to the selection, or take it out"
 msgstr "Ajouter une photo à la sélection ou l'en retirer"
 
-#: crates/greycard-ui/src/keys.rs:144
+#: crates/greycard-ui/src/keys.rs:164
 msgid "Select every frame from the open one to this one (with Ctrl, added)"
 msgstr ""
 "Sélectionner toutes les photos de la photo ouverte jusqu'à celle-ci (avec "
 "Ctrl, ajouter)"
 
 #. Keys sheet: a heading
-#: crates/greycard-ui/src/keys.rs:153
+#: crates/greycard-ui/src/keys.rs:173
 msgid "Moving around"
 msgstr "Navigation"
 
-#: crates/greycard-ui/src/keys.rs:162
+#: crates/greycard-ui/src/keys.rs:182
 msgid "Previous or next frame"
 msgstr "Photo précédente ou suivante"
 
-#: crates/greycard-ui/src/keys.rs:168
+#: crates/greycard-ui/src/keys.rs:188
 msgid "Previous or next frame, added to the selection"
 msgstr "Photo précédente ou suivante, ajoutée à la sélection"
 
-#: crates/greycard-ui/src/keys.rs:173
+#: crates/greycard-ui/src/keys.rs:193
 msgid "In the grid, the frame above or below (with Shift, added)"
 msgstr "Dans la grille, photo au-dessus ou en dessous (avec Maj, ajouter)"
 
-#: crates/greycard-ui/src/keys.rs:188
+#: crates/greycard-ui/src/keys.rs:208
 msgid "The first or the last frame (with Shift, added)"
 msgstr "Première ou dernière photo (avec Maj, ajouter)"
 
-#: crates/greycard-ui/src/keys.rs:197
+#: crates/greycard-ui/src/keys.rs:217
 msgid "In the grid, back or forward through the folders visited"
 msgstr ""
 "Dans la grille, revenir en arrière ou avancer parmi les dossiers visités"
 
-#: crates/greycard-ui/src/keys.rs:202
+#: crates/greycard-ui/src/keys.rs:222
 msgid "Select every frame shown"
 msgstr "Sélectionner toutes les photos affichées"
 
 #. Keys sheet: a heading
-#: crates/greycard-ui/src/keys.rs:208
+#: crates/greycard-ui/src/keys.rs:228
 msgid "Views"
 msgstr "Vues"
 
-#: crates/greycard-ui/src/keys.rs:213
+#: crates/greycard-ui/src/keys.rs:233
 msgid "Library (the grid), and back to the Loupe as it was left"
 msgstr "Bibliothèque (grille), puis retour à la Loupe dans son dernier état"
 
-#: crates/greycard-ui/src/keys.rs:218
+#: crates/greycard-ui/src/keys.rs:238
 msgid "The Loupe (one frame), in the mode it was left in: Cull or Develop"
 msgstr "Loupe (une photo), dans le dernier mode utilisé : Tri ou Développement"
 
-#: crates/greycard-ui/src/keys.rs:223
+#: crates/greycard-ui/src/keys.rs:243
 msgid "Develop: the Loupe with the edit panel"
 msgstr "Développement : Loupe avec le panneau de réglages"
 
-#: crates/greycard-ui/src/keys.rs:225
+#: crates/greycard-ui/src/keys.rs:245
 msgid "The lightbox, and back"
 msgstr "Table lumineuse, puis retour"
 
-#: crates/greycard-ui/src/keys.rs:229
+#: crates/greycard-ui/src/keys.rs:249
 msgid "In the lightbox, the rating, flag, and label on the tiles, or not"
 msgstr ""
 "Dans la table lumineuse, afficher ou masquer notes, marqueurs et étiquettes "
 "sur les vignettes"
 
-#: crates/greycard-ui/src/keys.rs:234
+#: crates/greycard-ui/src/keys.rs:254
 msgid "Cull; in the Loupe, Cull or Develop in turn"
 msgstr "Tri ; dans la Loupe, alterner entre Tri et Développement"
 
-#: crates/greycard-ui/src/keys.rs:239
+#: crates/greycard-ui/src/keys.rs:259
 msgid "In Cull, compare two or four frames"
 msgstr "En mode Tri, comparer deux ou quatre photos"
 
-#: crates/greycard-ui/src/keys.rs:245
+#: crates/greycard-ui/src/keys.rs:265
 msgid "Open the frame chosen in the grid or the lightbox; from Cull, Develop"
 msgstr ""
 "Ouvrir la photo choisie dans la grille ou la table lumineuse ; depuis le "
 "mode Tri, passer au Développement"
 
-#: crates/greycard-ui/src/keys.rs:253
+#: crates/greycard-ui/src/keys.rs:273
 msgid ""
 "Bigger or smaller tiles in the grid; fewer or more across the lightbox; in "
 "the Loupe, zoom in or out"
@@ -3856,7 +3856,7 @@ msgstr ""
 "Agrandir ou réduire les vignettes dans la grille ; afficher moins ou plus de "
 "photos dans la table lumineuse ; dans la Loupe, zoomer ou dézoomer"
 
-#: crates/greycard-ui/src/keys.rs:259
+#: crates/greycard-ui/src/keys.rs:279
 msgid ""
 "Hide the panels and the filmstrip, and bring them back (in the grid, the "
 "left pane)"
@@ -3864,168 +3864,168 @@ msgstr ""
 "Masquer puis réafficher les panneaux et le film fixe (dans la grille, le "
 "panneau gauche)"
 
-#: crates/greycard-ui/src/keys.rs:265
+#: crates/greycard-ui/src/keys.rs:285
 msgid "The filmstrip, the left pane or the develop panel alone"
 msgstr "Le film fixe, le panneau gauche ou le panneau Développement seul"
 
 #. Not on a Mac (`NOT_MAC`).
-#: crates/greycard-ui/src/keys.rs:268
+#: crates/greycard-ui/src/keys.rs:288
 msgid "Full screen, and back"
 msgstr "Activer ou quitter le plein écran"
 
-#: crates/greycard-ui/src/keys.rs:269
+#: crates/greycard-ui/src/keys.rs:289
 msgid "Fit or 1:1"
 msgstr "Adapter à l'écran ou 1:1"
 
-#: crates/greycard-ui/src/keys.rs:270
+#: crates/greycard-ui/src/keys.rs:290
 msgid "Fit or 3:1"
 msgstr "Adapter à l'écran ou 3:1"
 
-#: crates/greycard-ui/src/keys.rs:274
+#: crates/greycard-ui/src/keys.rs:294
 msgid "A mat of the canvas around the picture at Fit, or none"
 msgstr "Afficher ou masquer le fond autour de la photo ajustée à l'écran"
 
-#: crates/greycard-ui/src/keys.rs:279
+#: crates/greycard-ui/src/keys.rs:299
 msgid "In the Loupe, shadow and highlight clipping warnings"
 msgstr ""
 "Dans la Loupe, avertissements d'écrêtage des ombres et des hautes lumières"
 
-#: crates/greycard-ui/src/keys.rs:285
+#: crates/greycard-ui/src/keys.rs:305
 msgid ""
 "In the Loupe, focus peaking: the sharpest parts painted over the picture"
 msgstr "Dans la Loupe, surlignage des zones les plus nettes sur la photo"
 
-#: crates/greycard-ui/src/keys.rs:291
+#: crates/greycard-ui/src/keys.rs:311
 msgid "Soft proof (in the grid, a stack: below)"
 msgstr "Épreuvage écran (dans la grille, une pile : voir ci-dessous)"
 
 #. Keys sheet: a heading
-#: crates/greycard-ui/src/keys.rs:297
+#: crates/greycard-ui/src/keys.rs:317
 msgid "Rating and sorting"
 msgstr "Notes et tri"
 
 #. Keys sheet: the key column for the rating keys
-#: crates/greycard-ui/src/keys.rs:302
+#: crates/greycard-ui/src/keys.rs:322
 msgid "1 to 5, 0"
 msgstr "1 à 5, 0"
 
-#: crates/greycard-ui/src/keys.rs:303
+#: crates/greycard-ui/src/keys.rs:323
 msgid "Set a rating, or clear it"
 msgstr "Attribuer une note ou l'effacer"
 
-#: crates/greycard-ui/src/keys.rs:310
+#: crates/greycard-ui/src/keys.rs:330
 msgid "Pick, reject, unflag"
 msgstr "Retenir, rejeter, retirer le marqueur"
 
 #. Keys sheet: the key column for the label keys
-#: crates/greycard-ui/src/keys.rs:315
+#: crates/greycard-ui/src/keys.rs:335
 msgid "6 to 9"
 msgstr "6 à 9"
 
-#: crates/greycard-ui/src/keys.rs:316
+#: crates/greycard-ui/src/keys.rs:336
 msgid "Red, yellow, green or blue label (again to clear)"
 msgstr "Étiquette rouge, jaune, verte ou bleue (rappuyer pour l'effacer)"
 
-#: crates/greycard-ui/src/keys.rs:322
+#: crates/greycard-ui/src/keys.rs:342
 msgid "Turn the frame a quarter left or right; not part of the edit"
 msgstr ""
 "Pivoter la photo d'un quart de tour à gauche ou à droite ; hors des "
 "modifications"
 
-#: crates/greycard-ui/src/keys.rs:327
+#: crates/greycard-ui/src/keys.rs:347
 msgid "Add the selected frames to a collection, or take them out"
 msgstr "Ajouter les photos sélectionnées à une collection ou les en retirer"
 
-#: crates/greycard-ui/src/keys.rs:332
+#: crates/greycard-ui/src/keys.rs:352
 msgid "Stack the selected frames"
 msgstr "Empiler les photos sélectionnées"
 
-#: crates/greycard-ui/src/keys.rs:334
+#: crates/greycard-ui/src/keys.rs:354
 msgid "Unstack them"
 msgstr "Dépiler les photos"
 
-#: crates/greycard-ui/src/keys.rs:338
+#: crates/greycard-ui/src/keys.rs:358
 msgid "In the grid, open or close a stack; make the frame its top"
 msgstr ""
 "Dans la grille, ouvrir ou fermer une pile ; placer la photo à son sommet"
 
-#: crates/greycard-ui/src/keys.rs:344
+#: crates/greycard-ui/src/keys.rs:364
 msgid "In the grid, move the frame up or down in its stack"
 msgstr "Dans la grille, monter ou descendre la photo dans sa pile"
 
-#: crates/greycard-ui/src/keys.rs:349
+#: crates/greycard-ui/src/keys.rs:369
 msgid "New version of the frame"
 msgstr "Nouvelle version de la photo"
 
-#: crates/greycard-ui/src/keys.rs:353
+#: crates/greycard-ui/src/keys.rs:373
 msgid "Delete the selected frames, after a confirmation"
 msgstr "Supprimer les photos sélectionnées après confirmation"
 
-#: crates/greycard-ui/src/keys.rs:369
+#: crates/greycard-ui/src/keys.rs:390
 msgid "Copy the open frame's settings"
 msgstr "Copier les paramètres de la photo ouverte"
 
-#: crates/greycard-ui/src/keys.rs:374
+#: crates/greycard-ui/src/keys.rs:395
 msgid "Paste them onto the selected frames"
 msgstr "Les coller sur les photos sélectionnées"
 
-#: crates/greycard-ui/src/keys.rs:379
+#: crates/greycard-ui/src/keys.rs:400
 msgid "Sync the selected frames to the open one"
 msgstr "Synchroniser les photos sélectionnées avec la photo ouverte"
 
-#: crates/greycard-ui/src/keys.rs:381
+#: crates/greycard-ui/src/keys.rs:402
 msgid "Crop, and Done"
 msgstr "Recadrer, puis Terminé"
 
-#: crates/greycard-ui/src/keys.rs:385
+#: crates/greycard-ui/src/keys.rs:406
 msgid "White balance from a neutral patch: the pipette"
 msgstr "Balance des blancs à partir d'une zone neutre : pipette"
 
-#: crates/greycard-ui/src/keys.rs:390
+#: crates/greycard-ui/src/keys.rs:411
 msgid "New mask with a Linear, placed by the next drag"
 msgstr "Nouveau masque linéaire, placé au prochain glissement"
 
-#: crates/greycard-ui/src/keys.rs:395
+#: crates/greycard-ui/src/keys.rs:416
 msgid "New mask with a Radial, placed by the next drag"
 msgstr "Nouveau masque radial, placé au prochain glissement"
 
-#: crates/greycard-ui/src/keys.rs:404
+#: crates/greycard-ui/src/keys.rs:425
 msgid "Brush size, smaller and bigger"
 msgstr "Taille du pinceau, réduire ou agrandir"
 
-#: crates/greycard-ui/src/keys.rs:409
+#: crates/greycard-ui/src/keys.rs:430
 msgid "Brush feather, less and more"
 msgstr "Contour progressif du pinceau, réduire ou augmenter"
 
-#: crates/greycard-ui/src/keys.rs:414
+#: crates/greycard-ui/src/keys.rs:435
 msgid "Brush opacity, less and more"
 msgstr "Opacité du pinceau, réduire ou augmenter"
 
-#: crates/greycard-ui/src/keys.rs:416
+#: crates/greycard-ui/src/keys.rs:437
 msgid "Show the mask"
 msgstr "Afficher le masque"
 
 #. Keys sheet: O in crop mode, the next composition guide
-#: crates/greycard-ui/src/keys.rs:423
+#: crates/greycard-ui/src/keys.rs:444
 msgid "In the crop, the next guide over it"
 msgstr "Dans le recadrage, repère suivant"
 
 #. Keys sheet: Shift+O in crop mode
-#: crates/greycard-ui/src/keys.rs:429
+#: crates/greycard-ui/src/keys.rs:450
 msgid "In the crop, turn the golden spiral or the triangles"
 msgstr ""
 "Dans le recadrage, changer l'orientation de la spirale d'or ou des triangles"
 
-#: crates/greycard-ui/src/keys.rs:434
+#: crates/greycard-ui/src/keys.rs:455
 msgid "Show the frame as it was, and back"
 msgstr "Afficher la photo avant modifications, puis revenir"
 
 #. Keys sheet: a heading
-#: crates/greycard-ui/src/keys.rs:443
+#: crates/greycard-ui/src/keys.rs:464
 msgid "Sliders"
 msgstr "Curseurs"
 
-#: crates/greycard-ui/src/keys.rs:449
+#: crates/greycard-ui/src/keys.rs:470
 msgid ""
 "Nudge the focused slider, or its typed value with ↑ ↓; Shift on an arrow for "
 "more, Ctrl on the slider for less, and Shift on a drag for finer"
@@ -4034,41 +4034,41 @@ msgstr ""
 "plus grand pas, Ctrl sur le curseur pour un plus petit, Maj + glissement "
 "pour affiner"
 
-#: crates/greycard-ui/src/keys.rs:452
+#: crates/greycard-ui/src/keys.rs:473
 msgid "The previous or the next slider"
 msgstr "Curseur précédent ou suivant"
 
-#: crates/greycard-ui/src/keys.rs:456
+#: crates/greycard-ui/src/keys.rs:477
 msgid "In a slider's typed value, the next or the previous one"
 msgstr "Dans une valeur saisie, passer à la précédente ou à la suivante"
 
 #. Keys sheet: a heading
-#: crates/greycard-ui/src/keys.rs:462
+#: crates/greycard-ui/src/keys.rs:483
 msgid "Files, sheets and help"
 msgstr "Fichiers, fenêtres et aide"
 
-#: crates/greycard-ui/src/keys.rs:467
+#: crates/greycard-ui/src/keys.rs:488
 msgid "Filter the folder by rating, flag, label or words"
 msgstr "Filtrer le dossier par note, marqueur, étiquette ou mots"
 
-#: crates/greycard-ui/src/keys.rs:469
-#: crates/greycard-ui/src/panel/startup.rs:1864
+#: crates/greycard-ui/src/keys.rs:490
+#: crates/greycard-ui/src/panel/startup.rs:1874
 msgid "Open a folder"
 msgstr "Ouvrir un dossier"
 
-#: crates/greycard-ui/src/keys.rs:473
+#: crates/greycard-ui/src/keys.rs:494
 msgid "Import from a card"
 msgstr "Importer depuis une carte"
 
-#: crates/greycard-ui/src/keys.rs:479
+#: crates/greycard-ui/src/keys.rs:500
 msgid "Export with the last settings"
 msgstr "Exporter avec les derniers paramètres"
 
-#: crates/greycard-ui/src/keys.rs:482
+#: crates/greycard-ui/src/keys.rs:503
 msgid "The keys sheet"
 msgstr "Fenêtre des raccourcis"
 
-#: crates/greycard-ui/src/keys.rs:486
+#: crates/greycard-ui/src/keys.rs:507
 msgid ""
 "Close a sheet, put a tool down, leave the crop, let go of a set, or go back "
 "to one frame"
@@ -4077,32 +4077,34 @@ msgstr ""
 "ou revenir à une photo"
 
 #. Keys sheet: two keys that do the same
-#: crates/greycard-ui/src/keys.rs:622 crates/greycard-ui/src/keys/tests.rs:311
+#: crates/greycard-ui/src/keys.rs:652 crates/greycard-ui/src/keys.rs:1336
+#: crates/greycard-ui/src/keys/tests.rs:313
+#: crates/greycard-ui/src/keys/tests.rs:1213
 msgid "{} or {}"
 msgstr "{} ou {}"
 
 #. The pointer's word, after its chord: "Ctrl+click".
-#: crates/greycard-ui/src/keys.rs:626
+#: crates/greycard-ui/src/keys.rs:656
 msgid "click"
 msgstr "clic"
 
 #. What the sheets write for an action bound to no key.
-#: crates/greycard-ui/src/keys.rs:1102
-#: crates/greycard-ui/src/keys/tests.rs:1360
+#: crates/greycard-ui/src/keys.rs:1173
+#: crates/greycard-ui/src/keys/tests.rs:1620
 msgctxt "key binding"
 msgid "None"
 msgstr "Aucun"
 
 #. Keys sheet: a second key for the same action
-#: crates/greycard-ui/src/keys.rs:1256
+#: crates/greycard-ui/src/keys.rs:1328
 msgid "Also: {}"
 msgstr "Aussi : {}"
 
-#: crates/greycard-ui/src/keys.rs:1437
+#: crates/greycard-ui/src/keys.rs:1520
 msgid "the guide is open in the browser"
 msgstr "le guide est ouvert dans le navigateur"
 
-#: crates/greycard-ui/src/keys.rs:1448
+#: crates/greycard-ui/src/keys.rs:1531
 msgid "no browser would open: the guide is at {url}"
 msgstr "aucun navigateur ne s'est ouvert : le guide se trouve sur {url}"
 
@@ -5401,8 +5403,8 @@ msgstr "Avec le JPEG de l'appareil, {}"
 
 #: crates/greycard-ui/src/panel/browser.rs:912
 #: crates/greycard-ui/src/panel/cull.rs:446
-#: crates/greycard-ui/src/panel/deliver.rs:1670
-#: crates/greycard-ui/src/panel/deliver.rs:1704
+#: crates/greycard-ui/src/panel/deliver.rs:1682
+#: crates/greycard-ui/src/panel/deliver.rs:1716
 #: crates/greycard-ui/src/panel/edit.rs:552
 #: crates/greycard-ui/src/panel/edit.rs:1360
 #: crates/greycard-ui/src/panel/history.rs:488
@@ -5422,19 +5424,19 @@ msgstr ""
 msgid "nothing to open"
 msgstr "rien à ouvrir"
 
-#: crates/greycard-ui/src/panel/browser.rs:3526
+#: crates/greycard-ui/src/panel/browser.rs:3528
 msgid "{word}; hidden by the filter"
 msgstr "{word} ; masqué par le filtre"
 
-#: crates/greycard-ui/src/panel/browser.rs:4024
+#: crates/greycard-ui/src/panel/browser.rs:4026
 msgid "choosing a folder to open..."
 msgstr "choix d'un dossier à ouvrir..."
 
-#: crates/greycard-ui/src/panel/browser.rs:4025
+#: crates/greycard-ui/src/panel/browser.rs:4027
 msgid "Open folder"
 msgstr "Ouvrir un dossier"
 
-#: crates/greycard-ui/src/panel/browser.rs:4043
+#: crates/greycard-ui/src/panel/browser.rs:4045
 msgid "open folder canceled"
 msgstr "ouverture du dossier annulée"
 
@@ -6137,19 +6139,19 @@ msgstr "{kind} {bits} bits lu en {space} ; rendu déjà effectué"
 msgid "picture"
 msgstr "image"
 
-#: crates/greycard-ui/src/panel/deliver.rs:870
+#: crates/greycard-ui/src/panel/deliver.rs:873
 msgid "the engine's denoise until the model is fetched"
 msgstr "réduction du bruit intégrée en attendant le modèle"
 
-#: crates/greycard-ui/src/panel/deliver.rs:875
+#: crates/greycard-ui/src/panel/deliver.rs:878
 msgid "the engine's denoise: the learned one failed ({message})"
 msgstr "réduction du bruit intégrée : échec du modèle appris ({message})"
 
-#: crates/greycard-ui/src/panel/deliver.rs:880
+#: crates/greycard-ui/src/panel/deliver.rs:883
 msgid "no denoise: {why}"
 msgstr "pas de réduction du bruit : {why}"
 
-#: crates/greycard-ui/src/panel/deliver.rs:888
+#: crates/greycard-ui/src/panel/deliver.rs:891
 msgid "{names} left as it was until the fill model is fetched"
 msgid_plural "{names} left as they were until the fill model is fetched"
 msgstr[0] ""
@@ -6157,76 +6159,76 @@ msgstr[0] ""
 msgstr[1] ""
 "aucune modification de {names} en attendant le modèle de remplissage"
 
-#: crates/greycard-ui/src/panel/deliver.rs:924
+#: crates/greycard-ui/src/panel/deliver.rs:927
 msgid "{name} left as it was: the remove needs a GPU"
 msgstr "aucune modification de {name} : la suppression nécessite un GPU"
 
-#: crates/greycard-ui/src/panel/deliver.rs:935
+#: crates/greycard-ui/src/panel/deliver.rs:938
 msgid "{name} left as it was: the fill model failed ({why})"
 msgstr "aucune modification de {name} : échec du modèle de remplissage ({why})"
 
-#: crates/greycard-ui/src/panel/deliver.rs:1096
+#: crates/greycard-ui/src/panel/deliver.rs:1107
 msgid "developing... the fill model is at work on {name}, {at} of {of}"
 msgstr "développement... le modèle de remplissage traite {name}, {at} sur {of}"
 
-#: crates/greycard-ui/src/panel/deliver.rs:1103
+#: crates/greycard-ui/src/panel/deliver.rs:1114
 msgid "developing... the fill model is at work on {name}"
 msgstr "développement... le modèle de remplissage traite {name}"
 
-#: crates/greycard-ui/src/panel/deliver.rs:1130
+#: crates/greycard-ui/src/panel/deliver.rs:1141
 msgid "failed: {message}"
 msgstr "échec : {message}"
 
-#: crates/greycard-ui/src/panel/deliver.rs:1249
+#: crates/greycard-ui/src/panel/deliver.rs:1261
 msgid "{name} found on {provider} in {seconds} s"
 msgstr "{name} trouvé sur {provider} en {seconds} s"
 
-#: crates/greycard-ui/src/panel/deliver.rs:1316
+#: crates/greycard-ui/src/panel/deliver.rs:1328
 msgid "mask: {message}"
 msgstr "masque : {message}"
 
-#: crates/greycard-ui/src/panel/deliver.rs:1333
+#: crates/greycard-ui/src/panel/deliver.rs:1345
 msgid "downloading {name}: {done} of {total} MB"
 msgstr "téléchargement de {name} : {done} sur {total} Mo"
 
-#: crates/greycard-ui/src/panel/deliver.rs:1348
+#: crates/greycard-ui/src/panel/deliver.rs:1360
 msgid "{name} is ready"
 msgstr "{name} est prêt"
 
-#: crates/greycard-ui/src/panel/deliver.rs:1393
+#: crates/greycard-ui/src/panel/deliver.rs:1405
 msgid "{name} is ready: the AI features run on the CPU, slower"
 msgstr ""
 "{name} est prêt : les fonctions d'IA utilisent le processeur, plus lent"
 
-#: crates/greycard-ui/src/panel/deliver.rs:1449
+#: crates/greycard-ui/src/panel/deliver.rs:1461
 msgid "downloading the lens profiles: {done} of {total} KB"
 msgstr "téléchargement des profils d'objectif : {done} sur {total} Ko"
 
-#: crates/greycard-ui/src/panel/deliver.rs:1492
+#: crates/greycard-ui/src/panel/deliver.rs:1504
 msgid "the lens profiles are ready"
 msgstr "les profils d'objectif sont prêts"
 
-#: crates/greycard-ui/src/panel/deliver.rs:1522
+#: crates/greycard-ui/src/panel/deliver.rs:1534
 msgid "the lens profiles could not be fetched: {message}"
 msgstr "impossible de télécharger les profils d'objectif : {message}"
 
-#: crates/greycard-ui/src/panel/deliver.rs:1584
+#: crates/greycard-ui/src/panel/deliver.rs:1596
 msgid "{name} is there already: nothing exported"
 msgstr "{name} existe déjà : rien n'a été exporté"
 
-#: crates/greycard-ui/src/panel/deliver.rs:1833
+#: crates/greycard-ui/src/panel/deliver.rs:1845
 msgid " ({note})"
 msgstr " ({note})"
 
-#: crates/greycard-ui/src/panel/deliver.rs:1839
+#: crates/greycard-ui/src/panel/deliver.rs:1851
 msgid ", without {what}"
 msgstr ", sans {what}"
 
-#: crates/greycard-ui/src/panel/deliver.rs:1843
+#: crates/greycard-ui/src/panel/deliver.rs:1855
 msgid "exported {name} in {seconds} s{said}"
 msgstr "{name} exporté en {seconds} s{said}"
 
-#: crates/greycard-ui/src/panel/deliver.rs:1854
+#: crates/greycard-ui/src/panel/deliver.rs:1866
 msgid "one thing the edit names that this machine has not got (see the log)"
 msgid_plural ""
 "{n} things the edit names that this machine has not got (see the log)"
@@ -6235,119 +6237,119 @@ msgstr[0] ""
 msgstr[1] ""
 "{n} éléments des modifications manquent sur cet ordinateur (voir le journal)"
 
-#: crates/greycard-ui/src/panel/deliver.rs:2014
+#: crates/greycard-ui/src/panel/deliver.rs:2026
 msgid "nothing to export"
 msgstr "rien à exporter"
 
-#: crates/greycard-ui/src/panel/deliver.rs:2056
+#: crates/greycard-ui/src/panel/deliver.rs:2068
 msgid "exporting {n} frame..."
 msgid_plural "exporting {n} frames..."
 msgstr[0] "exportation de {n} photo..."
 msgstr[1] "exportation de {n} photos..."
 
-#: crates/greycard-ui/src/panel/deliver.rs:2105
+#: crates/greycard-ui/src/panel/deliver.rs:2117
 msgid "{name} is there already"
 msgstr "{name} existe déjà"
 
-#: crates/greycard-ui/src/panel/deliver.rs:2106
+#: crates/greycard-ui/src/panel/deliver.rs:2118
 msgid "{n} file is there already"
 msgid_plural "{n} files are there already"
 msgstr[0] "{n} fichier existe déjà"
 msgstr[1] "{n} fichiers existent déjà"
 
-#: crates/greycard-ui/src/panel/deliver.rs:2116
+#: crates/greycard-ui/src/panel/deliver.rs:2128
 msgid "{title}: overwrite?"
 msgstr "{title} : écraser ?"
 
-#: crates/greycard-ui/src/panel/deliver.rs:2138
+#: crates/greycard-ui/src/panel/deliver.rs:2150
 msgid "export canceled"
 msgstr "exportation annulée"
 
-#: crates/greycard-ui/src/panel/deliver.rs:2164
+#: crates/greycard-ui/src/panel/deliver.rs:2176
 msgid " beside each original"
 msgstr " à côté de chaque original"
 
-#: crates/greycard-ui/src/panel/deliver.rs:2245
+#: crates/greycard-ui/src/panel/deliver.rs:2257
 msgid "Export to a folder"
 msgstr "Exporter vers un dossier"
 
-#: crates/greycard-ui/src/panel/deliver.rs:2277
+#: crates/greycard-ui/src/panel/deliver.rs:2289
 #: crates/greycard-ui/src/panel/export_queue.rs:504
 msgid "{folder} is not there"
 msgstr "{folder} est introuvable"
 
-#: crates/greycard-ui/src/panel/deliver.rs:2278
+#: crates/greycard-ui/src/panel/deliver.rs:2290
 msgid "{folder} is not a folder"
 msgstr "{folder} n'est pas un dossier"
 
-#: crates/greycard-ui/src/panel/deliver.rs:2297
+#: crates/greycard-ui/src/panel/deliver.rs:2309
 #: crates/greycard-ui/src/sidecars.rs:244
 msgid "{folder} cannot be written to"
 msgstr "impossible d'écrire dans {folder}"
 
-#: crates/greycard-ui/src/panel/deliver.rs:2367
+#: crates/greycard-ui/src/panel/deliver.rs:2379
 msgid "choosing the folder exports go to..."
 msgstr "choix du dossier d'exportation..."
 
-#: crates/greycard-ui/src/panel/deliver.rs:2381
+#: crates/greycard-ui/src/panel/deliver.rs:2393
 msgid "exports go to {folder}"
 msgstr "exportations vers {folder}"
 
-#: crates/greycard-ui/src/panel/deliver.rs:2383
+#: crates/greycard-ui/src/panel/deliver.rs:2395
 msgid "the export folder is as it was"
 msgstr "le dossier d'exportation reste inchangé"
 
-#: crates/greycard-ui/src/panel/deliver.rs:2391
+#: crates/greycard-ui/src/panel/deliver.rs:2403
 msgid "; the export waiting on {folder} was not started"
 msgstr "; l'exportation en attente de {folder} n'a pas démarré"
 
-#: crates/greycard-ui/src/panel/deliver.rs:2423
+#: crates/greycard-ui/src/panel/deliver.rs:2435
 msgid "stopping the export after the frame in hand..."
 msgstr "arrêt de l'exportation après la photo en cours..."
 
-#: crates/greycard-ui/src/panel/deliver.rs:2494
+#: crates/greycard-ui/src/panel/deliver.rs:2506
 msgid "export preset {name}"
 msgstr "paramètre prédéfini d'exportation {name}"
 
-#: crates/greycard-ui/src/panel/deliver.rs:2511
+#: crates/greycard-ui/src/panel/deliver.rs:2523
 msgid "{none} is the picker's; choose another name"
 msgstr "{none} est réservé au sélecteur ; choisissez un autre nom"
 
-#: crates/greycard-ui/src/panel/deliver.rs:2523
+#: crates/greycard-ui/src/panel/deliver.rs:2535
 msgid "export preset {name} saved"
 msgstr "paramètre prédéfini d'exportation {name} enregistré"
 
-#: crates/greycard-ui/src/panel/deliver.rs:2548
+#: crates/greycard-ui/src/panel/deliver.rs:2560
 msgid "export preset {name} deleted"
 msgstr "paramètre prédéfini d'exportation {name} supprimé"
 
 #. The frame on screen with a panel that is not its own (its
 #. root offline, its sidecar not read): nothing to export, and
 #. the worker's open picture is another frame's.
-#: crates/greycard-ui/src/panel/deliver.rs:2688
+#: crates/greycard-ui/src/panel/deliver.rs:2700
 msgid "nothing is exported"
 msgstr "aucune photo exportée"
 
-#: crates/greycard-ui/src/panel/deliver.rs:2743
-#: crates/greycard-ui/src/panel/deliver.rs:2750
-#: crates/greycard-ui/src/panel/deliver.rs:2838
+#: crates/greycard-ui/src/panel/deliver.rs:2755
+#: crates/greycard-ui/src/panel/deliver.rs:2762
+#: crates/greycard-ui/src/panel/deliver.rs:2850
 msgid "not exported: {why}"
 msgstr "non exporté : {why}"
 
-#: crates/greycard-ui/src/panel/deliver.rs:2786
+#: crates/greycard-ui/src/panel/deliver.rs:2798
 msgid "exporting to {folder}..."
 msgstr "exportation vers {folder}..."
 
-#: crates/greycard-ui/src/panel/deliver.rs:2818
-#: crates/greycard-ui/src/panel/edit_in.rs:361
+#: crates/greycard-ui/src/panel/deliver.rs:2830
+#: crates/greycard-ui/src/panel/edit_in.rs:365
 msgid "not exported: another export is under way"
 msgstr "non exporté : une autre exportation est en cours"
 
-#: crates/greycard-ui/src/panel/deliver.rs:2826
+#: crates/greycard-ui/src/panel/deliver.rs:2838
 msgid "{why}: choose another folder"
 msgstr "{why} : choisissez un autre dossier"
 
-#: crates/greycard-ui/src/panel/deliver.rs:2843
+#: crates/greycard-ui/src/panel/deliver.rs:2855
 msgid "not exported: {why}; {failed}"
 msgstr "non exporté : {why} ; {failed}"
 
@@ -7605,11 +7607,11 @@ msgid_plural "{thumbs} {n} local previews, {mb} MB of {cap} MB."
 msgstr[0] "{thumbs} {n} aperçu local, {mb} Mo sur {cap} Mo."
 msgstr[1] "{thumbs} {n} aperçus locaux, {mb} Mo sur {cap} Mo."
 
-#: crates/greycard-ui/src/panel/prefs.rs:1122
+#: crates/greycard-ui/src/panel/prefs.rs:1128
 msgid "Moving the sidecars..."
 msgstr "Déplacement des fichiers annexes..."
 
-#: crates/greycard-ui/src/panel/prefs.rs:1143
+#: crates/greycard-ui/src/panel/prefs.rs:1149
 msgid "The sidecars couldn't be moved; see the log."
 msgstr "Impossible de déplacer les fichiers annexes ; voir le journal."
 
@@ -7811,28 +7813,28 @@ msgstr "comparaison de la pile de {name}"
 msgid "{left} more of the stack left out"
 msgstr "{left} autres photos de la pile exclues"
 
-#: crates/greycard-ui/src/panel/startup.rs:2280
+#: crates/greycard-ui/src/panel/startup.rs:2290
 msgid "{}'s profile from {}"
 msgstr "profil de {} depuis {}"
 
-#: crates/greycard-ui/src/panel/startup.rs:2284
+#: crates/greycard-ui/src/panel/startup.rs:2294
 msgid "{} knows no display profile"
 msgstr "{} ne connaît aucun profil d'écran"
 
-#: crates/greycard-ui/src/panel/startup.rs:2316
+#: crates/greycard-ui/src/panel/startup.rs:2326
 msgid "{from}: nothing changed on the way to the screen"
 msgstr "{from} : aucune modification avant l'affichage à l'écran"
 
-#: crates/greycard-ui/src/panel/startup.rs:2328
+#: crates/greycard-ui/src/panel/startup.rs:2338
 msgid "{from}: up to {d} of 255 from sRGB"
 msgstr "{from} : écart jusqu'à {d} sur 255 par rapport à sRGB"
 
-#: crates/greycard-ui/src/panel/startup.rs:2339
+#: crates/greycard-ui/src/panel/startup.rs:2349
 msgid "{from}: cannot be read; nothing changed on the way to the screen"
 msgstr ""
 "{from} : lecture impossible ; aucune modification avant l'affichage à l'écran"
 
-#: crates/greycard-ui/src/panel/startup.rs:2967
+#: crates/greycard-ui/src/panel/startup.rs:2977
 msgid ""
 "Library and Loupe, top left (or G), switch between the grid and one frame; "
 "Cull and Develop (C and D) are the Loupe's two modes; ? lists the keys"
@@ -8384,23 +8386,23 @@ msgstr ""
 "saturation et horizontalement pour la teinte ; Échap pour terminer"
 
 #. The file chooser's filter name for profiles
-#: crates/greycard-ui/src/panel/viewport.rs:1430
+#: crates/greycard-ui/src/panel/viewport.rs:1494
 msgid "ICC profiles"
 msgstr "Profils ICC"
 
-#: crates/greycard-ui/src/panel/viewport.rs:1622
+#: crates/greycard-ui/src/panel/viewport.rs:1686
 msgid "Proof profile"
 msgstr "Profil d'épreuvage"
 
-#: crates/greycard-ui/src/panel/viewport.rs:1641
+#: crates/greycard-ui/src/panel/viewport.rs:1705
 msgid "Monitor profile"
 msgstr "Profil d'écran"
 
-#: crates/greycard-ui/src/panel/viewport.rs:1795
+#: crates/greycard-ui/src/panel/viewport.rs:1859
 msgid "no fringe there: that color does not depart from its neighbors'"
 msgstr "aucune frange ici : cette couleur ne diffère pas de ses voisines"
 
-#: crates/greycard-ui/src/panel/viewport.rs:1832
+#: crates/greycard-ui/src/panel/viewport.rs:1896
 msgid ""
 "that color is nearly grey (chroma {chroma}, under the floor's {floor}): "
 "lower Chroma to take it in"
