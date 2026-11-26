@@ -270,8 +270,11 @@ pub(super) fn run(
                     }
                 }
                 #[cfg(test)]
-                if let Some(budget) = q.shelf_by_test.take() {
-                    shelf = Some(Shelf::new(budget));
+                if let Some((budget, machine)) = q.shelf_by_test.take() {
+                    shelf = Some(match machine {
+                        Some(machine) => Shelf::on(budget, machine),
+                        None => Shelf::new(budget),
+                    });
                 }
                 #[cfg(test)]
                 if let Some((free, freed)) = q.free_by_test.take() {
@@ -407,6 +410,19 @@ pub(super) fn run(
                 }
                 // Nothing asked for: a neighbor's base onto the shelf,
                 // off the lock, and the queue looked at again after.
+                // The budget worked out again first, for what the open
+                // frame holds now: the device may have come or gone, or
+                // its edit kept more, since its open.
+                if let (Some(shelf), Some(b)) = (shelf.as_mut(), base.as_ref()) {
+                    // Under the edit of its last develop: a section or a
+                    // mask turned on since its open keeps more.
+                    let edit = b.developed_as.as_ref().map_or(&b.edit, |(e, _)| e);
+                    shelf.size_for(
+                        crate::memory::pixels(&b.facts),
+                        super::shelf::Gpu::of(gpu.as_ref()),
+                        super::shelf::Uses::of(edit),
+                    );
+                }
                 let now = prefetch::Idle {
                     landed,
                     open: base.as_ref(),
@@ -1340,9 +1356,18 @@ pub(super) fn run(
                         // stamp on this file.
                         turn = wanted % 4;
                         let coming = coming.map(|k| k.decoded(&opened));
+                        // The budget for this frame beside it, before
+                        // the frame left is put: the open is never
+                        // refused, the shelf makes room for it.
+                        let on_shelf = shelf.get_or_insert_with(Shelf::user);
+                        on_shelf.size_for(
+                            crate::memory::pixels(&opened.walked().facts(0)),
+                            super::shelf::Gpu::of(gpu.as_ref()),
+                            super::shelf::Uses::of(&edit),
+                        );
                         swap_base(
                             &mut base,
-                            shelf.get_or_insert_with(Shelf::user),
+                            on_shelf,
                             (opened_file.take(), coming.as_ref().map(|k| (k, &opened))),
                             (&edit, turn, &|e: &Edit, x| stands_in(&ai, e, x)),
                             gpu.as_ref(),

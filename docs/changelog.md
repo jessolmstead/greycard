@@ -267,6 +267,9 @@ design note behind it.
 - A library index from a newer greycard is left untouched, and the notice gives the reason first and stays through a folder opened (issue 199).
 - Back up and Bring back work over a slow link to a network archive, where they stopped after one frame with a timeout
   ([§754](https://github.com/jessolmstead/greycard/blob/master/docs/notes/754-archive-copies-over-a-slow-link.md)).
+- On a Mac or an integrated GPU, big frames use less memory: kept neighbors are sized to what is free, and a prefetch waits for room
+  ([§755](https://github.com/jessolmstead/greycard/blob/master/docs/notes/755-the-shelf-sized-to-the-machine-and-the-frame.md),
+  [§753](https://github.com/jessolmstead/greycard/blob/master/docs/notes/753-the-settle-out-of-the-windows-way.md)).
 - A DNG with a linearization table, such as some DxO PureRAW files,
   no longer develops six stops dark and magenta.
 - A camera DNG that lists a tiny thumbnail first, a Leica M11's, shows

@@ -3969,6 +3969,150 @@ fn a_neighbor_larger_than_the_open_frame_pushes_out_nothing_kept() {
     crate::testing::remove_dir_retry(&dir2);
 }
 
+/// The sharpen's working set still held (an adjustment's, its settle
+/// parked by the Original) is counted beside a prefetch's making on
+/// unified memory: with room for the base and its making but not for
+/// the set as well, the prefetch is skipped; once the set is let go at
+/// rest, the same prefetch is made.
+#[test]
+fn a_prefetch_counts_the_sharpen_s_set_still_held() {
+    use super::prefetch::{Ahead, Fetched, prefetch};
+    use super::shelf::{Budget, COST, Gpu, Machine, Shelf, Uses};
+    let Some(ctx) = greycard_gpu::Context::own().ok() else {
+        skipped("the sharpen's set beside a prefetch");
+        return;
+    };
+    assert_eq!(
+        Gpu::of(Some(&ctx)),
+        Gpu::Unified,
+        "lavapipe's memory is ours"
+    );
+    let watch = ctx.sharpen_watch();
+    let mut gpu = Some(ctx);
+    let mut base = None;
+    develop_once(&Arc::new(aberrated_frame(400, 320)), &mut base, &mut gpu);
+    let set = watch.bytes();
+    assert!(set > 0, "the develop's sharpen holds its set");
+    let (dir, paths) = dngs("prefetch-set", &["pf-set-n.dng"], 96, 64);
+    let n = neighbor_at(&paths[0], Edit::default(), Side::Next);
+    let made = (96 * 64 * 12) + COST.making(96 * 64, Gpu::Unified);
+    // Sized as a frame of one pixel on the CPU would be, so the room
+    // the budget keeps is a making's and not the set's.
+    let (held, room) = COST.charged(1, Gpu::None, Uses::NONE);
+    let machine = Machine {
+        allowance: held + room + made + set / 2,
+    };
+    let mut shelf = Shelf::on(Budget::Bytes(1 << 30), machine);
+    shelf.size_for(1, Gpu::None, Uses::NONE);
+    let fetch = |shelf: &mut Shelf, gpu: &mut Option<greycard_gpu::Context>| {
+        prefetch(&n, None, &[], shelf, gpu, None, &|_| Ahead::Nothing)
+    };
+    let fetched = fetch(&mut shelf, &mut gpu);
+    assert!(matches!(fetched, Fetched::Skipped(_)), "{fetched:?}");
+    gpu.as_ref().unwrap().at_rest();
+    assert_eq!(watch.bytes(), 0);
+    assert_eq!(fetch(&mut shelf, &mut gpu), Fetched::Landed);
+    crate::testing::remove_dir_retry(&dir);
+}
+
+/// A prefetch asks the machine first: beside an open frame that leaves
+/// no room for its base and its making it is skipped, the log naming
+/// the frame's size and the room; with room it is made.
+#[test]
+fn a_prefetch_that_does_not_fit_the_machine_is_skipped() {
+    use super::prefetch::{Ahead, Fetched, prefetch, said};
+    use super::shelf::{Budget, COST, Gpu, Machine, Shelf, Uses};
+    let (dir, paths) = dngs("prefetch-room", &["pf-room-n.dng"], 96, 64);
+    let n = neighbor_at(&paths[0], Edit::default(), Side::Next);
+    let open = 96 * 64;
+    let (held, making) = COST.charged(open, Gpu::None, Uses::NONE);
+    let mut tight = Shelf::on(
+        Budget::Bytes(1 << 30),
+        Machine {
+            allowance: held + making,
+        },
+    );
+    tight.size_for(open, Gpu::None, Uses::NONE);
+    let fetched = prefetch(&n, None, &[], &mut tight, &mut None, None, &|_| {
+        Ahead::Nothing
+    });
+    assert!(matches!(fetched, Fetched::Skipped(_)), "{fetched:?}");
+    let line = said("pf-room-n.dng")
+        .into_iter()
+        .find(|l| l.contains("skipped"))
+        .expect("said");
+    assert!(
+        line.ends_with(&format!(
+            "skipped: a 0.0 MP frame wants {} MB to make and keep, and {} MB is left",
+            (open * 12 + making).div_ceil(1 << 20),
+            making.div_ceil(1 << 20)
+        )),
+        "{line}"
+    );
+    assert_eq!(tight.bytes(), 0);
+    let mut roomy = Shelf::on(
+        Budget::Bytes(1 << 30),
+        Machine {
+            allowance: held + 3 * making,
+        },
+    );
+    roomy.size_for(open, Gpu::None, Uses::NONE);
+    assert_eq!(
+        prefetch(&n, None, &[], &mut roomy, &mut None, None, &|_| {
+            Ahead::Nothing
+        }),
+        Fetched::Landed
+    );
+    assert!(roomy.bytes() > 0);
+    crate::testing::remove_dir_retry(&dir);
+}
+
+/// The shelf's budget is worked out again at each open, for the frame
+/// opened: beside a small frame the frame left is kept, and beside a
+/// large one, whose holdings and making leave no room, the shelf lets
+/// everything go, and the large frame is still opened. A budget worked
+/// out once, at the first open, would have kept them.
+#[test]
+fn the_shelf_s_budget_is_worked_out_again_at_each_open() {
+    use super::prefetch::said;
+    use super::shelf::{Budget, COST, Gpu, Machine, Uses};
+    let (dir, small) = dngs("shelf-sized", &["sz-small-1.dng", "sz-small-2.dng"], 96, 64);
+    let (dir2, large) = dngs("shelf-sized-large", &["sz-large.dng"], 384, 256);
+    let (held, making) = COST.charged(384 * 256, Gpu::None, Uses::NONE);
+    let (worker, rx) = walking_worker();
+    worker.shelf_on_by_test(
+        Budget::Bytes(1 << 30),
+        Machine {
+            allowance: held + making,
+        },
+    );
+    let wait = std::time::Duration::from_secs(60);
+    let from_shelf = |name: &str| {
+        said(name)
+            .iter()
+            .filter(|l| **l == format!("the base of {name} from the shelf"))
+            .count()
+    };
+    let open = |path: &std::path::Path, generation: u64| {
+        worker.send(open_default(path, generation));
+        assert_eq!(rx.recv_timeout(wait).expect("a develop"), generation);
+    };
+    open(&small[0], 1);
+    open(&small[1], 2);
+    open(&small[0], 3);
+    assert_eq!(from_shelf("sz-small-1.dng"), 1, "kept beside a small frame");
+    open(&large[0], 4);
+    open(&small[1], 5);
+    assert_eq!(
+        from_shelf("sz-small-2.dng"),
+        0,
+        "let go beside the large frame"
+    );
+    worker.stop();
+    crate::testing::remove_dir_retry(&dir);
+    crate::testing::remove_dir_retry(&dir2);
+}
+
 /// With room for one base, a compare of two frames keeps both: walking
 /// right the next is made in place of the frame just left, but a step
 /// back and the step forward again make nothing, so each return finds

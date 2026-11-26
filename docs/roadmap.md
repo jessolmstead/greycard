@@ -67,6 +67,9 @@ the reasoning lives in `docs/notes.md`.
       it go (about 0.8 GB at 102 MP)
 - [ ] §753 on Metal: the pan after a Detail move at 102 MP, and what
       making the sharpen's planes costs per adjustment there
+- [ ] The shelf on the laptop it was sized for (§755): rest and peak
+      at 102 MP on 24 GB, measured; and whether the frame just left
+      should always be kept where the budget comes to none
 - [ ] The open frame is held twice, the CPU base beside its upload of
       full floats (about 1 GB and 1.6 GB at 102 MP): drop the CPU base
       while the upload stands and read it back when it is needed, after

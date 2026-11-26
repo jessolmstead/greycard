@@ -860,6 +860,35 @@ pub(super) fn prefetch(
             file_label(&out)
         ));
     }
+    // The machine asked first: the base and its making beside the open
+    // frame and the shelf, the bases its put would let go let go now.
+    let pixels = crate::memory::pixels(&facts);
+    let kind = super::shelf::Gpu::of(gpu.as_ref());
+    // The sharpen's working set, where an adjustment still holds it
+    // (one whose settle the Original parked): the sizing counts it in
+    // place of a making, so beside one it is counted as well.
+    let sharpen = gpu.as_ref().map_or(0, |g| {
+        super::shelf::Held {
+            memory: 0,
+            device: g.sharpen_watch().bytes(),
+        }
+        .charged(kind)
+    });
+    let making = super::shelf::COST
+        .making(pixels, kind)
+        .saturating_add(sharpen);
+    let made_room = match shelf.room_to_make(&key, (base_estimate(&facts), making), keep) {
+        Ok(gone) => gone,
+        Err(short) => {
+            let mb = |b: u64| b.div_ceil(1 << 20);
+            return skipped(format!(
+                "a {:.1} MP frame wants {} MB to make and keep, and {} MB is left",
+                pixels as f64 / 1e6,
+                mb(short.need),
+                mb(short.room)
+            ));
+        }
+    };
     note(format!("prefetching the {side} frame, {name}"));
     // Asked before each stage: whether to stop there, said once when
     // the open of this very frame is what came.
@@ -983,7 +1012,7 @@ pub(super) fn prefetch(
     if !shelf.put(key, held, false) {
         return skipped("its base is over the shelf's whole budget".into());
     }
-    let gone = shelf.fit();
+    let gone = shelf.fit() + made_room;
     note(prefetched_line(
         &name,
         side,

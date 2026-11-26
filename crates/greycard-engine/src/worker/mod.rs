@@ -29,6 +29,8 @@ mod highlight_rounds;
 mod keep;
 mod masks;
 #[cfg(test)]
+mod memory_tests;
+#[cfg(test)]
 mod pan_tests;
 mod prefetch;
 #[cfg(test)]
@@ -855,7 +857,7 @@ struct Queue {
     waits_by_test: Vec<usize>,
     /// The shelf's budget, as a test has it, for a shelf made anew.
     #[cfg(test)]
-    shelf_by_test: Option<shelf::Budget>,
+    shelf_by_test: Option<(shelf::Budget, Option<shelf::Machine>)>,
     /// A develop a test sends as a fill round asks its hold first, as
     /// the window would send one while the round runs.
     #[cfg(test)]

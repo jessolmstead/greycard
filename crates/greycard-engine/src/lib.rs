@@ -34,6 +34,7 @@ pub mod match_compare;
 pub mod measure_baseline;
 pub mod measure_crop;
 pub mod measure_lightroom;
+pub mod memory;
 pub mod merge;
 pub mod naming;
 pub mod preset_fit;

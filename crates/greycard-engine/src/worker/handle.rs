@@ -908,7 +908,20 @@ impl Worker {
     #[cfg(test)]
     pub(super) fn shelf_by_test(&self, budget: super::shelf::Budget) {
         let (lock, cv) = &*self.queue;
-        lock.lock().expect("worker queue").shelf_by_test = Some(budget);
+        lock.lock().expect("worker queue").shelf_by_test = Some((budget, None));
+        cv.notify_one();
+    }
+
+    /// The shelf made anew under `cap`, sized on `machine` at each open
+    /// as a machine of that memory would size it, before the first open.
+    #[cfg(test)]
+    pub(super) fn shelf_on_by_test(
+        &self,
+        cap: super::shelf::Budget,
+        machine: super::shelf::Machine,
+    ) {
+        let (lock, cv) = &*self.queue;
+        lock.lock().expect("worker queue").shelf_by_test = Some((cap, Some(machine)));
         cv.notify_one();
     }
 

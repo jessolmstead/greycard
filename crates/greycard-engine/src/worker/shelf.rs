@@ -27,7 +27,10 @@
 //! What is held is held under a budget of bytes ([`Budget::user`]),
 //! the least recently left going first. The base of the open frame is
 //! not on the shelf and is never counted against it: a base is taken
-//! off before the shelf is brought back under its budget.
+//! off before the shelf is brought back under its budget. The budget is
+//! worked out again at each open ([`Shelf::size_for`]): what the open
+//! frame holds and what making a base costs come off the machine's
+//! memory first ([`crate::memory`]), so a large frame leaves the shelf less.
 
 use std::collections::VecDeque;
 use std::path::{Path, PathBuf};
@@ -35,6 +38,7 @@ use std::path::{Path, PathBuf};
 use greycard_core::raw::Orientation;
 
 use super::*;
+pub(super) use crate::memory::{COST, Gpu, Held, Machine, Uses};
 use crate::stages::Facts;
 
 /// The most the shelf holds, however much memory the machine has: at
@@ -58,13 +62,22 @@ pub(super) enum Budget {
 }
 
 impl Budget {
-    /// The budget on this machine ([`Budget::from_setting`]), with
-    /// `GREYCARD_SHELF_MB` read from the environment here, the one
+    /// The most the budget is on this machine ([`Budget::from_setting`]),
+    /// with `GREYCARD_SHELF_MB` read from the environment here, the one
     /// place it is read: once a session, when the worker's first open
-    /// makes the shelf.
-    pub(super) fn user() -> Self {
+    /// makes the shelf. With it, the machine's memory to size the
+    /// shelf on at each open ([`Shelf::size_for`]): none when a setting
+    /// gave the budget or the memory is not known.
+    pub(super) fn user() -> (Self, Option<u64>) {
         let setting = std::env::var("GREYCARD_SHELF_MB").ok();
-        Self::from_setting(setting.as_deref(), greycard_ai::ram::physical())
+        let ram = greycard_ai::ram::physical();
+        let set = setting
+            .as_deref()
+            .is_some_and(|v| v.trim().parse::<u64>().is_ok());
+        (
+            Self::from_setting(setting.as_deref(), ram),
+            ram.filter(|_| !set),
+        )
     }
 
     /// The budget for a machine of `ram` bytes, unless `setting` (the
@@ -93,6 +106,14 @@ impl Budget {
             Self::One => count <= 1,
         }
     }
+}
+
+/// What a base made for the shelf needs that is not there, for the
+/// log: the bytes it needs and the room left.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) struct Short {
+    pub need: u64,
+    pub room: u64,
 }
 
 /// What the file system says of a file: its length and modification
@@ -237,7 +258,18 @@ impl FileNow {
 
 /// The bases left behind, the most recently left first.
 pub(super) struct Shelf {
+    /// The budget now, within `cap`.
     budget: Budget,
+    /// The most the budget is, whatever the open frame: the machine's
+    /// ([`Budget::of`]), or the one a setting or a test gave.
+    cap: Budget,
+    /// The machine the budget is worked out on at each open; none when
+    /// its memory is not known or a setting gave the budget, which is
+    /// then the cap.
+    machine: Option<Machine>,
+    /// What the open frame holds at the last sizing, as the machine's
+    /// memory counts it.
+    open: u64,
     held: VecDeque<Shelved>,
 }
 
@@ -245,16 +277,113 @@ impl Shelf {
     pub(super) fn new(budget: Budget) -> Self {
         Self {
             budget,
+            cap: budget,
+            machine: None,
+            open: 0,
             held: VecDeque::new(),
         }
     }
 
+    /// A shelf under `cap`, sized on `machine` at each open.
+    pub(super) fn on(cap: Budget, machine: Machine) -> Self {
+        Self {
+            machine: Some(machine),
+            ..Self::new(cap)
+        }
+    }
+
     /// The shelf for this machine's budget ([`Budget::user`]), said in
-    /// the log as it is made.
+    /// the log as it is made: sized on the machine's memory at each
+    /// open, unless `GREYCARD_SHELF_MB` set the budget.
     pub(super) fn user() -> Self {
-        let shelf = Self::new(Budget::user());
+        let (cap, ram) = Budget::user();
+        let shelf = match ram {
+            Some(ram) => Self::on(cap, Machine::of(ram)),
+            None => Self::new(cap),
+        };
         tracing::info!("the shelf of frames left: {}", shelf.said());
         shelf
+    }
+
+    /// The budget worked out again for an open frame of `pixels` whose
+    /// develop runs where `gpu` says, under an edit that `uses` so much:
+    /// the machine's allowance less what the frame holds and the room
+    /// kept for what comes and goes beside it ([`COST`]), within the
+    /// cap. The shelf is brought under it, the least recently left going
+    /// first; how many went. A shelf with no machine keeps its cap.
+    pub(super) fn size_for(&mut self, pixels: u64, gpu: Gpu, uses: Uses) -> usize {
+        let Some(machine) = self.machine else {
+            return 0;
+        };
+        let (held, making) = COST.charged(pixels, gpu, uses);
+        self.open = held;
+        let room = machine
+            .allowance
+            .saturating_sub(held.saturating_add(making));
+        let budget = match self.cap {
+            Budget::Bytes(most) => Budget::Bytes(most.min(room)),
+            Budget::One => Budget::One,
+        };
+        if budget == self.budget {
+            return 0;
+        }
+        self.budget = budget;
+        let gone = self.fit();
+        tracing::info!(
+            "the shelf of frames left: {} beside a {:.1} MP frame {}{}",
+            self.said(),
+            pixels as f64 / 1e6,
+            gpu.said(),
+            if gone > 0 {
+                format!(", {gone} let go")
+            } else {
+                String::new()
+            }
+        );
+        gone
+    }
+
+    /// Room on the machine for a base of `bytes` of the file `file`,
+    /// made at a cost of `making`, beside the open frame (as the last
+    /// sizing counted it) and the shelf. Where there is not, the bases
+    /// a put and a fit would let go anyway are let go now, before the
+    /// making, the least recently left first, unless the next to go is
+    /// a base of a file in `keep` other than `file`'s. How many went,
+    /// or the bytes needed and the room there was. A shelf with no
+    /// machine always has room.
+    pub(super) fn room_to_make(
+        &mut self,
+        file: &FileKey,
+        (bytes, making): (u64, u64),
+        keep: &[PathBuf],
+    ) -> Result<usize, Short> {
+        let Some(machine) = self.machine else {
+            return Ok(0);
+        };
+        let need = bytes.saturating_add(making);
+        let open = self.open;
+        let room = |on: u64| machine.allowance.saturating_sub(open.saturating_add(on));
+        let mut on = self.bytes();
+        let short = Short {
+            need,
+            room: room(on),
+        };
+        let mut going = 0;
+        for s in self.held.iter().rev() {
+            if need <= room(on) {
+                break;
+            }
+            if s.file.path != file.path && keep.contains(&s.file.path) {
+                return Err(short);
+            }
+            on -= s.bytes;
+            going += 1;
+        }
+        if need > room(on) {
+            return Err(short);
+        }
+        self.held.truncate(self.held.len() - going);
+        Ok(going)
     }
 
     /// The bases on the shelf.
@@ -1349,5 +1478,204 @@ mod tests {
         assert_eq!(of(None), Budget::Bytes(4 * G));
         assert_eq!(Budget::from_setting(None, None), Budget::One);
         assert_eq!(Budget::from_setting(Some("lots"), None), Budget::One);
+    }
+
+    const G: u64 = 1 << 30;
+
+    /// The bases of a frame of `pixels` a shelf on a machine of `ram`
+    /// keeps beside it, its develop where `gpu` says under an edit that
+    /// `uses` so much; and, before this sizing, under the session's
+    /// budget alone.
+    fn kept(ram: u64, pixels: u64, gpu: Gpu, uses: Uses) -> (u64, u64) {
+        let base = pixels * 12;
+        let today = Shelf::new(Budget::of(ram)).room_for(base);
+        let mut shelf = Shelf::on(Budget::of(ram), Machine::of(ram));
+        shelf.size_for(pixels, gpu, uses);
+        (shelf.room_for(base), today)
+    }
+
+    /// A frame that leaves the machine room keeps as many bases as the
+    /// session's budget alone kept, on every kind of GPU: 24 MP on
+    /// 16 GB, 45 MP on 32 GB, 102 MP on 64 GB beside a 16 GB card, and
+    /// smaller frames on larger machines. 102 MP on the owner's 24 GB
+    /// of unified memory keeps three under the default edit, and one
+    /// with Clarity and Dehaze on; smaller unified machines keep fewer
+    /// for large frames. The peak assertion is a guard over the
+    /// constants, not a measurement: what a prefetch beside a full shelf
+    /// holds by the account (what the editor holds besides its pictures,
+    /// the open frame, the making, and as many bases as the shelf keeps,
+    /// one of them the new one, the oldest let go first).
+    #[test]
+    fn the_budget_per_machine_and_frame() {
+        const MP_24: u64 = 6000 * 4000;
+        const MP_45: u64 = 8192 * 5464;
+        const MP_61: u64 = 9504 * 6336;
+        const MP_102: u64 = 8736 * 11648;
+        let all = [Gpu::Unified, Gpu::Discrete, Gpu::None];
+        let roomy = [
+            (16 * G, MP_24, all.as_slice()),
+            (32 * G, MP_24, &all),
+            (32 * G, MP_45, &all),
+            (64 * G, MP_45, &all),
+            (64 * G, MP_102, &[Gpu::Discrete, Gpu::None]),
+            (128 * G, MP_102, &all),
+        ];
+        for (ram, pixels, gpus) in roomy {
+            for &gpu in gpus {
+                let (now, today) = kept(ram, pixels, gpu, Uses::NONE);
+                assert_eq!(now, today, "{} GiB, {pixels} px, {gpu:?}", ram / G);
+                assert!(today > 0);
+            }
+        }
+        let detail = Uses {
+            local_contrast: true,
+            dehaze: true,
+            ..Uses::NONE
+        };
+        // The owner's case: 102 MP on a 24 GB Mac.
+        assert_eq!(kept(24 * G, MP_102, Gpu::Unified, Uses::NONE), (3, 3));
+        assert_eq!(kept(24 * G, MP_102, Gpu::Unified, detail), (1, 3));
+        assert_eq!(kept(24 * G, MP_102, Gpu::Discrete, detail), (3, 3));
+        // On the CPU the Detail section keeps nothing more in memory
+        // ([`the_cpu_keeps_no_more_for_the_detail_section`]).
+        assert_eq!(
+            kept(24 * G, MP_102, Gpu::None, detail),
+            kept(24 * G, MP_102, Gpu::None, Uses::NONE)
+        );
+        // Smaller machines on unified memory.
+        assert_eq!(kept(16 * G, MP_102, Gpu::Unified, Uses::NONE), (0, 2));
+        assert_eq!(kept(16 * G, MP_61, Gpu::Unified, Uses::NONE), (4, 4));
+        assert_eq!(kept(16 * G, MP_61, Gpu::Unified, detail), (1, 4));
+        assert_eq!(kept(8 * G, MP_24, Gpu::Unified, Uses::NONE), (3, 3));
+        assert_eq!(kept(8 * G, MP_45, Gpu::Unified, Uses::NONE), (0, 1));
+        let (held, room) = COST.charged(MP_102, Gpu::Unified, Uses::NONE);
+        let peak = crate::memory::BESIDE + held + room + 3 * MP_102 * 12;
+        assert!(peak <= 16 * G, "{:.1} GiB", peak as f64 / G as f64);
+        // A machine whose memory is not known keeps one; a shelf with no
+        // machine keeps its budget whatever the frame.
+        let mut one = Shelf::new(Budget::One);
+        assert_eq!(one.size_for(MP_102, Gpu::Unified, Uses::NONE), 0);
+        assert_eq!(one.room_for(MP_102 * 12), 1);
+        let mut set = Shelf::new(Budget::Bytes(4 * G));
+        set.size_for(MP_102, Gpu::Unified, Uses::NONE);
+        assert_eq!(set.room_for(MP_102 * 12), 3);
+    }
+
+    /// On the CPU the window keeps the base and its developed picture,
+    /// three floats a pixel each ([`super::base::window_steps`] keeps no
+    /// picture before the sharpen without a device): what `COST`'s CPU
+    /// figure counts, the developed picture its own under the default
+    /// sharpen. Clarity and Dehaze make it its own as well, with the
+    /// sharpen off or on, and keep nothing more.
+    #[test]
+    fn the_cpu_keeps_no_more_for_the_detail_section() {
+        let frame = Arc::new(super::super::tests::aberrated_frame(200, 150));
+        let px = 200 * 150;
+        let kept = |clarity: f32, dehaze: f32, sharpen: bool| {
+            let mut e = Edit::default();
+            e.detail.clarity = clarity;
+            e.detail.dehaze = dehaze;
+            e.sharpen.enabled = sharpen;
+            FrameKept::walked(&frame, &e, 0).kept.bytes()
+        };
+        let two = 2 * 12 * px;
+        assert_eq!(kept(0.0, 0.0, true), two, "the default edit");
+        for sharpen in [true, false] {
+            assert_eq!(kept(0.3, 0.0, sharpen), two, "Clarity");
+            assert_eq!(kept(0.0, 0.3, sharpen), two, "Dehaze");
+            assert_eq!(kept(0.3, 0.3, sharpen), two, "both");
+        }
+        assert_eq!(kept(0.0, 0.0, false), 12 * px, "the base alone");
+    }
+
+    /// The budget shrunk below what the shelf holds lets the least
+    /// recently left go first; grown again, nothing comes back, and
+    /// the next frame left is kept.
+    #[test]
+    fn a_budget_shrunk_at_an_open_lets_the_oldest_go() {
+        let edit = Edit::default();
+        // A base as the shelf holds it, its working copies let go.
+        let mut measure = Shelf::new(Budget::Bytes(G));
+        measure.put(file("m"), base(&edit, 0, 32, 24), false);
+        let one = measure.bytes();
+        let small = 32 * 24;
+        let (held, making) = COST.charged(small, Gpu::None, Uses::NONE);
+        let machine = Machine {
+            allowance: held + making + 3 * one,
+        };
+        let mut shelf = Shelf::on(Budget::Bytes(G), machine);
+        assert_eq!(shelf.size_for(small, Gpu::None, Uses::NONE), 0);
+        for name in ["a", "b", "c"] {
+            shelf.put(file(name), base(&edit, 0, 32, 24), false);
+        }
+        assert_eq!(shelf.fit(), 0);
+        // A frame the more by two bases' worth of cost.
+        let larger = small + 2 * one / (COST.held_cpu + COST.making_cpu);
+        assert_eq!(shelf.size_for(larger, Gpu::None, Uses::NONE), 2);
+        let order: Vec<_> = shelf.held.iter().map(|s| s.file.path.clone()).collect();
+        assert_eq!(order, [PathBuf::from("c")]);
+        assert_eq!(shelf.size_for(small, Gpu::None, Uses::NONE), 0);
+        assert_eq!(shelf.len(), 1);
+        shelf.put(file("d"), base(&edit, 0, 32, 24), false);
+        assert_eq!(shelf.fit(), 0);
+        assert_eq!(shelf.len(), 2);
+    }
+
+    /// A base to be made asks the machine first: it is made where the
+    /// open frame, the shelf, the base, and its making fit; where they
+    /// do not, the bases a put would let go anyway go first, the least
+    /// recently left first, but never one of a file kept; and where
+    /// even that leaves too little, it is not made. A shelf with no
+    /// machine always has room.
+    #[test]
+    fn a_base_to_be_made_asks_for_room_first() {
+        let edit = Edit::default();
+        let one = base(&edit, 0, 32, 24).bytes();
+        let open = 100_000;
+        let (held, _) = COST.charged(open, Gpu::Unified, Uses::NONE);
+        let machine = Machine {
+            allowance: held + 4 * one,
+        };
+        let mut shelf = Shelf::on(Budget::Bytes(G), machine);
+        shelf.size_for(open, Gpu::Unified, Uses::NONE);
+        shelf.budget = Budget::Bytes(G);
+        let keep = |names: &[&str]| names.iter().map(PathBuf::from).collect::<Vec<_>>();
+        // Room for four: one and its making of two fit beside nothing.
+        assert_eq!(shelf.room_to_make(&file("n"), (one, 2 * one), &[]), Ok(0));
+        shelf.put(file("a"), base(&edit, 0, 32, 24), false);
+        shelf.put(file("b"), base(&edit, 0, 32, 24), false);
+        // Beside two, a let go first.
+        assert_eq!(
+            shelf.room_to_make(&file("n"), (one, 2 * one), &keep(&["a"])),
+            Err(Short {
+                need: 3 * one,
+                room: 2 * one
+            }),
+            "a is kept"
+        );
+        assert_eq!(shelf.len(), 2);
+        assert_eq!(
+            shelf.room_to_make(&file("n"), (one, 2 * one), &keep(&["b"])),
+            Ok(1)
+        );
+        let order: Vec<_> = shelf.held.iter().map(|s| s.file.path.clone()).collect();
+        assert_eq!(order, [PathBuf::from("b")]);
+        // A file's own base going is no loss to it.
+        assert_eq!(
+            shelf.room_to_make(&file("b"), (one, 3 * one), &keep(&["b"])),
+            Ok(1)
+        );
+        // More than the whole room is not made, and lets nothing go.
+        shelf.put(file("c"), base(&edit, 0, 32, 24), false);
+        assert_eq!(
+            shelf.room_to_make(&file("n"), (one, 4 * one), &[]),
+            Err(Short {
+                need: 5 * one,
+                room: 3 * one
+            })
+        );
+        assert_eq!(shelf.len(), 1);
+        let mut roomy = Shelf::new(Budget::Bytes(G));
+        assert_eq!(roomy.room_to_make(&file("n"), (G, G), &[]), Ok(0));
     }
 }

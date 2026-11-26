@@ -766,3 +766,4 @@ in its section; the roadmap and the changelog only point at it.
 - [§752. Grain in a mask](notes/752-grain-in-a-mask.md) (2026-11-26)
 - [§753. The settle, out of the window's way](notes/753-the-settle-out-of-the-windows-way.md) (2026-11-26)
 - [§754. Archive copies over a slow link](notes/754-archive-copies-over-a-slow-link.md) (2026-11-26)
+- [§755. The shelf, sized to the machine and the frame](notes/755-the-shelf-sized-to-the-machine-and-the-frame.md) (2026-11-26)
