@@ -14,7 +14,7 @@
 //! Linux, Core Text on the Mac, DirectWrite on Windows) and rasterized
 //! with ab_glyph; both were in the tree before this.
 
-use crate::export::Space;
+use crate::export::{Space, is_neutral};
 use ab_glyph::{Font, FontRef, ScaleFont};
 use anyhow::{Context, Result, bail};
 use greycard_core::RgbSpace;
@@ -169,8 +169,21 @@ impl Mark {
         }
     }
 
-    /// Lay the mark over a finished picture, interleaved RGB whose
-    /// channels run 0 to `max`.
+    /// Whether the mark puts color of its own on a picture. A PNG that
+    /// does not open has none; drawing it says why.
+    pub fn in_color(&self) -> bool {
+        let Kind::Image { path } = &self.kind else {
+            return false;
+        };
+        image::open(path).is_ok_and(|p| {
+            p.into_rgba32f()
+                .pixels()
+                .any(|p| p.0[3] > 0.0 && !is_neutral([p.0[0], p.0[1], p.0[2]]))
+        })
+    }
+
+    /// Lay the mark over a finished picture, interleaved RGB or one
+    /// channel, whose channels run 0 to `max`.
     pub fn apply<T: Channel>(
         &self,
         pixels: &mut [T],
@@ -287,6 +300,8 @@ pub fn composite<T: Channel>(
         return;
     }
     let (w, h) = (width as i64, height as i64);
+    // Three, or the one of a grey picture, whose mark is neutral.
+    let channels = pixels.len() / (width as usize * height as usize).max(1);
     for my in 0..raster.height as i64 {
         let y = at.1 + my;
         if !(0..h).contains(&y) {
@@ -302,8 +317,8 @@ pub fn composite<T: Channel>(
             if a <= 0.0 {
                 continue;
             }
-            let p = ((y * w + x) * 3) as usize;
-            for c in 0..3 {
+            let p = (y * w + x) as usize * channels;
+            for c in 0..channels {
                 let under = pixels[p + c].to_f32();
                 let mark = raster.rgba[m + c] * opacity * T::MAX;
                 pixels[p + c] = T::from_f32(under * (1.0 - a) + mark);
@@ -319,7 +334,7 @@ pub fn composite<T: Channel>(
 fn picture_mark(picture: &image::Rgba32FImage, target: u32, space: Space) -> Raster {
     let convert = (space != Space::Srgb).then(|| {
         RgbSpace::SRGB
-            .to_space_matrix(&space_rgb(space), CAT)
+            .to_space_matrix(&space.rgb(), CAT)
             .expect("sRGB reaches every output space")
             .rows
             .map(|row| row.map(|v| v as f32))
@@ -362,15 +377,6 @@ fn picture_mark(picture: &image::Rgba32FImage, target: u32, space: Space) -> Ras
         width: target,
         height,
         rgba,
-    }
-}
-
-fn space_rgb(space: Space) -> RgbSpace {
-    match space {
-        Space::Srgb => RgbSpace::SRGB,
-        Space::DisplayP3 => RgbSpace::DISPLAY_P3,
-        Space::Rec2020 => RgbSpace::REC2020,
-        Space::AdobeRgb => RgbSpace::ADOBE_RGB,
     }
 }
 

@@ -2199,14 +2199,14 @@ fn the_sheets_fields_and_sliders_hand_enter_back_to_the_sheet() {
     assert_eq!(*exports.borrow(), 2);
 
     // Tab and Space keep their places: from the slider, Tab past
-    // the size, sharpening and color space choices to the toggle,
-    // Space flips it, and Tab goes on past the metadata choice to
-    // Subfolder.
+    // the size, sharpening and both rows of color space choices to
+    // the toggle, Space flips it, and Tab goes on past the metadata
+    // choice to Subfolder.
     app.set_export_open(true);
     let embed = app.get_export_embed();
     let (p, s) = quality();
     click(&app, p.x + 90.0, p.y + s.height / 2.0);
-    for _ in 0..4 {
+    for _ in 0..5 {
         press(&app, Key::Tab);
     }
     press(&app, " ");

@@ -1082,6 +1082,17 @@ export component SettingsSheet inherits Rectangle {
                                 space-row := Segmented {
                                     name: color-words.text;
                                     options: ["sRGB", "Display P3", "Rec.2020", "Adobe RGB"];
+                                    enters: true;
+                                    current <=> root.export-space;
+                                }
+                            }
+                            HorizontalLayout {
+                                spacing: Theme.space-2;
+                                Rectangle { width: 68px; }
+                                grey-row := Segmented {
+                                    name: color-words.text;
+                                    options: ["Gray Gamma 2.2", "Dot Gain 20%"];
+                                    enters: true;
                                     current <=> root.export-space;
                                 }
                             }

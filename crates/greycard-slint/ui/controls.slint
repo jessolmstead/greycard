@@ -2416,6 +2416,10 @@ export component Segmented inherits Rectangle {
     /// never gives it the keys, so the window's arrows stay the
     /// window's after one.
     in property <bool> tab-stop: true;
+    /// Whether the right arrow takes the first option when none is
+    /// current: for one of two rows over one choice, which the keys
+    /// could not reach otherwise.
+    in property <bool> enters: false;
     /// The row's name to a screen reader: the words beside it, bound
     /// to that `Text`'s own, or a word of its own for a row with none.
     /// Every row has one: a screen reader would say its options with
@@ -2495,7 +2499,7 @@ export component Segmented inherits Rectangle {
                 // Turned off with the keys still here (a run started),
                 // or no option known to move from: taken, and nothing
                 // moved.
-                if (root.enabled && root.at >= 0) {
+                if (root.enabled && (root.at >= 0 || root.enters)) {
                     let to = root.next(root.at, e.text == Key.RightArrow ? 1 : -1);
                     if (to != root.at) { root.pick(to); }
                 }

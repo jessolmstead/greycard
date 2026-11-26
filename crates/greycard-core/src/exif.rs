@@ -448,14 +448,38 @@ pub fn write_rgb16_tiff_tagged<W: Write + Seek>(
     icc: Option<&[u8]>,
     tags: Tags<'_>,
 ) -> Result<()> {
-    const CHANNELS: usize = 3;
+    write_16_tiff(out, (width, height), 3, data, icc, tags)
+}
+
+/// [`write_rgb16_tiff_tagged`] of one channel, black at 0.
+pub fn write_grey16_tiff_tagged<W: Write + Seek>(
+    out: W,
+    width: u32,
+    height: u32,
+    data: &[u16],
+    icc: Option<&[u8]>,
+    tags: Tags<'_>,
+) -> Result<()> {
+    write_16_tiff(out, (width, height), 1, data, icc, tags)
+}
+
+/// A 16-bit TIFF of three channels, RGB, or of one.
+fn write_16_tiff<W: Write + Seek>(
+    out: W,
+    (width, height): (u32, u32),
+    channels: usize,
+    data: &[u16],
+    icc: Option<&[u8]>,
+    tags: Tags<'_>,
+) -> Result<()> {
     let (w, h) = (width as usize, height as usize);
-    if data.len() != w * h * CHANNELS {
+    if data.len() != w * h * channels {
         return Err(Error::Encode(format!(
-            "{}x{} RGB16 wants {} samples, got {}",
+            "{}x{} {} wants {} samples, got {}",
             width,
             height,
-            w * h * CHANNELS,
+            if channels == 1 { "grey16" } else { "RGB16" },
+            w * h * channels,
             data.len()
         )));
     }
@@ -466,20 +490,23 @@ pub fn write_rgb16_tiff_tagged<W: Write + Seek>(
     let mut root = DirectoryWriter::new();
     let mut exif = DirectoryWriter::new();
 
-    let differenced = horizontal_differences(data, w * CHANNELS, CHANNELS);
+    let differenced = horizontal_differences(data, w * channels, channels);
     let (rows_per_strip, strips) = tiff
-        .write_strips_lzw(&differenced, CHANNELS, Dim2 { w, h }, 0)
+        .write_strips_lzw(&differenced, channels, Dim2 { w, h }, 0)
         .map_err(encode)?;
     let offsets: Vec<u32> = strips.iter().map(|s| s.0).collect();
     let counts: Vec<u32> = strips.iter().map(|s| s.1).collect();
     root.add_tag(TiffCommonTag::ImageWidth, width);
     root.add_tag(TiffCommonTag::ImageLength, height);
-    root.add_tag(TiffCommonTag::BitsPerSample, [16u16; CHANNELS].as_slice());
-    // 5 is LZW; 2 is RGB.
+    root.add_tag(TiffCommonTag::BitsPerSample, &[16u16; 3][..channels]);
+    // 5 is LZW; 2 is RGB, and 1 grey with black at 0.
     root.add_tag(TiffCommonTag::Compression, 5u16);
-    root.add_tag(TiffCommonTag::PhotometricInt, 2u16);
+    root.add_tag(
+        TiffCommonTag::PhotometricInt,
+        if channels == 1 { 1u16 } else { 2 },
+    );
     root.add_tag(TiffCommonTag::StripOffsets, &offsets);
-    root.add_tag(TiffCommonTag::SamplesPerPixel, CHANNELS as u16);
+    root.add_tag(TiffCommonTag::SamplesPerPixel, channels as u16);
     root.add_tag(TiffCommonTag::RowsPerStrip, rows_per_strip);
     root.add_tag(TiffCommonTag::StripByteCounts, &counts);
     root.add_tag(ExifTag::PlanarConfiguration, 1u16);
@@ -1054,6 +1081,53 @@ mod tests {
         assert!(root.get_entry(TiffCommonTag::StripOffsets).unwrap().count() > 1);
         // The wrong number of samples is refused.
         assert!(write_rgb16_tiff(Cursor::new(Vec::new()), w, h, &data[1..], None, None).is_err());
+    }
+
+    /// A grey TIFF is one channel, read back sample for sample with its
+    /// profile and its tags.
+    #[test]
+    fn a_grey_tiff_is_one_channel() {
+        let (w, h) = (37u32, 300u32);
+        let data: Vec<u16> = (0..w * h)
+            .map(|i| (i.wrapping_mul(2654435761) >> 8) as u16)
+            .collect();
+        let m = metadata();
+        let icc = b"not really a profile".to_vec();
+        let mut file = Cursor::new(Vec::new());
+        let provenance = Provenance {
+            metadata: &m,
+            software: "greycard test",
+            width: w,
+            height: h,
+            srgb: false,
+            written: None,
+            source_name: Some("a.dng"),
+            output: None,
+            edit: None,
+            rights: &NO_RIGHTS,
+        };
+        let tags = Tags::Provenance(&provenance);
+        write_grey16_tiff_tagged(&mut file, w, h, &data, Some(&icc), tags).unwrap();
+        let bytes = file.into_inner();
+        match image::load_from_memory(&bytes).unwrap() {
+            image::DynamicImage::ImageLuma16(back) => {
+                assert_eq!((back.width(), back.height()), (w, h));
+                assert_eq!(back.as_raw(), &data);
+            }
+            other => panic!("{:?}", other.color()),
+        }
+        let (root, exif) = read(&bytes);
+        let bits = root.get_entry(TiffCommonTag::BitsPerSample).unwrap();
+        assert_eq!((bits.count(), bits.force_u16(0)), (1, 16));
+        let kind = root.get_entry(TiffCommonTag::PhotometricInt).unwrap();
+        assert_eq!(kind.force_u16(0), 1);
+        match &root.get_entry(ExifTag::IccProfile).unwrap().value {
+            Value::Undefined(v) => assert_eq!(v, &icc),
+            other => panic!("{other:?}"),
+        }
+        assert!(text(&exif, ExifTag::LensModel).is_some());
+        let short = Cursor::new(Vec::new());
+        assert!(write_grey16_tiff_tagged(short, w, h, &data[1..], None, Tags::Nothing).is_err());
     }
 
     #[test]

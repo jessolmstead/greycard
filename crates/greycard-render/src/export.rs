@@ -4,7 +4,7 @@
 
 use crate::border::Border;
 use crate::finish;
-use crate::watermark::Mark;
+use crate::watermark::{Channel, Mark};
 use anyhow::{Context, Result, bail};
 use greycard_core::RgbSpace;
 use greycard_core::color::{CAT, WORKING_SPACE};
@@ -14,6 +14,7 @@ pub use greycard_core::exif::Rights;
 use greycard_core::exif::{self, Provenance, Tags};
 use greycard_core::image::WorkingImage;
 use greycard_edit::brush::Raster;
+use rayon::prelude::*;
 use std::path::Path;
 
 /// What an export does when a file of that name is already there,
@@ -92,15 +93,22 @@ pub const ADOBE_RGB_GAMMA: f64 = 563.0 / 256.0;
 /// The output's primaries and transfer function. sRGB, Display P3 and
 /// Rec.2020 take the sRGB curve; Adobe RGB takes its own gamma. The
 /// embedded profile says which.
+///
+/// The grey spaces ([`Space::GREY`]) are one channel under a curve of
+/// their own, for a picture with no color; one in color takes sRGB in
+/// their place ([`Space::in_color`]).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Space {
     Srgb,
     DisplayP3,
     Rec2020,
     AdobeRgb,
+    GreyGamma22,
+    DotGain20,
 }
 
 impl Space {
+    /// The color spaces.
     pub const ALL: [Space; 4] = [
         Space::Srgb,
         Space::DisplayP3,
@@ -114,19 +122,38 @@ impl Space {
             Space::DisplayP3 => "Display P3",
             Space::Rec2020 => "Rec.2020",
             Space::AdobeRgb => "Adobe RGB",
+            Space::GreyGamma22 => "Gray Gamma 2.2",
+            Space::DotGain20 => "Dot Gain 20%",
         }
     }
 
     pub fn from_name(name: &str) -> Option<Self> {
-        Self::ALL.into_iter().find(|s| s.name() == name)
+        Self::ALL
+            .into_iter()
+            .chain(Self::GREY)
+            .find(|s| s.name() == name)
     }
 
-    fn rgb(self) -> RgbSpace {
+    pub const GREY: [Space; 2] = [Space::GreyGamma22, Space::DotGain20];
+
+    pub fn is_grey(self) -> bool {
+        Self::GREY.contains(&self)
+    }
+
+    /// The space of a picture in color: sRGB for a grey one.
+    pub fn in_color(self) -> Space {
+        if self.is_grey() { Space::Srgb } else { self }
+    }
+
+    /// The primaries; sRGB's for a grey space, whose picture is finished
+    /// as sRGB's is.
+    pub(crate) fn rgb(self) -> RgbSpace {
         match self {
             Space::Srgb => RgbSpace::SRGB,
             Space::DisplayP3 => RgbSpace::DISPLAY_P3,
             Space::Rec2020 => RgbSpace::REC2020,
             Space::AdobeRgb => RgbSpace::ADOBE_RGB,
+            Space::GreyGamma22 | Space::DotGain20 => RgbSpace::SRGB,
         }
     }
 
@@ -134,7 +161,8 @@ impl Space {
     /// `None` for the spaces under the sRGB curve.
     fn gamma(self) -> Option<f64> {
         match self {
-            Space::AdobeRgb => Some(ADOBE_RGB_GAMMA),
+            // 2.2 as a profile's single gamma entry holds it, in 256ths.
+            Space::AdobeRgb | Space::GreyGamma22 => Some(ADOBE_RGB_GAMMA),
             _ => None,
         }
     }
@@ -145,6 +173,9 @@ impl Space {
     /// the spaces under it keep the value as it is, so their files are
     /// what they were.
     pub fn recode(self, v: f32) -> f32 {
+        if self == Space::DotGain20 {
+            return dot_gain_encode(crate::finish::decode(v));
+        }
         match self.gamma() {
             None => v,
             Some(g) => crate::finish::decode(v).max(0.0).powf((1.0 / g) as f32),
@@ -180,21 +211,20 @@ impl Space {
     /// curve too, and the table reading the finish's values through it
     /// shows the colors the file's own values (`recode`) hold.
     pub fn finish_icc(self) -> Result<Vec<u8>> {
-        self.cached_icc(true)
+        self.in_color().cached_icc(true)
     }
 
     fn cached_icc(self, finish: bool) -> Result<Vec<u8>> {
-        static BUILT: [std::sync::OnceLock<Vec<u8>>; 8] = [const { std::sync::OnceLock::new() }; 8];
-        let at = Space::ALL
-            .iter()
-            .position(|s| *s == self)
-            .expect("every space");
-        let slot = &BUILT[at * 2 + usize::from(finish)];
+        static BUILT: [std::sync::OnceLock<Vec<u8>>; 12] =
+            [const { std::sync::OnceLock::new() }; 12];
+        let slot = &BUILT[self as usize * 2 + usize::from(finish)];
         if let Some(bytes) = slot.get() {
             return Ok(bytes.clone());
         }
         let bytes = if finish {
             self.build_finish_icc()?
+        } else if self.is_grey() {
+            self.build_grey_icc()?
         } else {
             self.build_icc()?
         };
@@ -336,6 +366,83 @@ impl Space {
             .icc()
             .map_err(|e| anyhow::anyhow!("writing the {} profile: {e}", self.name()))
     }
+
+    /// A grey space's profile: version 2, as [`Space::build_icc`]'s is,
+    /// one curve and no colorants.
+    fn build_grey_icc(self) -> Result<Vec<u8>> {
+        use lcms2::{
+            CIEXYZ, ColorSpaceSignature, Locale, MLU, Profile, ProfileClassSignature, Tag,
+            TagSignature, ToneCurve,
+        };
+        let (curve, class) = match self.gamma() {
+            Some(g) => (
+                ToneCurve::new_parametric(1, &[g])
+                    .map_err(|e| anyhow::anyhow!("the {} curve: {e}", self.name()))?,
+                ProfileClassSignature::DisplayClass,
+            ),
+            // Ink on paper: a printer's.
+            None => {
+                let table: Vec<u16> = (0..1024)
+                    .map(|i| (dot_gain_decode(i as f64 / 1023.0) * 65535.0).round() as u16)
+                    .collect();
+                (
+                    ToneCurve::new_tabulated(&table),
+                    ProfileClassSignature::OutputClass,
+                )
+            }
+        };
+        let mut profile = Profile::new_placeholder();
+        profile.set_version(2.1);
+        profile.set_device_class(class);
+        profile.set_color_space(ColorSpaceSignature::GrayData);
+        profile.set_pcs(ColorSpaceSignature::XYZData);
+        let mut description = MLU::new(1);
+        description.set_text_ascii(self.name(), Locale::none());
+        let mut copyright = MLU::new(1);
+        copyright.set_text_ascii("No copyright, use freely", Locale::none());
+        // No primaries to have a white: the connection space's.
+        let d50 = CIEXYZ {
+            X: 0.9642,
+            Y: 1.0,
+            Z: 0.8249,
+        };
+        let written = [
+            profile.write_tag(TagSignature::ProfileDescriptionTag, Tag::MLU(&description)),
+            profile.write_tag(TagSignature::CopyrightTag, Tag::MLU(&copyright)),
+            profile.write_tag(TagSignature::MediaWhitePointTag, Tag::CIEXYZ(&d50)),
+            profile.write_tag(TagSignature::GrayTRCTag, Tag::ToneCurve(&curve)),
+        ];
+        anyhow::ensure!(
+            written.iter().all(|w| *w),
+            "writing the {} profile's tags",
+            self.name()
+        );
+        profile
+            .icc()
+            .map_err(|e| anyhow::anyhow!("writing the {} profile: {e}", self.name()))
+    }
+}
+
+/// The light a Dot Gain 20% value prints: an ink dot of `a` prints as
+/// `a + 0.8 a (1 - a)`, 20% more at half, and the paper is the rest.
+fn dot_gain_decode(v: f64) -> f64 {
+    let a = 1.0 - v;
+    1.0 - (a + 0.8 * a * (1.0 - a))
+}
+
+/// [`dot_gain_decode`] solved for the value.
+fn dot_gain_encode(light: f32) -> f32 {
+    let light = light.clamp(0.0, 1.0);
+    1.0 - (1.8 - (3.24 - 3.2 * (1.0 - light)).max(0.0).sqrt()) / 1.6
+}
+
+/// How far apart a pixel's channels may be, encoded, and the pixel be
+/// neutral: past what the finish rounds off (`grey_tests` measures it), and a
+/// sixteenth of an 8-bit level.
+const NEUTRAL: f32 = 1.0 / 4096.0;
+
+pub(crate) fn is_neutral([r, g, b]: [f32; 3]) -> bool {
+    r.max(g).max(b) - r.min(g).min(b) <= NEUTRAL
 }
 
 /// Output sharpening: how much a downsized export is sharpened after
@@ -510,11 +617,55 @@ pub enum Pixels {
     Sixteen(Vec<u16>),
 }
 
-/// A finished picture, interleaved RGB.
+/// A finished picture, interleaved RGB, or one channel in a grey space.
 pub struct Rendered {
     pub width: u32,
     pub height: u32,
     pub pixels: Pixels,
+}
+
+impl Rendered {
+    /// Whether it is one channel.
+    pub fn is_grey(&self) -> bool {
+        let samples = match &self.pixels {
+            Pixels::Eight(p) => p.len(),
+            Pixels::Sixteen(p) => p.len(),
+        };
+        samples == self.width as usize * self.height as usize
+    }
+
+    /// The space it is in, rendered for `settings`: a picture in color
+    /// asked for in a grey one is in sRGB.
+    fn space(&self, settings: &Settings) -> Space {
+        if self.is_grey() {
+            settings.space
+        } else {
+            settings.space.in_color()
+        }
+    }
+}
+
+/// A picture finished for a grey space, `encoded` under the sRGB curve:
+/// one channel in the space when every pixel is neutral; with color
+/// anywhere, the three channels of its sRGB export. Read off the pixels
+/// and not the edit, since the edit cannot say what a look table, a
+/// profile, or the photo itself puts in.
+fn grey_or_color<T: Channel + Send>(encoded: &[f32], space: Space) -> Vec<T> {
+    let pixels = encoded.as_chunks::<3>().0;
+    if pixels.par_iter().all(|p| is_neutral(*p)) {
+        pixels
+            .par_iter()
+            .map(|[r, g, b]| {
+                T::from_f32(space.recode(0.2126 * r + 0.7152 * g + 0.0722 * b) * T::MAX)
+            })
+            .collect()
+    } else {
+        tracing::info!("a picture in color: sRGB in place of {}", space.name());
+        encoded
+            .par_iter()
+            .map(|v| T::from_f32(v * T::MAX))
+            .collect()
+    }
 }
 
 /// The working image, already through the edit's geometry, finished
@@ -740,6 +891,8 @@ pub fn render_framed(
         (stops(x, y), noise)
     };
     let m = settings.space.matrix();
+    let grey = settings.may_be_grey();
+    let space = settings.space.in_color();
     // The look table, read once for the whole image; the viewport is
     // handed the same one (the loader keeps it), so the two agree.
     // A look at no strength is no look, and skipping it here spares
@@ -764,6 +917,26 @@ pub fn render_framed(
         .map(|g| (g, sw));
     let detail = detail.map(|(d, meta)| (detail_fitted.as_ref().unwrap_or(d), meta));
     let pixels = match settings.format {
+        _ if grey => {
+            let encoded = finish::finish_reaching(
+                image,
+                reach,
+                sampled,
+                &global,
+                &locals,
+                position,
+                frame_at,
+                guide,
+                detail,
+                look.as_ref(),
+                &m,
+                |v| v,
+            );
+            match settings.format {
+                Format::Tiff => Pixels::Sixteen(grey_or_color(&encoded, settings.space)),
+                _ => Pixels::Eight(grey_or_color(&encoded, settings.space)),
+            }
+        }
         Format::Tiff => Pixels::Sixteen(finish::finish_reaching(
             image,
             reach,
@@ -776,7 +949,7 @@ pub fn render_framed(
             detail,
             look.as_ref(),
             &m,
-            |v| (settings.space.recode(v) * 65535.0).round() as u16,
+            |v| (space.recode(v) * 65535.0).round() as u16,
         )),
         Format::Jpeg | Format::Png | Format::WebP => Pixels::Eight(finish::finish_reaching(
             image,
@@ -790,7 +963,7 @@ pub fn render_framed(
             detail,
             look.as_ref(),
             &m,
-            |v| (settings.space.recode(v) * 255.0).round() as u8,
+            |v| (space.recode(v) * 255.0).round() as u8,
         )),
     };
     Rendered {
@@ -890,14 +1063,15 @@ pub fn border(rendered: &mut Rendered, settings: &Settings) {
         return;
     };
     let (w, h) = (rendered.width, rendered.height);
+    let space = rendered.space(settings);
     let (width, height) = match &mut rendered.pixels {
         Pixels::Eight(p) => {
-            let (out, ow, oh) = border.apply_in(p, w, h, |l| settings.space.recode(l));
+            let (out, ow, oh) = border.apply_in(p, w, h, |l| space.recode(l));
             *p = out;
             (ow, oh)
         }
         Pixels::Sixteen(p) => {
-            let (out, ow, oh) = border.apply_in(p, w, h, |l| settings.space.recode(l));
+            let (out, ow, oh) = border.apply_in(p, w, h, |l| space.recode(l));
             *p = out;
             (ow, oh)
         }
@@ -914,10 +1088,11 @@ pub fn mark(rendered: &mut Rendered, settings: &Settings) -> Result<()> {
         return Ok(());
     };
     let (w, h) = (rendered.width, rendered.height);
+    let space = rendered.space(settings);
     let start = std::time::Instant::now();
     match &mut rendered.pixels {
-        Pixels::Eight(p) => mark.apply(p, w, h, settings.space)?,
-        Pixels::Sixteen(p) => mark.apply(p, w, h, settings.space)?,
+        Pixels::Eight(p) => mark.apply(p, w, h, space)?,
+        Pixels::Sixteen(p) => mark.apply(p, w, h, space)?,
     }
     tracing::debug!(
         "watermark on {w}x{h} in {:.3} s",
@@ -1080,6 +1255,16 @@ impl Settings {
         }
     }
 
+    /// Whether a picture with no color is written as one channel: a grey
+    /// space, no mark of a color, and not a WebP, which has no such
+    /// form (its lossless pixels are always ARGB, where a grey profile
+    /// means nothing).
+    fn may_be_grey(&self) -> bool {
+        self.space.is_grey()
+            && self.format != Format::WebP
+            && !self.watermark.as_ref().is_some_and(Mark::in_color)
+    }
+
     /// What the sheet asked for, in words, for the export's XMP.
     pub fn describe(&self) -> String {
         let mut s = self.format.name().to_string();
@@ -1129,6 +1314,17 @@ pub fn write(
 ) -> Result<()> {
     use image::codecs::{jpeg::JpegEncoder, png::PngEncoder};
     use image::{ExtendedColorType, ImageEncoder};
+    // The space the pixels are in, which the file's words say too.
+    let settings = &Settings {
+        space: rendered.space(settings),
+        ..settings.clone()
+    };
+    let grey = rendered.is_grey();
+    let eight = if grey {
+        ExtendedColorType::L8
+    } else {
+        ExtendedColorType::Rgb8
+    };
     let icc = if settings.embed_profile {
         Some(settings.space.icc()?)
     } else {
@@ -1184,7 +1380,7 @@ pub fn write(
             if let Some(exif) = payload {
                 enc.set_exif_metadata(exif).context("EXIF in a JPEG")?;
             }
-            enc.write_image(p, w, h, ExtendedColorType::Rgb8)?;
+            enc.write_image(p, w, h, eight)?;
         }
         (Pixels::Eight(p), Format::Png) => {
             let mut enc = PngEncoder::new(&mut bytes);
@@ -1194,17 +1390,21 @@ pub fn write(
             if let Some(exif) = payload {
                 enc.set_exif_metadata(exif).context("EXIF in a PNG")?;
             }
-            enc.write_image(p, w, h, ExtendedColorType::Rgb8)?;
+            enc.write_image(p, w, h, eight)?;
         }
         (Pixels::Sixteen(p), Format::Tiff) => {
             let mut cursor = std::io::Cursor::new(&mut bytes);
-            exif::write_rgb16_tiff_tagged(&mut cursor, w, h, p, icc.as_deref(), tags)
-                .context("writing the TIFF")?;
+            let write = if grey {
+                exif::write_grey16_tiff_tagged
+            } else {
+                exif::write_rgb16_tiff_tagged
+            };
+            write(&mut cursor, w, h, p, icc.as_deref(), tags).context("writing the TIFF")?;
         }
         // image-webp straight, not through the image crate, whose
         // encoder takes no XMP: here the packet goes in as a chunk of
         // its own, with the profile and the EXIF.
-        (Pixels::Eight(p), Format::WebP) => {
+        (Pixels::Eight(p), Format::WebP) if !grey => {
             use image_webp::{ColorType, EncodingError, WebPEncoder};
             // libwebp, which most readers are, takes no side over
             // 16383 px; image-webp writes 16384. Refused as image-webp
@@ -1224,7 +1424,7 @@ pub fn write(
             }
             enc.encode(p, w, h, ColorType::Rgb8)?;
         }
-        _ => bail!("the pixels' depth is not the format's"),
+        _ => bail!("the pixels are not the format's"),
     }
     if !matches!(tags, Tags::Nothing) && matches!(settings.format, Format::Jpeg | Format::Png) {
         bytes = exif::with_packet(bytes, |limit| packet(limit).unwrap_or_default());
@@ -3514,6 +3714,8 @@ mod tests {
     }
 }
 
+#[cfg(test)]
+mod grey_tests;
 #[cfg(test)]
 mod output_sharpen_tests;
 #[cfg(test)]
