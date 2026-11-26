@@ -764,3 +764,4 @@ in its section; the roadmap and the changelog only point at it.
 - [§750. Lambda, a fourth theme](notes/750-lambda-a-fourth-theme.md) (2026-11-26)
 - [§751. Greyscale export](notes/751-greyscale-export.md) (2026-11-26)
 - [§752. Grain in a mask](notes/752-grain-in-a-mask.md) (2026-11-26)
+- [§753. The settle, out of the window's way](notes/753-the-settle-out-of-the-windows-way.md) (2026-11-26)

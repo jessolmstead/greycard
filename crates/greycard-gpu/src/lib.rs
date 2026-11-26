@@ -47,7 +47,7 @@ mod local_contrast;
 mod plumbing;
 mod sharpen;
 
-pub use sharpen::{Batching, SUBMIT_BUDGET};
+pub use sharpen::{BACKGROUND_BUDGET, Batching, SUBMIT_BUDGET, SharpenWatch};
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
@@ -383,8 +383,15 @@ impl Context {
     fn build(device: wgpu::Device, queue: wgpu::Queue, info: wgpu::AdapterInfo) -> Result<Self> {
         let name = info.name;
         let max_dimension = device.limits().max_texture_dimension_2d;
+        // A discrete GPU's memory is its own, so the sharpen's and the
+        // local contrast's planes are kept there between runs; an
+        // integrated or unified-memory GPU (Apple's), a virtual one or
+        // the CPU shares the machine's: the local contrast's planes are
+        // made for a run, and the sharpen's kept only until the picture
+        // rests.
+        let keep = info.device_type == wgpu::DeviceType::DiscreteGpu;
         let sharpen = scoped(&device, "building the sharpen's pipelines", || {
-            Ok(sharpen::Pipelines::new(&device))
+            Ok(sharpen::Pipelines::new(&device, keep))
         })?;
         let ca = scoped(&device, "building the CA correction's pipelines", || {
             Ok(ca::Pipelines::new(&device))
@@ -392,11 +399,6 @@ impl Context {
         let lens = scoped(&device, "building the lens correction's pipeline", || {
             Ok(lens::Pipelines::new(&device))
         })?;
-        // A discrete GPU's memory is its own, so the local contrast's
-        // planes are kept there between runs; an integrated or
-        // unified-memory GPU (Apple's), a virtual one or the CPU
-        // shares the machine's, and the planes are made for a run.
-        let keep = info.device_type == wgpu::DeviceType::DiscreteGpu;
         let local_contrast = scoped(&device, "building the local contrast's pipelines", || {
             Ok(local_contrast::Pipelines::new(&device, keep))
         })?;
@@ -481,7 +483,8 @@ impl Context {
     }
 
     /// Let go of the working textures the ops keep between runs (the
-    /// sharpen's four planes and its atlas, about 900 MB at 45 MP;
+    /// sharpen's four planes and its atlas, about 900 MB at 45 MP, kept
+    /// at rest on a discrete GPU only;
     /// the local contrast's, up to five planes and its grid, about 950
     /// MB, kept on a discrete GPU only; the CA correction keeps
     /// nothing, its 812 MiB at 45 MP being made and dropped within a
@@ -536,6 +539,37 @@ impl Context {
             sharpen: self.sharpen.kept_size(),
             local_contrast: self.local_contrast.kept_size(),
         }
+    }
+
+    /// Whether the sharpen keeps its working set while the picture
+    /// rests: on a discrete GPU by default; else it is kept through an
+    /// interaction (a develop's first round, its settle, and the
+    /// develops that take the settle's place) and let go at rest.
+    pub fn keeps_sharpen_planes(&self) -> bool {
+        self.sharpen.keeps()
+    }
+
+    /// Keep the sharpen's working set at rest or not, against the
+    /// device's default: for the tests and for measuring what each
+    /// costs. Turning it off lets the kept one go.
+    pub fn keep_sharpen_planes(&self, keep: bool) {
+        self.sharpen.set_keeps(keep);
+    }
+
+    /// The picture on screen is the edit's at rest, no settle to come:
+    /// a working set kept only through an interaction (the sharpen's,
+    /// off a discrete GPU, 1.8 GB at 102 MP) is let go, the next
+    /// develop making it again.
+    pub fn at_rest(&self) {
+        if !self.sharpen.keeps() {
+            self.sharpen.release();
+        }
+    }
+
+    /// A hold of the sharpen's working set's bytes and of how many were
+    /// made, for the tests.
+    pub fn sharpen_watch(&self) -> SharpenWatch {
+        self.sharpen.watch()
     }
 
     /// Whether the local contrast keeps its planes between runs: on a

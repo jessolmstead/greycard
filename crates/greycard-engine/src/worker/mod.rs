@@ -28,6 +28,8 @@ mod handle;
 mod highlight_rounds;
 mod keep;
 mod masks;
+#[cfg(test)]
+mod pan_tests;
 mod prefetch;
 #[cfg(test)]
 mod render_gate;

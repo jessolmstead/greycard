@@ -21,6 +21,10 @@ const PANNED: Seen = Seen {
     zoom: 1.0,
 };
 
+/// A develop of this generation or later is held in its delivery as a
+/// settling one is, when the rig holds.
+const HELD_FROM: u64 = 100;
+
 const FIT: Seen = Seen {
     rect: [0.0, 0.0, 1.0, 1.0],
     zoom: 0.25,
@@ -64,6 +68,10 @@ struct Rig {
     a: std::path::PathBuf,
     b: std::path::PathBuf,
     go: Option<std::sync::mpsc::Sender<()>>,
+    /// The worker's context's sharpen working set.
+    watch: greycard_gpu::SharpenWatch,
+    /// Whether that context keeps it at rest (a discrete GPU's).
+    keeps: bool,
 }
 
 impl Rig {
@@ -97,13 +105,21 @@ impl Rig {
                 Outcome::EditedKept { .. } => Said::Kept,
                 _ => return,
             };
-            let settling = matches!(said, Said::Developed { settles: true, .. });
+            // Held in the first settling delivery, or the first of a
+            // generation from `HELD_FROM` on.
+            let settling = matches!(said, Said::Developed { settles: true, .. })
+                || matches!(said, Said::Developed { generation, .. } if generation >= HELD_FROM);
             let _ = tx.lock().unwrap().send(said);
             if settling && let Some(wait) = wait.lock().unwrap().take() {
                 let _ = wait.recv();
             }
         });
-        worker.set_gpu(ctx.device(), ctx.queue());
+        // A context of the worker's own on the test's device, as the
+        // window's is, watched.
+        let own = greycard_gpu::Context::from_device(ctx.device(), ctx.queue()).ok()?;
+        let watch = own.sharpen_watch();
+        let keeps = own.keeps_sharpen_planes();
+        worker.set_context(own);
         worker.set_thumb_cache(Some(
             greycard_library::thumbs::Thumbs::at(
                 dir.join("thumbs"),
@@ -122,6 +138,8 @@ impl Rig {
             a,
             b,
             go: Some(go),
+            watch,
+            keeps,
         };
         rig.worker.send(open(&rig.a, 1));
         // Told once the frame is drawn, as the window tells it: an
@@ -309,52 +327,193 @@ fn a_develop_of_another_file_leaves_the_settle() {
     rig.end();
 }
 
-/// The view panned past what the first round sharpened before the
-/// settle: a first round of the tiles seen now, delivered at once
-/// under the same generation, then the settle. Each first round's
-/// tiles are the whole develop's to the bit; the panned-to tiles were
-/// not in the first.
+/// The view panned past what the first round sharpened, before the
+/// settle starts (while the first round is delivered) or as it runs:
+/// no first round of what is seen now, and the settle never given way
+/// to it, so a pan asks nothing of the queue the window draws on. The
+/// first round's tiles are the whole develop's to the bit, the
+/// panned-to ones not until the settle lands; a view inside the tiles
+/// asks nothing either.
 #[test]
-fn a_pan_before_the_settle_sharpens_what_is_seen_now() {
-    let Some(rig) = Rig::new(Some(CLOSE), "Cam", false) else {
-        skipped("a pan before the settle");
+fn a_pan_puts_the_settle_back_for_nothing() {
+    let moved_inside = Seen {
+        rect: [0.35, 0.35, 0.55, 0.55],
+        zoom: 2.0,
+    };
+    for (before, during) in [
+        (Some(PANNED), None),
+        (None, Some(PANNED)),
+        (Some(PANNED), Some(FIT)),
+        (None, Some(moved_inside)),
+    ] {
+        let Some(mut rig) = Rig::new(Some(CLOSE), "Cam", true) else {
+            skipped("a pan before or during the settle");
+            return;
+        };
+        rig.worker.queue.0.lock().unwrap().seen_on_settle_ask = during;
+        rig.worker.send(develop(&clarity(0.4), 2));
+        let first = rig.next();
+        assert_eq!(first.developed(), Some((2, true, 20)));
+        // The worker is held in the first round's delivery: the view
+        // moves before the settle is picked.
+        if let Some(seen) = before {
+            rig.worker.set_seen(Some(seen));
+        }
+        rig.release();
+        let settled = rig.next();
+        assert_eq!(
+            settled.developed(),
+            Some((2, false, 20)),
+            "{before:?} {during:?}"
+        );
+        rig.quiet();
+        let (first, settled) = (rig.rows(&first), rig.rows(&settled));
+        let (inside, outside) = apart(&first, &settled, &CLOSE);
+        assert!(inside == 0 && outside > 0, "{inside} {outside}");
+        let (inside, _) = apart(&first, &settled, &PANNED);
+        assert!(inside > 0, "the first round left the panned-to tiles");
+        rig.end();
+    }
+}
+
+/// A zoom in past the iterations the first round ran (a Detail move at
+/// a fit view, then 1:1), before the settle starts or as it runs: a
+/// first round of the tiles seen now at every iteration, then the
+/// settle; and no other, the view staying where it is.
+#[test]
+fn a_zoom_in_has_a_first_round_of_its_own() {
+    for (before, during) in [(Some(CLOSE), None), (None, Some(CLOSE))] {
+        let Some(mut rig) = Rig::new(Some(FIT), "Cam", true) else {
+            skipped("a zoom in before or during the settle");
+            return;
+        };
+        rig.worker.queue.0.lock().unwrap().seen_on_settle_ask = during;
+        rig.worker.send(develop(&clarity(0.4), 2));
+        let first = rig.next().developed().unwrap();
+        assert!(first.1 && first.2 < 20, "{first:?}");
+        if let Some(seen) = before {
+            rig.worker.set_seen(Some(seen));
+        }
+        rig.release();
+        let again = rig.next();
+        assert_eq!(
+            again.developed(),
+            Some((2, true, 20)),
+            "{before:?} {during:?}"
+        );
+        let settled = rig.next();
+        assert_eq!(settled.developed(), Some((2, false, 20)));
+        rig.quiet();
+        let (again, settled) = (rig.rows(&again), rig.rows(&settled));
+        let (inside, _) = apart(&again, &settled, &CLOSE);
+        assert_eq!(inside, 0, "the seen tiles are the settle's");
+        rig.end();
+    }
+}
+
+/// Off a discrete GPU (lavapipe is not one) the sharpen's working set
+/// is made when a move needs it and kept through the interaction: its
+/// first round, the settle, and a develop asked as the settle runs,
+/// which reuses it; once the newer develop's settle lands, the picture
+/// at rest, it is let go. On a discrete GPU it stays at rest, the
+/// open's set serving every move.
+#[test]
+fn a_move_and_the_next_share_one_working_set() {
+    let Some(mut rig) = Rig::new(Some(CLOSE), "Cam", true) else {
+        skipped("the working set through an interaction");
         return;
     };
-    rig.worker.queue.0.lock().unwrap().seen_on_settle_ask = Some(PANNED);
+    // The open's develop had no settle: at rest once the worker is
+    // idle again.
+    let rests = if rig.keeps { 1 } else { 0 };
+    let idle = std::time::Instant::now();
+    while (rig.watch.bytes() > 0) != rig.keeps
+        && idle.elapsed() < std::time::Duration::from_secs(30)
+    {
+        std::thread::yield_now();
+    }
+    assert_eq!(rig.watch.bytes().min(1), rests, "at rest after the open");
+    let made = rig.watch.sets_made();
+    rig.worker.queue.0.lock().unwrap().develop_on_fill_ask = Some(develop(&clarity(0.6), 3));
     rig.worker.send(develop(&clarity(0.4), 2));
-    let first = rig.next();
-    let again = rig.next();
-    let settled = rig.next();
-    assert_eq!(first.developed(), Some((2, true, 20)));
-    assert_eq!(again.developed(), Some((2, true, 20)));
-    assert_eq!(settled.developed(), Some((2, false, 20)));
+    assert_eq!(rig.next().developed(), Some((2, true, 20)));
+    // Held in the first round's delivery: the set is kept for the
+    // settle.
+    assert!(rig.watch.bytes() > 0, "kept through the interaction");
+    rig.release();
+    assert_eq!(
+        rig.next().developed(),
+        Some((3, true, 20)),
+        "the settle gave way to the newer develop"
+    );
+    assert_eq!(rig.next().developed(), Some((3, false, 20)));
     rig.quiet();
-    let (first, again, settled) = (rig.rows(&first), rig.rows(&again), rig.rows(&settled));
-    let (inside, outside) = apart(&first, &settled, &CLOSE);
-    assert!(inside == 0 && outside > 0, "{inside} {outside}");
-    let (inside, outside) = apart(&again, &settled, &PANNED);
-    assert!(inside == 0 && outside > 0, "{inside} {outside}");
-    let (inside, _) = apart(&first, &settled, &PANNED);
-    assert!(inside > 0, "the first round left the panned-to tiles");
+    assert_eq!(
+        rig.watch.sets_made(),
+        made + 1 - u32::from(rig.keeps),
+        "one set for the moves"
+    );
+    assert_eq!(rig.watch.bytes().min(1), rests, "let go at rest");
     rig.end();
 }
 
-/// A view that moves within what the first round sharpened asks for
-/// nothing more before the settle.
+/// A zoom in's first round gives way to a newer develop as the settle
+/// does: the newer develop's rounds follow, and the zoom's never lands.
 #[test]
-fn a_view_inside_the_first_rounds_tiles_waits_for_the_settle() {
-    let Some(rig) = Rig::new(Some(CLOSE), "Cam", false) else {
-        skipped("a view inside the first round");
+fn a_zoom_ins_round_gives_way_to_a_newer_develop() {
+    let Some(mut rig) = Rig::new(Some(FIT), "Cam", true) else {
+        skipped("a zoom in's round and a newer develop");
         return;
     };
-    rig.worker.queue.0.lock().unwrap().seen_on_settle_ask = Some(Seen {
-        rect: [0.35, 0.35, 0.55, 0.55],
-        zoom: 2.0,
-    });
+    // Asked as the zoom's round asks its hold first.
+    rig.worker.queue.0.lock().unwrap().develop_on_fill_ask = Some(develop(&clarity(0.6), 3));
     rig.worker.send(develop(&clarity(0.4), 2));
-    assert_eq!(rig.next().developed(), Some((2, true, 20)));
-    assert_eq!(rig.next().developed(), Some((2, false, 20)));
+    let first = rig.next().developed().unwrap();
+    assert!(first.0 == 2 && first.1 && first.2 < 20, "{first:?}");
+    rig.worker.set_seen(Some(CLOSE));
+    rig.release();
+    assert_eq!(
+        rig.next().developed(),
+        Some((3, true, 20)),
+        "the newer's part"
+    );
+    assert_eq!(rig.next().developed(), Some((3, false, 20)));
     rig.quiet();
+    rig.end();
+}
+
+/// A drag of develops with no settle (no view told: every one is the
+/// whole picture's) keeps the sharpen's working set from one to the
+/// next while another is asked behind it, and lets it go off a
+/// discrete GPU once none is.
+#[test]
+fn a_drag_with_no_settle_keeps_one_working_set() {
+    let Some(mut rig) = Rig::new(None, "Cam", true) else {
+        skipped("a drag with no settle");
+        return;
+    };
+    let rests = if rig.keeps { 1 } else { 0 };
+    let idle = std::time::Instant::now();
+    while (rig.watch.bytes() > 0) != rig.keeps
+        && idle.elapsed() < std::time::Duration::from_secs(30)
+    {
+        std::thread::yield_now();
+    }
+    let made = rig.watch.sets_made();
+    rig.worker.send(develop(&clarity(0.4), HELD_FROM));
+    assert_eq!(rig.next().developed(), Some((HELD_FROM, false, 20)));
+    // Held in its delivery: the next step of the drag is asked behind
+    // it, so the set is not let go.
+    rig.worker.send(develop(&clarity(0.5), HELD_FROM + 1));
+    rig.release();
+    assert_eq!(rig.next().developed(), Some((HELD_FROM + 1, false, 20)));
+    rig.quiet();
+    assert_eq!(
+        rig.watch.sets_made(),
+        made + 1 - u32::from(rig.keeps),
+        "one set for the drag"
+    );
+    assert_eq!(rig.watch.bytes().min(1), rests, "let go at rest");
     rig.end();
 }
 

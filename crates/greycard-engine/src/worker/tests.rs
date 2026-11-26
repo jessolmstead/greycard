@@ -1265,6 +1265,7 @@ fn the_detail_section_runs_on_the_gpu_from_the_kept_upload() {
             return;
         };
         ctx.keep_local_contrast_planes(keep);
+        ctx.keep_sharpen_planes(keep);
         detail_section_on_the_gpu(ctx, keep);
     }
 }
@@ -1284,6 +1285,7 @@ fn a_masks_release_keeps_the_open_frames_device_points() {
         return;
     };
     ctx.keep_local_contrast_planes(true);
+    ctx.keep_sharpen_planes(true);
     let frame = Arc::new(aberrated_frame(400, 320));
     let mut gpu = Some(ctx);
     let mut base = None;
@@ -1386,7 +1388,7 @@ fn detail_section_on_the_gpu(ctx: greycard_gpu::Context, keep: bool) {
     // size takes the log, its scratch, and the slope and intercept.
     let plane = u64::from(uploaded.width()) * u64::from(uploaded.height()) * 4;
     let planes = |n: u64| if keep { n * plane } else { 0 };
-    assert!(kept(&gpu).sharpen > 0);
+    assert!(kept(&gpu).sharpen > 0, "the sharpen's set, until at rest");
     assert_eq!(kept(&gpu).local_contrast, planes(4), "Clarity's planes");
     // Another move keeps the upload and remakes the picture
     // before the sharpen from it.

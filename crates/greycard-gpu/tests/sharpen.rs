@@ -10,7 +10,7 @@ use greycard_core::develop::sharpen::{
     self as reference, Radius, SharpenOptions, SharpenStats, Threshold, sharpen_with_mask,
 };
 use greycard_core::image::WorkingImage;
-use greycard_gpu::{Batching, Context};
+use greycard_gpu::{Batching, Context, SUBMIT_BUDGET};
 
 fn context() -> Option<Context> {
     match Context::own() {
@@ -1436,10 +1436,10 @@ fn the_viewports_sharpen_gives_way_when_asked() {
             2.0,
             &out,
             (false, true),
-            &|| {
+            (SUBMIT_BUDGET, &|| {
                 asked.set(asked.get() + 1);
                 asked.get() == 3
-            },
+            }),
         )
         .expect_err("gives way");
     assert!(matches!(err, greycard_gpu::Error::GaveWay), "{err}");
@@ -1458,7 +1458,7 @@ fn the_viewports_sharpen_gives_way_when_asked() {
             2.0,
             &out,
             (true, true),
-            &|| false,
+            (SUBMIT_BUDGET, &|| false),
         )
         .expect("sharpens");
     let fresh = ctx.viewport_texture(w as u32, h as u32);
@@ -1471,6 +1471,172 @@ fn the_viewports_sharpen_gives_way_when_asked() {
     assert_eq!(rows(&out), rows(&fresh));
     ctx.set_sharpen_batching(Batching::Paced);
     ctx.set_sharpen_atlas_budget(96 << 20);
+}
+
+/// A sharpen nobody waits on, under a budget no batch of the atlas
+/// fits: batches of a tile and submissions of an iteration, many more
+/// of them, its whole-picture passes in bands of rows, and the picture,
+/// the delta, and the stats of the default's to the bit;
+/// and what it measured never paces a run under the default.
+#[test]
+fn a_short_budget_splits_the_batches_and_not_the_picture() {
+    let Some(ctx) = context() else {
+        return;
+    };
+    let (w, h) = (160, 120);
+    let image = textured(w, h, 1.2);
+    let uploaded = ctx.upload(&image).expect("uploads");
+    let options = SharpenOptions::default();
+    let run = |budget| {
+        let out = ctx.viewport_texture(w as u32, h as u32);
+        let (stats, delta) = ctx
+            .sharpen_or_give_way(
+                &uploaded,
+                None,
+                &options,
+                Some(1.0),
+                2.0,
+                &out,
+                (true, true),
+                (budget, &|| false),
+            )
+            .expect("sharpens");
+        let rows = ctx.read_viewport_rows(&out, 0, h as u32).expect("reads");
+        (
+            format!("{stats:?} {delta:?}"),
+            rows,
+            ctx.sharpen_submissions(),
+        )
+    };
+    // Twice, so the rate the budget is read at is measured.
+    run(SUBMIT_BUDGET);
+    let (stats, rows, submits) = run(SUBMIT_BUDGET);
+    let pace = ctx.sharpen_pace();
+    assert!(pace.0.is_some(), "a rate measured");
+    let (short_stats, short_rows, short_submits) = run(std::time::Duration::from_nanos(1));
+    // The next run under the default is paced as if the short one never
+    // ran: its batches are the atlas's and its first submission sized
+    // from the default's last.
+    assert_eq!(ctx.sharpen_pace(), pace, "the background's pace not kept");
+    assert_eq!(short_stats, stats);
+    assert!(short_rows == rows, "the picture is the default's");
+    let tile = greycard_core::develop::sharpen::tile_for(h);
+    let tiles = w.div_ceil(tile) * h.div_ceil(tile);
+    assert!(
+        short_submits as usize >= tiles * options.iterations,
+        "{short_submits} submissions under the short budget, {submits} under the default"
+    );
+    assert!(short_submits > submits);
+}
+
+/// Under a short budget the sharpen asks whether to give way between
+/// the bands of its whole-picture passes too, before any iteration: a
+/// yes at the first ask stops it there, and a run never stopped asks
+/// more often than its iterations' submissions alone would.
+#[test]
+fn a_sharpen_gives_way_between_its_bands() {
+    let Some(ctx) = context() else {
+        return;
+    };
+    let (w, h) = (160, 120);
+    let image = textured(w, h, 1.2);
+    let uploaded = ctx.upload(&image).expect("uploads");
+    let options = SharpenOptions::default();
+    let short = std::time::Duration::from_nanos(1);
+    let out = ctx.viewport_texture(w as u32, h as u32);
+    let run = |budget, give_way: &dyn Fn() -> bool| {
+        ctx.sharpen_or_give_way(
+            &uploaded,
+            None,
+            &options,
+            Some(1.0),
+            2.0,
+            &out,
+            (false, true),
+            (budget, give_way),
+        )
+    };
+    // A rate measured, for the bands to be sized from.
+    run(SUBMIT_BUDGET, &|| false).expect("sharpens");
+    let asked = std::cell::Cell::new(0);
+    let err = run(short, &|| {
+        asked.set(asked.get() + 1);
+        true
+    })
+    .expect_err("gives way");
+    assert!(matches!(err, greycard_gpu::Error::GaveWay), "{err}");
+    assert_eq!(asked.get(), 1, "at the first band");
+    assert!(!ctx.is_lost());
+    asked.set(0);
+    run(short, &|| {
+        asked.set(asked.get() + 1);
+        false
+    })
+    .expect("sharpens");
+    let iterations = ctx.sharpen_submissions() as usize;
+    assert!(
+        asked.get() > iterations,
+        "{} asks, {iterations} submissions",
+        asked.get()
+    );
+}
+
+/// Off a discrete GPU the working set is kept through an interaction
+/// and let go at rest: made once for runs in a row, a run that gave way
+/// among them, the picture each time the kept set's to the bit, and
+/// nothing held once the picture rests. On a discrete GPU it stays at
+/// rest too.
+#[test]
+fn a_working_set_is_kept_through_runs_and_let_go_at_rest() {
+    let Some(ctx) = context() else {
+        return;
+    };
+    let (w, h) = (160, 120);
+    let image = textured(w, h, 1.2);
+    let uploaded = ctx.upload(&image).expect("uploads");
+    let options = SharpenOptions::default();
+    let watch = ctx.sharpen_watch();
+    let run = |give_way: &dyn Fn() -> bool| {
+        let out = ctx.viewport_texture(w as u32, h as u32);
+        let done = ctx.sharpen_or_give_way(
+            &uploaded,
+            None,
+            &options,
+            Some(1.0),
+            2.0,
+            &out,
+            (false, true),
+            (SUBMIT_BUDGET, give_way),
+        );
+        done.map(|(stats, _)| {
+            let rows = ctx.read_viewport_rows(&out, 0, h as u32).expect("reads");
+            (format!("{stats:?}"), rows)
+        })
+    };
+    ctx.keep_sharpen_planes(true);
+    let kept = run(&|| false).expect("sharpens");
+    let made = watch.sets_made();
+    ctx.at_rest();
+    assert!(watch.bytes() > 0, "a discrete GPU's stays at rest");
+    assert_eq!(ctx.kept_sizes().sharpen, Some((w as u32, h as u32)));
+    ctx.keep_sharpen_planes(false);
+    assert_eq!(watch.bytes(), 0, "turning it off lets it go");
+    let first = run(&|| false).expect("sharpens");
+    assert!(first == kept, "the picture is the kept set's");
+    assert_eq!(watch.sets_made(), made + 1);
+    let held = watch.bytes();
+    assert_eq!(held, ctx.kept_bytes().sharpen);
+    assert!(held > 0, "kept through the interaction");
+    ctx.set_sharpen_batching(Batching::Every(1));
+    assert!(matches!(run(&|| true), Err(greycard_gpu::Error::GaveWay)));
+    ctx.set_sharpen_batching(Batching::Paced);
+    let again = run(&|| false).expect("sharpens");
+    assert!(again == kept);
+    assert_eq!(watch.sets_made(), made + 1, "one set for the interaction");
+    assert_eq!(watch.bytes(), held);
+    ctx.at_rest();
+    assert_eq!(watch.bytes(), 0, "nothing held at rest");
+    assert_eq!(ctx.kept_bytes().sharpen, 0);
 }
 
 /// A device lost under the context (destroyed here, as a driver's

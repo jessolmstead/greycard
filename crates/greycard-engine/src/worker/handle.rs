@@ -779,6 +779,14 @@ impl Worker {
         self.queue.0.lock().expect("worker queue").seen = seen;
     }
 
+    /// [`Worker::set_seen`] from another thread, as a test's window
+    /// tells it.
+    #[cfg(test)]
+    pub(super) fn seen_setter(&self) -> impl Fn(Option<Seen>) + Send + 'static {
+        let queue = self.queue.clone();
+        move |seen| queue.0.lock().expect("worker queue").seen = seen
+    }
+
     /// What the window last said it shows: for the window's tests.
     #[cfg(any(test, feature = "testing"))]
     pub fn seen(&self) -> Option<Seen> {

@@ -60,6 +60,13 @@ the reasoning lives in `docs/notes.md`.
 - [ ] After a fill about 2.5 GB more stays on the card and 0.5 GB in
       RAM at 102 MP, likely the retouched picture as a second
       full-size copy with its upload; hold one where possible
+- [ ] The settle's last long frames on a slow GPU (§753): the
+      threshold search, the delta's read-back, the stages after the
+      sharpen, and making the working set, each one submission still;
+      and the shown picture held through a settle after the window let
+      it go (about 0.8 GB at 102 MP)
+- [ ] §753 on Metal: the pan after a Detail move at 102 MP, and what
+      making the sharpen's planes costs per adjustment there
 - [ ] The open frame is held twice, the CPU base beside its upload of
       full floats (about 1 GB and 1.6 GB at 102 MP): drop the CPU base
       while the upload stands and read it back when it is needed, after

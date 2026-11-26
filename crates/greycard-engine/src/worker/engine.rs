@@ -601,8 +601,14 @@ pub(super) fn run(
                     } else {
                         "made per run"
                     };
+                    let sharpen = if ctx.keeps_sharpen_planes() {
+                        "kept"
+                    } else {
+                        "made per run"
+                    };
                     tracing::info!(
-                        "engine ops on the GPU: {}, the local contrast's planes {planes}",
+                        "engine ops on the GPU: {}, the local contrast's planes {planes}, \
+                         the sharpen's {sharpen}",
                         ctx.name()
                     );
                     gpu = Some(ctx);
@@ -765,6 +771,13 @@ pub(super) fn run(
             }))
             .unwrap_or(None);
         }
+        // A first round's picture on screen, which a zoom in's first round
+        // keeps outside the tiles it sharpens (the window holds it until
+        // that lands, so it costs nothing more).
+        let on_screen = match (&job, &shown) {
+            (Job::Settle { .. }, Some(s)) if s.quick => Some(s.texture.clone()),
+            _ => None,
+        };
         // The texture goes before a develop makes the next, so the two are
         // never held at once.
         if matches!(job, Job::Fill { .. } | Job::Settle { .. })
@@ -1505,17 +1518,35 @@ pub(super) fn run(
                 {
                     turn = due.turn;
                     ai.clear_shorts();
-                    // The view moved past what the first round sharpened
-                    // (a pan, a zoom, a turn): a first round of what is
-                    // seen now, from the point kept before the sharpen,
-                    // delivered as the develop's, the settle after it.
-                    // Not on the way out, where only the save is wanted.
+                    // A view that needs more iterations than the picture
+                    // on screen ran (a zoom in past them): a first round
+                    // of what is seen now at those iterations, delivered
+                    // as the develop's, the settle after it. Nothing else
+                    // the view does asks for one: a pan or a zoom out is
+                    // drawn from the picture on screen until the settle
+                    // lands, since a first round of it would put the
+                    // settle back by as much again while the window's
+                    // frames wait on the queue behind it. Each first
+                    // round runs more iterations than the last, up to the
+                    // edit's, so a move has a few at most. Not on the way
+                    // out, where only the save is wanted.
                     let (seen, stopping) = {
                         let q = lock.lock().expect("worker queue");
                         (q.seen, q.stopping)
                     };
-                    if !stopping && let Some(seen) = seen.filter(|s| !due.quick.shows(s)) {
-                        let mut round = Round::first_seen(Some(seen));
+                    if !stopping && let Some(seen) = seen.filter(|s| due.quick.wants_more(s)) {
+                        #[cfg(test)]
+                        SETTLE_COUNTS.add(2);
+                        // A part, not the whole picture (a view that covers
+                        // it waits for the settle), under the settle's
+                        // pace and giving way as it does; never to the
+                        // view, which it is the round of.
+                        let mut round = Round::zoomed(seen);
+                        let zooming = Settling {
+                            lock,
+                            quick: None,
+                            held_for_save: settle_for_save,
+                        };
                         let (outcome, _) = develop_round(
                             f,
                             &due.edit,
@@ -1527,8 +1558,26 @@ pub(super) fn run(
                             &mut gpu,
                             &deliver,
                             &mut round,
-                            &crate::walk::NoHold,
+                            &zooming,
                         );
+                        if matches!(outcome, Outcome::Failed { .. }) && round.gave_way {
+                            whole_due = Some(due);
+                            return;
+                        }
+                        // The tiles it did not sharpen as the picture on
+                        // screen had them, not unsharpened.
+                        if let (
+                            Outcome::Developed {
+                                image: Developed::Texture(onto),
+                                ..
+                            },
+                            Some(from),
+                            Some(quick),
+                            Some(ctx),
+                        ) = (&outcome, &on_screen, &round.quick, gpu.as_ref())
+                        {
+                            super::seen::keep_outside(ctx, from, onto, quick);
+                        }
                         shown =
                             ShownTexture::of(&due.edit, turn, &outcome, base.as_ref()).map(|s| {
                                 ShownTexture {
@@ -1547,13 +1596,13 @@ pub(super) fn run(
                     }
                     // On the way out the settle is made for the save
                     // that waits on it and gives way to nothing, as the
-                    // inline settle at an open: a newer develop or a
-                    // view moved is never picked once the editor
-                    // leaves, and giving way to it would only run the
-                    // settle again until the stop's wait ran out.
+                    // inline settle at an open: a newer develop is
+                    // never picked once the editor leaves, and giving
+                    // way to it would only run the settle again until
+                    // the stop's wait ran out.
                     let settling = Settling {
                         lock,
-                        quick: due.quick,
+                        quick: Some(due.quick),
                         held_for_save: settle_for_save,
                     };
                     let hold: &dyn crate::walk::Hold = if stopping {
@@ -1561,6 +1610,8 @@ pub(super) fn run(
                     } else {
                         &settling
                     };
+                    #[cfg(test)]
+                    SETTLE_COUNTS.add(0);
                     let mut round = Round::settle();
                     let (outcome, _) = develop_round(
                         f,
@@ -1576,9 +1627,11 @@ pub(super) fn run(
                         hold,
                     );
                     // Given way: to a newer develop, which takes its
-                    // place, or to the view moved, which the settle's
-                    // next go sharpens first.
+                    // place, or to a view that needs more iterations,
+                    // which the settle's next go sharpens first.
                     if matches!(outcome, Outcome::Failed { .. }) && round.gave_way {
+                        #[cfg(test)]
+                        SETTLE_COUNTS.add(1);
                         whole_due = Some(due);
                         return;
                     }
@@ -1968,6 +2021,19 @@ pub(super) fn run(
                 .unwrap_or(None);
             }
         }
+        // No settle, no fill's round, and no develop to come (the settle
+        // landed, a develop had none, the frame was left, or a job
+        // failed): the picture on screen is the edit's at rest, and what
+        // the context keeps only through an interaction goes. A slider
+        // drag keeps it from its first develop to its last one's settle,
+        // or to its last develop where none has a settle.
+        if whole_due.is_none()
+            && fills_due.is_none()
+            && let Some(g) = &gpu
+            && lock.lock().expect("worker queue").develop.is_none()
+        {
+            g.at_rest();
+        }
     }
 }
 
@@ -2080,6 +2146,29 @@ impl crate::walk::Hold for Newer<'_> {
     }
 }
 
+/// How many settles began their whole walk, how many gave way in it,
+/// and how many first rounds a zoom in asked for: for the pan's
+/// measurement.
+#[cfg(test)]
+pub(super) struct SettleCounts([std::sync::atomic::AtomicUsize; 3]);
+
+#[cfg(test)]
+impl SettleCounts {
+    fn add(&self, i: usize) {
+        self.0[i].fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    pub(super) fn each(&self) -> [usize; 3] {
+        self.0
+            .each_ref()
+            .map(|c| c.load(std::sync::atomic::Ordering::Relaxed))
+    }
+}
+
+#[cfg(test)]
+pub(super) static SETTLE_COUNTS: SettleCounts =
+    SettleCounts([const { std::sync::atomic::AtomicUsize::new(0) }; 3]);
+
 /// The develop on screen sharpened only as far as the window showed
 /// it: what the settle walks.
 pub(super) struct WholeDue {
@@ -2110,12 +2199,16 @@ fn save_waits(
 
 /// The settle's hold: it gives way to a develop or an aside of the
 /// frame (a save waiting on it then waits for the newer develop's, or
-/// is let go for another edit's), to the view moved past what the
-/// picture on screen sharpened, and to the editor closing or an open,
-/// unless a save waits on it: then the frame's pictures are made first.
+/// is let go for another edit's), to a view that needs more iterations
+/// than the picture on screen ran ([`super::seen::Quick::wants_more`]),
+/// and to the editor closing or an open, unless a save waits on it:
+/// then the frame's pictures are made first. Never to a pan or a zoom
+/// out, drawn from the picture on screen until the settle's lands.
 struct Settling<'a> {
     lock: &'a Mutex<Queue>,
-    quick: super::seen::Quick,
+    /// What the picture on screen sharpened, for the view's ask; none
+    /// for a zoom in's first round, which does not give way to it.
+    quick: Option<super::seen::Quick>,
     held_for_save: bool,
 }
 
@@ -2137,7 +2230,11 @@ impl Settling<'_> {
             q.develop,
             Some(Job::Develop { .. } | Job::DevelopAside { .. })
         );
-        (leaving && !self.held_for_save) || newer || q.seen.is_some_and(|s| !self.quick.shows(&s))
+        (leaving && !self.held_for_save)
+            || newer
+            || self
+                .quick
+                .is_some_and(|quick| q.seen.is_some_and(|s| quick.wants_more(&s)))
     }
 }
 
@@ -2148,6 +2245,12 @@ impl crate::walk::Hold for Settling<'_> {
 
     fn give_way_inside(&self, _stage: &crate::stages::Stage) -> bool {
         self.asked()
+    }
+
+    /// Nobody waits on the settle, and the window's frames (a pan over
+    /// the first round's picture) share its queue.
+    fn budget(&self) -> std::time::Duration {
+        greycard_gpu::BACKGROUND_BUDGET
     }
 }
 

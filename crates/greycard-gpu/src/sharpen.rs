@@ -38,7 +38,7 @@
 //! tried; the tests hold the pictures to 1e-4 and the threshold to
 //! equality, so if either ever does, the suite says so.
 
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -78,7 +78,10 @@ struct Params {
     offset: u32,
     floor_pedestal: f32,
     level_scale: f32,
-    pad: [u32; 3],
+    /// The first row a whole-picture pass works: zero for the whole
+    /// picture, a band's first under the background budget.
+    row0: u32,
+    pad: [u32; 2],
     kernel: [[f32; 4]; 4],
 }
 
@@ -101,6 +104,15 @@ const MAX_BORDER: u32 = 8;
 /// and a quarter of a second between the window's chances to draw
 /// keeps a slider drag live on a slow GPU.
 pub const SUBMIT_BUDGET: Duration = Duration::from_millis(250);
+
+/// How long one submission of a sharpen nobody waits on (the settle
+/// after a first round that sharpened only what the window showed) is
+/// let run: half a frame at 60 Hz. The window's frames share the queue
+/// and wait behind whatever submission runs when they are sent; a pan
+/// drawn while the settle runs stays smooth with this, and stuttered
+/// at four frames a second under [`SUBMIT_BUDGET`] on a GPU whose
+/// whole sharpen takes seconds.
+pub const BACKGROUND_BUDGET: Duration = Duration::from_millis(8);
 
 /// The iterations of the first submission on a context that has
 /// timed none: one iteration over the first batch of tiles, a few
@@ -153,21 +165,29 @@ impl Default for Pace {
     }
 }
 
-/// The pixel-iterations a submission may hold: what the budget holds
-/// at `rate`, at most twice the `last` submission timed; with no rate
+/// The most submissions a run under [`BACKGROUND_BUDGET`] makes of its
+/// iterations: on a device where one tile's iteration outlasts the
+/// budget its batches hold more tiles and its submissions run longer
+/// instead. Each is waited for (a tenth to half a millisecond of the
+/// CPU's and the driver's), so two thousand cost under a second, where
+/// a tile a submission would make some 125,000 at 102 MP.
+const MOST_BACKGROUND_SUBMITS: f64 = 2000.0;
+
+/// The pixel-iterations a submission may hold: what `budget` holds at
+/// `rate`, at most twice the `last` submission timed; with no rate
 /// yet, the `probe`.
-fn cap_of(rate: Option<f64>, last: Option<f64>, probe: f64) -> f64 {
+fn cap_of(rate: Option<f64>, last: Option<f64>, probe: f64, budget: Duration) -> f64 {
     match rate {
         None => probe,
         Some(r) => {
-            let cap = cap_for(r, SUBMIT_BUDGET);
+            let cap = cap_for(r, budget);
             last.map_or(cap, |l| cap.min(2.0 * l))
         }
     }
 }
 
-/// The pixel-iterations that fit [`SUBMIT_BUDGET`] at `rate` seconds
-/// a pixel-iteration.
+/// The pixel-iterations that fit `budget` at `rate` seconds a
+/// pixel-iteration.
 fn cap_for(rate: f64, budget: Duration) -> f64 {
     budget.as_secs_f64() / rate.max(f64::MIN_POSITIVE)
 }
@@ -176,6 +196,39 @@ fn cap_for(rate: f64, budget: Duration) -> f64 {
 /// `took` shows.
 fn rate_of(took: Duration, queued: f64) -> f64 {
     took.as_secs_f64() / queued.max(1.0)
+}
+
+/// The columns and rows of tiles of a batch: the atlas's `cap`, cut to
+/// no more than the `fit` tiles one iteration of fits the budget in,
+/// whole rows of the atlas's columns first, but to no fewer than
+/// `fewest` (rounded up to whole rows, or to even pieces of a row), and
+/// never to none.
+fn batch_shape((cols, rows): (u32, u32), fit: f64, fewest: f64) -> (u32, u32) {
+    let count = |v: f64| {
+        if v.is_finite() {
+            v.clamp(1.0, f64::from(u32::MAX)) as u32
+        } else {
+            u32::MAX
+        }
+    };
+    let up = fewest.is_finite() && fewest > fit;
+    let tiles = if up { count(fewest.ceil()) } else { count(fit) };
+    if u64::from(cols) * u64::from(rows) <= u64::from(tiles) {
+        (cols, rows)
+    } else if tiles >= cols {
+        let r = if up {
+            tiles.div_ceil(cols)
+        } else {
+            tiles / cols
+        };
+        (cols, r.clamp(1, rows))
+    } else if up {
+        // Part of a row, cut evenly so that no piece is under the floor.
+        let pieces = (cols / tiles).max(1);
+        (cols.div_ceil(pieces), 1)
+    } else {
+        (tiles, 1)
+    }
 }
 
 /// The iterations of a batch of `batch_px` padded pixels to record
@@ -226,11 +279,17 @@ pub(crate) struct Pipelines {
     /// Shared with a [`crate::Releaser`], which may let it go from
     /// another hold of the context.
     work: Arc<Mutex<Option<Work>>>,
+    /// Whether the working set is kept while the picture rests: on a
+    /// discrete GPU, whose memory is its own; else it is kept through
+    /// an interaction and let go at rest ([`Context::at_rest`]).
+    keep: AtomicBool,
+    /// How many working sets have been made: for the tests.
+    made: Arc<AtomicU32>,
     pace: Pace,
 }
 
 impl Pipelines {
-    pub(crate) fn new(device: &wgpu::Device) -> Self {
+    pub(crate) fn new(device: &wgpu::Device, keep: bool) -> Self {
         let module = |label: &str, source: &str| {
             device.create_shader_module(wgpu::ShaderModuleDescriptor {
                 label: Some(label),
@@ -339,7 +398,28 @@ impl Pipelines {
             tiles_layout,
             apply_layout,
             work: Arc::new(Mutex::new(None)),
+            keep: AtomicBool::new(keep),
+            made: Arc::default(),
             pace: Pace::default(),
+        }
+    }
+
+    /// A hold of the working set's bytes and of how many were made.
+    pub(crate) fn watch(&self) -> SharpenWatch {
+        SharpenWatch {
+            work: self.work.clone(),
+            made: self.made.clone(),
+        }
+    }
+
+    pub(crate) fn keeps(&self) -> bool {
+        self.keep.load(Ordering::Relaxed)
+    }
+
+    pub(crate) fn set_keeps(&self, keep: bool) {
+        self.keep.store(keep, Ordering::Relaxed);
+        if !keep {
+            self.release();
         }
     }
 
@@ -372,6 +452,27 @@ impl Pipelines {
     pub(crate) fn kept_bytes(&self) -> u64 {
         let guard = self.work.lock().unwrap_or_else(|e| e.into_inner());
         guard.as_ref().map_or(0, Work::bytes)
+    }
+}
+
+/// What the sharpen's working set holds and how many were made, read
+/// without the context in hand: for the tests and for measuring.
+#[derive(Clone)]
+pub struct SharpenWatch {
+    work: Arc<Mutex<Option<Work>>>,
+    made: Arc<AtomicU32>,
+}
+
+impl SharpenWatch {
+    /// The bytes the working set holds now.
+    pub fn bytes(&self) -> u64 {
+        let guard = self.work.lock().unwrap_or_else(|e| e.into_inner());
+        guard.as_ref().map_or(0, Work::bytes)
+    }
+
+    /// How many working sets the context has made.
+    pub fn sets_made(&self) -> u32 {
+        self.made.load(Ordering::Relaxed)
     }
 }
 
@@ -500,6 +601,55 @@ impl Work {
     }
 }
 
+/// The most bands a whole-picture pass is cut into under the background
+/// budget: on a device too slow for a band of a few rows in it, the
+/// bands grow taller instead, so a run's plane passes make no more
+/// than this many submissions each.
+const MOST_PLANE_BANDS: u32 = 64;
+
+/// The rows a whole-picture pass of a `w` by `h` picture works a
+/// submission: all of them (none), or under the background budget as
+/// many as fit it at `rate`, a multiple of the workgroup's sixteen, no
+/// fewer than [`MOST_PLANE_BANDS`] allows, and none when that is every
+/// row. A pass's pixel costs about one iteration's, which the rate
+/// measures.
+fn band_rows(
+    background: bool,
+    rate: Option<f64>,
+    budget: Duration,
+    (w, h): (u32, u32),
+) -> Option<u32> {
+    let rate = rate.filter(|_| background)?;
+    let fit = (cap_for(rate, budget) / f64::from(w.max(1))).floor();
+    let fit = if fit.is_finite() {
+        fit.clamp(0.0, f64::from(h)) as u32
+    } else {
+        h
+    };
+    let fewest = h.div_ceil(MOST_PLANE_BANDS);
+    let rows = (fit / 16 * 16).max(fewest.div_ceil(16) * 16).max(16);
+    (rows < h).then_some(rows)
+}
+
+/// How a whole-picture pass is bound: the planes' group at a dynamic
+/// offset, or a group made for the slot (the apply's).
+enum Bind<'a> {
+    Dynamic(&'a wgpu::BindGroup),
+    Made(&'a dyn Fn(u32) -> wgpu::BindGroup),
+}
+
+/// A whole-picture pass of the sharpen. Each reads planes other than
+/// the one it writes, a pixel an invocation (a row a workgroup for the
+/// row sums), so a band of its rows is the whole pass's to the bit.
+enum PlanePass<'a> {
+    /// A pixel an invocation, sixteen by sixteen a workgroup.
+    Pixels(&'a wgpu::ComputePipeline, Bind<'a>, Params),
+    /// A row a workgroup.
+    Rows(&'a wgpu::ComputePipeline, Bind<'a>, Params),
+    /// One plane copied onto another.
+    Copy(&'a wgpu::Texture, &'a wgpu::Texture),
+}
+
 /// Where the result goes: the viewport's half-float texture, or full
 /// floats and the mask apart for a read back.
 enum Output<'a> {
@@ -586,18 +736,20 @@ impl Context {
                 clip_level,
                 Output::Half(out),
                 Also::SHARPEN,
-                &|| false,
+                (SUBMIT_BUDGET, &|| false),
             )
         })
     }
 
     /// The viewport's sharpen: [`Context::sharpen`], or with `delta`
     /// [`Context::sharpen_with_delta`], the picture sharpened only with
-    /// `apply`; asking `give_way` after each submission of its
-    /// iterations whether to stop there, which it does with
-    /// [`Error::GaveWay`] and `out` part written.
+    /// `apply`; its iterations in submissions of `budget` at most
+    /// ([`SUBMIT_BUDGET`], or [`BACKGROUND_BUDGET`] for a sharpen
+    /// nobody waits on), asking `give_way` after each whether to stop
+    /// there, which it does with [`Error::GaveWay`] and `out` part
+    /// written.
     // The picture, its guide, the reference's three, the output, the
-    // two asks, and the give-way.
+    // two asks, and the pace.
     #[allow(clippy::too_many_arguments)]
     pub fn sharpen_or_give_way(
         &self,
@@ -608,7 +760,7 @@ impl Context {
         clip_level: f32,
         out: &wgpu::Texture,
         (delta, apply): (bool, bool),
-        give_way: &dyn Fn() -> bool,
+        pace: (Duration, &dyn Fn() -> bool),
     ) -> Result<(SharpenStats, Option<Vec<f32>>)> {
         if out.width() != image.width || out.height() != image.height {
             return Err(Error::Unsupported(format!(
@@ -632,7 +784,7 @@ impl Context {
                     apply,
                     delta: plane.as_ref(),
                 },
-                give_way,
+                pace,
             )
         })?;
         let delta = match &plane {
@@ -685,7 +837,7 @@ impl Context {
                     apply,
                     delta: Some(&delta),
                 },
-                &|| false,
+                (SUBMIT_BUDGET, &|| false),
             )
         })?;
         let read = self.read_texture(&delta, 0, 0, image.width, image.height, 4)?;
@@ -738,6 +890,17 @@ impl Context {
     /// The submissions the last sharpen's iterations took.
     pub fn sharpen_submissions(&self) -> u32 {
         self.sharpen.pace.submits.load(Ordering::Relaxed)
+    }
+
+    /// What the next sharpen is paced from: the rate last measured, a
+    /// second a pixel-iteration, and the pixel-iterations of the last
+    /// submission timed. For the tests.
+    pub fn sharpen_pace(&self) -> (Option<f64>, Option<f64>) {
+        let pace = &self.sharpen.pace;
+        (
+            *pace.rate.lock().unwrap_or_else(|e| e.into_inner()),
+            *pace.last.lock().unwrap_or_else(|e| e.into_inner()),
+        )
     }
 
     /// The reference's own signature: sharpen a working image in
@@ -831,7 +994,7 @@ impl Context {
                     clip_level,
                     Output::Nothing,
                     also,
-                    &|| false,
+                    (SUBMIT_BUDGET, &|| false),
                 )
             })?;
             (None, stats)
@@ -896,7 +1059,7 @@ impl Context {
                     mask: &mask,
                 },
                 also,
-                &|| false,
+                (SUBMIT_BUDGET, &|| false),
             )?;
             Ok((rgb, mask, stats))
         })
@@ -944,6 +1107,90 @@ impl Context {
         Ok((stats, bytemuck::cast_slice(&mask).to_vec(), delta))
     }
 
+    /// Record `passes` in order over a `w` by `h` picture: each over
+    /// every row into `encoder`; or with `band` rows (under the
+    /// background budget) what `encoder` holds submitted first, then
+    /// each pass band by band, each band submitted alone and waited for,
+    /// so that the window's frames queued behind are drawn between, and
+    /// asking `give_way` after each whether to stop there
+    /// ([`Error::GaveWay`]).
+    fn plane_passes(
+        &self,
+        encoder: &mut wgpu::CommandEncoder,
+        uniforms: &Uniforms,
+        (w, h): (u32, u32),
+        band: (Option<u32>, &dyn Fn() -> bool),
+        passes: &[PlanePass<'_>],
+    ) -> Result<()> {
+        let (band, give_way) = band;
+        let record = |encoder: &mut wgpu::CommandEncoder, pass: &PlanePass<'_>, row0, rows| {
+            let (pipeline, bind, params, by_rows) = match pass {
+                PlanePass::Copy(from, to) => {
+                    let at = |texture| wgpu::TexelCopyTextureInfo {
+                        texture,
+                        mip_level: 0,
+                        origin: wgpu::Origin3d {
+                            x: 0,
+                            y: row0,
+                            z: 0,
+                        },
+                        aspect: wgpu::TextureAspect::All,
+                    };
+                    encoder.copy_texture_to_texture(
+                        at(from),
+                        at(to),
+                        wgpu::Extent3d {
+                            width: w,
+                            height: rows,
+                            depth_or_array_layers: 1,
+                        },
+                    );
+                    return;
+                }
+                PlanePass::Pixels(pipeline, bind, params) => (pipeline, bind, params, false),
+                PlanePass::Rows(pipeline, bind, params) => (pipeline, bind, params, true),
+            };
+            let slot = uniforms.push(&self.queue, &Params { row0, ..*params });
+            let made = match bind {
+                Bind::Made(make) => Some(make(slot)),
+                Bind::Dynamic(_) => None,
+            };
+            let mut cp = encoder.begin_compute_pass(&Default::default());
+            cp.set_pipeline(pipeline);
+            match (bind, &made) {
+                (Bind::Dynamic(group), _) => cp.set_bind_group(0, *group, &[slot]),
+                (Bind::Made(_), Some(group)) => cp.set_bind_group(0, group, &[]),
+                (Bind::Made(_), None) => unreachable!("made above"),
+            }
+            if by_rows {
+                cp.dispatch_workgroups(rows, 1, 1);
+            } else {
+                cp.dispatch_workgroups(groups(w, 16), groups(rows, 16), 1);
+            }
+        };
+        let Some(band) = band else {
+            for pass in passes {
+                record(encoder, pass, 0, h);
+            }
+            return Ok(());
+        };
+        let held = std::mem::replace(encoder, self.encoder("sharpen"));
+        self.queue.submit(Some(held.finish()));
+        self.wait()?;
+        for pass in passes {
+            for row0 in (0..h).step_by(band as usize) {
+                let mut e = self.encoder("sharpen band");
+                record(&mut e, pass, row0, band.min(h - row0));
+                self.queue.submit(Some(e.finish()));
+                self.wait()?;
+                if give_way() {
+                    return Err(Error::GaveWay);
+                }
+            }
+        }
+        Ok(())
+    }
+
     // The picture, its guide, the reference's three, the outputs, and
     // the give-way.
     #[allow(clippy::too_many_arguments)]
@@ -956,7 +1203,7 @@ impl Context {
         clip_level: f32,
         out: Output<'_>,
         also: Also<'_>,
-        give_way: &dyn Fn() -> bool,
+        (budget, give_way): (Duration, &dyn Fn() -> bool),
     ) -> Result<SharpenStats> {
         let p = &self.sharpen;
         let (w, h) = (image.width, image.height);
@@ -975,16 +1222,21 @@ impl Context {
         }
         .clamp(reference::MIN_RADIUS, reference::MAX_RADIUS);
 
-        // The working set for this size, kept from the last run.
+        // The working set for this size, kept from the last run: on a
+        // discrete GPU for good, else until the picture rests
+        // ([`Context::at_rest`]). A set of another size goes before
+        // this one is made, so two are never held at once.
+        let atlas = *p.pace.atlas.lock().unwrap_or_else(|e| e.into_inner());
         let mut guard = p.work.lock().unwrap_or_else(|e| e.into_inner());
-        let work = match guard.as_ref() {
-            Some(work) if work.width == w && work.height == h => guard.as_ref().unwrap(),
+        match guard.as_ref() {
+            Some(work) if work.width == w && work.height == h => {}
             _ => {
-                let budget = *p.pace.atlas.lock().unwrap_or_else(|e| e.into_inner());
-                *guard = Some(Work::new(&self.device, self.max_dimension, w, h, budget));
-                guard.as_ref().unwrap()
+                *guard = None;
+                *guard = Some(Work::new(&self.device, self.max_dimension, w, h, atlas));
+                p.made.fetch_add(1, Ordering::Relaxed);
             }
-        };
+        }
+        let work: &Work = guard.as_ref().expect("made, or kept");
 
         // The deconvolution's tiling, the reference's.
         let kernel = reference::kernel(radius);
@@ -1004,18 +1256,52 @@ impl Context {
             }
             None => (0..tiles_across, 0..bands),
         };
+        // The pace: how the iterations are split into submissions.
+        let batching = *p.pace.batching.lock().unwrap_or_else(|e| e.into_inner());
+        let mut rate = *p.pace.rate.lock().unwrap_or_else(|e| e.into_inner());
+        let mut last = *p.pace.last.lock().unwrap_or_else(|e| e.into_inner());
+        let px = f64::from(full) * f64::from(full);
+        // The atlas's batches; under the background budget no more
+        // tiles than one iteration of fits it at the rate last measured,
+        // since an iteration of a batch is never split, yet never so few
+        // that the run makes more than `MOST_BACKGROUND_SUBMITS`. A tile
+        // is worked alike in any batch.
+        let background = budget < SUBMIT_BUDGET;
+        let (batch_cols, batch_rows) = match (batching, rate) {
+            (Batching::Paced, Some(r)) if background => {
+                let tiles = f64::from(cols.end - cols.start) * f64::from(rows.end - rows.start);
+                let fewest = (tiles * options.iterations as f64 / MOST_BACKGROUND_SUBMITS).ceil();
+                batch_shape(
+                    (work.cap_cols, work.cap_rows),
+                    (cap_for(r, budget) / px).floor(),
+                    fewest,
+                )
+            }
+            _ => (work.cap_cols, work.cap_rows),
+        };
         let mut batches = Vec::new();
-        for c0 in cols.clone().step_by(work.cap_cols as usize) {
-            for b0 in rows.clone().step_by(work.cap_rows as usize) {
+        for c0 in cols.clone().step_by(batch_cols as usize) {
+            for b0 in rows.clone().step_by(batch_rows as usize) {
                 batches.push((
                     c0,
                     b0,
-                    work.cap_cols.min(cols.end - c0),
-                    work.cap_rows.min(rows.end - b0),
+                    batch_cols.min(cols.end - c0),
+                    batch_rows.min(rows.end - b0),
                 ));
             }
         }
-        let uniforms = Uniforms::new(&self.device, "sharpen params", 16 + batches.len() as u64);
+        // The whole-picture passes' bands: every row at once but under
+        // the background budget.
+        let band = match batching {
+            Batching::Paced => band_rows(background, rate, budget, (w, h)),
+            _ => None,
+        };
+        let bands = u64::from(band.map_or(1, |b| h.div_ceil(b)));
+        let uniforms = Uniforms::new(
+            &self.device,
+            "sharpen params",
+            16 + batches.len() as u64 + 12 * bands,
+        );
         let mut deconv = [[0f32; 4]; 4];
         for (i, k) in kernel.iter().enumerate() {
             deconv[i / 4][i % 4] = *k;
@@ -1074,62 +1360,62 @@ impl Context {
         });
 
         // Phase one: luminance, L* and the clip mask, and the clip
-        // mask's row sums.
+        // mask's row sums; the guide's L* over the picture's, so the
+        // threshold and the blend read what is flat from it.
         let mut encoder = self.encoder("sharpen");
-        {
-            let mut pass = encoder.begin_compute_pass(&Default::default());
-            pass.set_pipeline(&p.prepare);
-            pass.set_bind_group(0, &planes_group, &[uniforms.push(&self.queue, &base)]);
-            pass.dispatch_workgroups(groups(w, 16), groups(h, 16), 1);
-            pass.set_pipeline(&p.row_sum);
-            pass.set_bind_group(
-                0,
-                &planes_group,
-                &[uniforms.push(&self.queue, &Params { offset: 0, ..base })],
-            );
-            pass.dispatch_workgroups(h, 1, 1);
-            // The guide's L* over the picture's: the threshold and the
-            // blend read what is flat from it.
-            if let Some(guide) = guide {
-                let guide_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
-                    label: Some("sharpen guide"),
-                    layout: &p.planes_layout,
-                    entries: &[
-                        wgpu::BindGroupEntry {
-                            binding: 0,
-                            resource: uniforms.binding(),
-                        },
-                        wgpu::BindGroupEntry {
-                            binding: 1,
-                            resource: wgpu::BindingResource::TextureView(&view(&guide.texture)),
-                        },
-                        wgpu::BindGroupEntry {
-                            binding: 2,
-                            resource: wgpu::BindingResource::TextureView(&view(&work.lum)),
-                        },
-                        wgpu::BindGroupEntry {
-                            binding: 3,
-                            resource: wgpu::BindingResource::TextureView(&view(&work.lstar)),
-                        },
-                        wgpu::BindGroupEntry {
-                            binding: 4,
-                            resource: wgpu::BindingResource::TextureView(&view(&work.blend)),
-                        },
-                        wgpu::BindGroupEntry {
-                            binding: 5,
-                            resource: wgpu::BindingResource::TextureView(&view(&work.tmp)),
-                        },
-                        wgpu::BindGroupEntry {
-                            binding: 6,
-                            resource: work.partials.as_entire_binding(),
-                        },
-                    ],
-                });
-                pass.set_pipeline(&p.guide_lstar);
-                pass.set_bind_group(0, &guide_group, &[uniforms.push(&self.queue, &base)]);
-                pass.dispatch_workgroups(groups(w, 16), groups(h, 16), 1);
-            }
+        let guide_group = guide.map(|guide| {
+            self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("sharpen guide"),
+                layout: &p.planes_layout,
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: uniforms.binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: wgpu::BindingResource::TextureView(&view(&guide.texture)),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 2,
+                        resource: wgpu::BindingResource::TextureView(&view(&work.lum)),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 3,
+                        resource: wgpu::BindingResource::TextureView(&view(&work.lstar)),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 4,
+                        resource: wgpu::BindingResource::TextureView(&view(&work.blend)),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 5,
+                        resource: wgpu::BindingResource::TextureView(&view(&work.tmp)),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 6,
+                        resource: work.partials.as_entire_binding(),
+                    },
+                ],
+            })
+        });
+        let planes = Bind::Dynamic(&planes_group);
+        let mut first = vec![
+            PlanePass::Pixels(&p.prepare, Bind::Dynamic(&planes_group), base),
+            PlanePass::Rows(
+                &p.row_sum,
+                Bind::Dynamic(&planes_group),
+                Params { offset: 0, ..base },
+            ),
+        ];
+        if let Some(group) = &guide_group {
+            first.push(PlanePass::Pixels(
+                &p.guide_lstar,
+                Bind::Dynamic(group),
+                base,
+            ));
         }
+        self.plane_passes(&mut encoder, &uniforms, (w, h), (band, give_way), &first)?;
         self.queue.submit(Some(encoder.finish()));
 
         // The contrast threshold: fixed, remembered, or searched for;
@@ -1193,137 +1479,120 @@ impl Context {
             Output::Full { rgb, mask } => (&p.spare_half, rgb, mask),
             Output::Nothing => (&p.spare_half, &p.spare_full, &p.spare_mask),
         };
-        let apply_slot = uniforms.push(&self.queue, &base);
-        let apply_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("sharpen apply"),
-            layout: &p.apply_layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
-                        buffer: &uniforms.buffer,
-                        offset: u64::from(apply_slot),
-                        size: Some(std::num::NonZeroU64::new(crate::plumbing::SLOT).unwrap()),
-                    }),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: wgpu::BindingResource::TextureView(&view(&image.texture)),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 2,
-                    resource: wgpu::BindingResource::TextureView(&view(&work.lum)),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 3,
-                    resource: wgpu::BindingResource::TextureView(&view(&work.tmp)),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 4,
-                    resource: wgpu::BindingResource::TextureView(&view(&work.blend)),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 5,
-                    resource: wgpu::BindingResource::TextureView(&view(out_half)),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 6,
-                    resource: wgpu::BindingResource::TextureView(&view(out_full)),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 7,
-                    resource: wgpu::BindingResource::TextureView(&view(out_mask)),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 8,
-                    resource: wgpu::BindingResource::TextureView(&view(
-                        also.delta.unwrap_or(&p.spare_delta),
-                    )),
-                },
-            ],
-        });
+        let apply_group = |slot: u32| {
+            self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("sharpen apply"),
+                layout: &p.apply_layout,
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                            buffer: &uniforms.buffer,
+                            offset: u64::from(slot),
+                            size: Some(std::num::NonZeroU64::new(crate::plumbing::SLOT).unwrap()),
+                        }),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: wgpu::BindingResource::TextureView(&view(&image.texture)),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 2,
+                        resource: wgpu::BindingResource::TextureView(&view(&work.lum)),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 3,
+                        resource: wgpu::BindingResource::TextureView(&view(&work.tmp)),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 4,
+                        resource: wgpu::BindingResource::TextureView(&view(&work.blend)),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 5,
+                        resource: wgpu::BindingResource::TextureView(&view(out_half)),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 6,
+                        resource: wgpu::BindingResource::TextureView(&view(out_full)),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 7,
+                        resource: wgpu::BindingResource::TextureView(&view(out_mask)),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 8,
+                        resource: wgpu::BindingResource::TextureView(&view(
+                            also.delta.unwrap_or(&p.spare_delta),
+                        )),
+                    },
+                ],
+            })
+        };
 
         let mut encoder = self.encoder("sharpen");
-        {
-            let mut pass = encoder.begin_compute_pass(&Default::default());
-            // The clip mask's zeros widened, into `tmp`.
-            pass.set_pipeline(&p.dilate);
-            pass.set_bind_group(0, &planes_group, &[uniforms.push(&self.queue, &base)]);
-            pass.dispatch_workgroups(groups(w, 16), groups(h, 16), 1);
-            let soft = threshold > 0.0 && w >= 5 && h >= 5;
-            if soft {
-                pass.set_pipeline(&p.contrast_blend);
-                pass.set_bind_group(
-                    0,
-                    &planes_group,
-                    &[uniforms.push(&self.queue, &Params { threshold, ..base })],
-                );
-                pass.dispatch_workgroups(groups(w, 16), groups(h, 16), 1);
-                // The blend's blur, one side of its kernel.
-                let sigma = reference::BLEND_BLUR_SIGMA;
-                let reach = (3.0 * sigma).ceil() as usize;
-                let mut side: Vec<f32> = (0..=reach)
-                    .map(|i| (-(i as f32 * i as f32) / (2.0 * sigma * sigma)).exp())
-                    .collect();
-                let norm = side[0] + 2.0 * side[1..].iter().sum::<f32>();
-                for k in &mut side {
-                    *k /= norm;
-                }
-                let mut taps = [[0f32; 4]; 4];
-                for (i, k) in side.iter().enumerate() {
-                    taps[i / 4][i % 4] = *k;
-                }
-                let blur = uniforms.push(
-                    &self.queue,
-                    &Params {
-                        half: reach as u32,
-                        taps: side.len() as u32,
-                        kernel: taps,
-                        ..base
-                    },
-                );
-                pass.set_pipeline(&p.blur_rows);
-                pass.set_bind_group(0, &planes_group, &[blur]);
-                pass.dispatch_workgroups(groups(w, 16), groups(h, 16), 1);
-                pass.set_pipeline(&p.blur_cols);
-                pass.set_bind_group(0, &planes_group, &[blur]);
-                pass.dispatch_workgroups(groups(w, 16), groups(h, 16), 1);
+        // The clip mask's zeros widened, into `tmp`; with a threshold,
+        // the blend before its blur and the blur, else the dilated clip
+        // mask is the blend; the blend's row sums; and the sharpened
+        // luminance's start.
+        let soft = threshold > 0.0 && w >= 5 && h >= 5;
+        let mut second = vec![PlanePass::Pixels(&p.dilate, planes, base)];
+        if soft {
+            second.push(PlanePass::Pixels(
+                &p.contrast_blend,
+                Bind::Dynamic(&planes_group),
+                Params { threshold, ..base },
+            ));
+            // The blend's blur, one side of its kernel.
+            let sigma = reference::BLEND_BLUR_SIGMA;
+            let reach = (3.0 * sigma).ceil() as usize;
+            let mut side: Vec<f32> = (0..=reach)
+                .map(|i| (-(i as f32 * i as f32) / (2.0 * sigma * sigma)).exp())
+                .collect();
+            let norm = side[0] + 2.0 * side[1..].iter().sum::<f32>();
+            for k in &mut side {
+                *k /= norm;
             }
-            if !soft {
-                // No threshold: the dilated clip mask is the blend.
-                drop(pass);
-                encoder.copy_texture_to_texture(
-                    work.tmp.as_image_copy(),
-                    work.blend.as_image_copy(),
-                    wgpu::Extent3d {
-                        width: w,
-                        height: h,
-                        depth_or_array_layers: 1,
-                    },
-                );
-                pass = encoder.begin_compute_pass(&Default::default());
+            let mut taps = [[0f32; 4]; 4];
+            for (i, k) in side.iter().enumerate() {
+                taps[i / 4][i % 4] = *k;
             }
-            pass.set_pipeline(&p.row_sum);
-            pass.set_bind_group(
-                0,
-                &planes_group,
-                &[uniforms.push(&self.queue, &Params { offset: h, ..base })],
-            );
-            pass.dispatch_workgroups(h, 1, 1);
-            pass.set_pipeline(&p.init_sharpened);
-            pass.set_bind_group(0, &planes_group, &[uniforms.push(&self.queue, &base)]);
-            pass.dispatch_workgroups(groups(w, 16), groups(h, 16), 1);
+            let blur = Params {
+                half: reach as u32,
+                taps: side.len() as u32,
+                kernel: taps,
+                ..base
+            };
+            second.push(PlanePass::Pixels(
+                &p.blur_rows,
+                Bind::Dynamic(&planes_group),
+                blur,
+            ));
+            second.push(PlanePass::Pixels(
+                &p.blur_cols,
+                Bind::Dynamic(&planes_group),
+                blur,
+            ));
+        } else {
+            second.push(PlanePass::Copy(&work.tmp, &work.blend));
         }
+        second.push(PlanePass::Rows(
+            &p.row_sum,
+            Bind::Dynamic(&planes_group),
+            Params { offset: h, ..base },
+        ));
+        second.push(PlanePass::Pixels(
+            &p.init_sharpened,
+            Bind::Dynamic(&planes_group),
+            base,
+        ));
+        self.plane_passes(&mut encoder, &uniforms, (w, h), (band, give_way), &second)?;
         // The iterations, batch by batch of tiles, in submissions of a
         // bounded length (see `SUBMIT_BUDGET`): each submission is
         // waited for and timed, and the time sizes the next.
-        let batching = *p.pace.batching.lock().unwrap_or_else(|e| e.into_inner());
-        let mut rate = *p.pace.rate.lock().unwrap_or_else(|e| e.into_inner());
-        let mut last = *p.pace.last.lock().unwrap_or_else(|e| e.into_inner());
         let mut submits = 1u32;
         let mut longest = std::time::Duration::ZERO;
         let iterations = options.iterations as u32;
-        let px = f64::from(full) * f64::from(full);
         let mut queued = 0f64;
         let last_batch = batches.len().saturating_sub(1);
         for (i, &(c0, b0, cols, rows)) in batches.iter().enumerate() {
@@ -1345,7 +1614,7 @@ impl Context {
                 let k = match batching {
                     Batching::Paced => {
                         let probe = f64::from(PROBE_ITERATIONS) * batch_px;
-                        let cap = cap_of(rate, last, probe);
+                        let cap = cap_of(rate, last, probe, budget);
                         chunk(cap, queued, batch_px, iterations - done)
                     }
                     Batching::Every(n) => n.max(1).min(iterations - done),
@@ -1381,7 +1650,7 @@ impl Context {
                 let flush = match batching {
                     Batching::Paced => {
                         let probe = f64::from(PROBE_ITERATIONS) * batch_px;
-                        let cap = cap_of(rate, last, probe);
+                        let cap = cap_of(rate, last, probe, budget);
                         queued + batch_px > cap
                     }
                     Batching::Every(_) => true,
@@ -1407,25 +1676,27 @@ impl Context {
                 }
             }
         }
-        {
-            let mut pass = encoder.begin_compute_pass(&Default::default());
-            pass.set_bind_group(0, &apply_group, &[]);
-            let apply = match (&out, also.apply) {
-                (Output::Half(_), true) => Some(&p.apply_half),
-                (Output::Full { .. }, true) => Some(&p.apply_full),
-                (Output::Half(_), false) => Some(&p.keep_half),
-                (Output::Full { .. }, false) => Some(&p.keep_full),
-                (Output::Nothing, _) => None,
-            };
-            if let Some(pipeline) = apply {
-                pass.set_pipeline(pipeline);
-                pass.dispatch_workgroups(groups(w, 16), groups(h, 16), 1);
-            }
-            if also.delta.is_some() {
-                pass.set_pipeline(&p.delta);
-                pass.dispatch_workgroups(groups(w, 16), groups(h, 16), 1);
-            }
+        let apply = match (&out, also.apply) {
+            (Output::Half(_), true) => Some(&p.apply_half),
+            (Output::Full { .. }, true) => Some(&p.apply_full),
+            (Output::Half(_), false) => Some(&p.keep_half),
+            (Output::Full { .. }, false) => Some(&p.keep_full),
+            (Output::Nothing, _) => None,
+        };
+        let mut last_passes = Vec::new();
+        if let Some(pipeline) = apply {
+            last_passes.push(PlanePass::Pixels(pipeline, Bind::Made(&apply_group), base));
         }
+        if also.delta.is_some() {
+            last_passes.push(PlanePass::Pixels(&p.delta, Bind::Made(&apply_group), base));
+        }
+        self.plane_passes(
+            &mut encoder,
+            &uniforms,
+            (w, h),
+            (band, give_way),
+            &last_passes,
+        )?;
         let started = std::time::Instant::now();
         self.queue.submit(Some(encoder.finish()));
 
@@ -1439,13 +1710,19 @@ impl Context {
         if batching == Batching::Paced && queued > 0.0 {
             let took = started.elapsed();
             longest = longest.max(took);
-            let cap = cap_of(rate, last, 0.0);
+            let cap = cap_of(rate, last, 0.0, budget);
             if submits == 1 || queued * 2.0 >= cap {
                 rate = Some(rate_of(took, queued));
                 last = Some(queued);
             }
-            *p.pace.rate.lock().unwrap_or_else(|e| e.into_inner()) = rate;
-            *p.pace.last.lock().unwrap_or_else(|e| e.into_inner()) = last;
+            // A background run's timing holds the window's frames it
+            // waited behind, and its submissions say nothing of how far
+            // the default's may grow: the next run is paced from the last
+            // run under the default, as if the background's never ran.
+            if !background {
+                *p.pace.rate.lock().unwrap_or_else(|e| e.into_inner()) = rate;
+                *p.pace.last.lock().unwrap_or_else(|e| e.into_inner()) = last;
+            }
         }
         if submits > 1 {
             log::debug!(
@@ -1734,14 +2011,88 @@ mod tests {
     fn a_submission_grows_to_twice_the_last_at_most() {
         use super::{SUBMIT_BUDGET, cap_for, cap_of};
         let fast = 1e-12;
-        assert_eq!(cap_of(None, Some(5.0), 7.0), 7.0);
-        assert_eq!(cap_of(Some(fast), Some(1e6), 7.0), 2e6);
-        assert_eq!(cap_of(Some(fast), None, 7.0), cap_for(fast, SUBMIT_BUDGET));
+        let b = SUBMIT_BUDGET;
+        assert_eq!(cap_of(None, Some(5.0), 7.0, b), 7.0);
+        assert_eq!(cap_of(Some(fast), Some(1e6), 7.0, b), 2e6);
+        assert_eq!(cap_of(Some(fast), None, 7.0, b), cap_for(fast, b));
         let slow = 1e-3;
+        assert_eq!(cap_of(Some(slow), Some(1e9), 7.0, b), cap_for(slow, b));
+        let short = super::BACKGROUND_BUDGET;
         assert_eq!(
-            cap_of(Some(slow), Some(1e9), 7.0),
-            cap_for(slow, SUBMIT_BUDGET)
+            cap_of(Some(slow), Some(1e9), 7.0, short),
+            cap_for(slow, short)
         );
+    }
+
+    /// A batch holds the atlas's tiles, or no more than one iteration
+    /// of fits the budget: whole rows of the atlas's columns first,
+    /// then part of a row, and never no tile; but no fewer than the
+    /// floor, rounded up to whole rows.
+    #[test]
+    fn a_batch_holds_what_an_iteration_of_fits() {
+        use super::batch_shape;
+        let none = 0.0;
+        assert_eq!(batch_shape((10, 6), 1e9, none), (10, 6));
+        assert_eq!(batch_shape((10, 6), f64::INFINITY, none), (10, 6));
+        assert_eq!(batch_shape((10, 6), 60.0, none), (10, 6));
+        assert_eq!(batch_shape((10, 6), 59.0, none), (10, 5));
+        assert_eq!(batch_shape((10, 6), 10.0, none), (10, 1));
+        assert_eq!(batch_shape((10, 6), 4.5, none), (4, 1));
+        assert_eq!(batch_shape((10, 6), 0.2, none), (1, 1));
+        assert_eq!(batch_shape((10, 6), f64::NAN, none), (10, 6));
+        // The floor wins over a budget too short for it.
+        assert_eq!(batch_shape((10, 6), 0.2, 3.0), (4, 1));
+        assert_eq!(batch_shape((10, 6), 0.2, 6.0), (10, 1));
+        assert_eq!(batch_shape((10, 6), 0.2, 21.0), (10, 3));
+        assert_eq!(batch_shape((10, 6), 30.0, 21.0), (10, 3));
+        assert_eq!(batch_shape((10, 6), 0.2, 1e9), (10, 6));
+    }
+
+    /// A whole-picture pass is whole under the default budget, with no
+    /// rate, or on a device quick enough for it; under the background
+    /// budget it is cut into bands of whole workgroups' rows, never more
+    /// than the most.
+    #[test]
+    fn a_plane_pass_is_banded_only_under_the_background_budget() {
+        use super::{BACKGROUND_BUDGET, MOST_PLANE_BANDS, SUBMIT_BUDGET, band_rows};
+        let size = (11648, 8736);
+        let slow = 6e-9;
+        assert_eq!(band_rows(false, Some(slow), SUBMIT_BUDGET, size), None);
+        assert_eq!(band_rows(true, None, BACKGROUND_BUDGET, size), None);
+        assert_eq!(band_rows(true, Some(1e-15), BACKGROUND_BUDGET, size), None);
+        let rows = band_rows(true, Some(slow), BACKGROUND_BUDGET, size).expect("bands");
+        assert_eq!(rows % 16, 0);
+        assert!(size.1.div_ceil(rows) <= MOST_PLANE_BANDS, "{rows}");
+        let crawl = band_rows(true, Some(1.0), BACKGROUND_BUDGET, size).expect("bands");
+        assert!(size.1.div_ceil(crawl) <= MOST_PLANE_BANDS, "{crawl}");
+        assert_eq!(
+            band_rows(true, Some(1.0), BACKGROUND_BUDGET, (100, 12)),
+            None
+        );
+    }
+
+    /// A background run's submissions at the floor: never more than the
+    /// most, for any count of tiles and iterations, a tile's iteration
+    /// outlasting the budget.
+    #[test]
+    fn a_background_run_makes_a_bounded_count_of_submissions() {
+        use super::{MOST_BACKGROUND_SUBMITS, batch_shape};
+        for (cols, rows, cap, iterations) in [
+            (91u32, 69u32, (91u32, 13u32), 20u32),
+            (91, 69, (91, 13), 8),
+            (150, 100, (113, 4), 20),
+            (5, 4, (5, 4), 20),
+        ] {
+            let tiles = f64::from(cols) * f64::from(rows);
+            let fewest = (tiles * f64::from(iterations) / MOST_BACKGROUND_SUBMITS).ceil();
+            let (bc, br) = batch_shape(cap, 0.0, fewest);
+            let batches = cols.div_ceil(bc) * rows.div_ceil(br);
+            let submits = batches * iterations;
+            assert!(
+                f64::from(submits) <= MOST_BACKGROUND_SUBMITS * 1.1,
+                "{cols}x{rows} at {iterations}: {submits}"
+            );
+        }
     }
 
     #[test]

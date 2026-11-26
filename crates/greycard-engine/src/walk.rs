@@ -519,6 +519,13 @@ pub trait Hold {
     fn keeps_device(&self) -> bool {
         false
     }
+
+    /// How long one of the sharpen's submissions may run: the
+    /// default's, or a walk nobody waits on (the settle) a short one,
+    /// so the window's frames queued behind it are drawn on time.
+    fn budget(&self) -> std::time::Duration {
+        greycard_gpu::SUBMIT_BUDGET
+    }
 }
 
 /// Whether `e`, met by a walk under `hold`, leaves the session its
@@ -1700,6 +1707,10 @@ impl<T> Hold for UntilFilled<'_, T> {
 
     fn keeps_device(&self) -> bool {
         self.inner.keeps_device()
+    }
+
+    fn budget(&self) -> std::time::Duration {
+        self.inner.budget()
     }
 }
 
@@ -3010,7 +3021,7 @@ fn device_run(
                     clip,
                     &out,
                     (delta.made(), delta.sharpens()),
-                    &|| hold.give_way_inside(stage),
+                    (hold.budget(), &|| hold.give_way_inside(stage)),
                 )?;
                 if let Some(d) = d {
                     let (w, h) = (image.width() as usize, image.height() as usize);
@@ -4420,6 +4431,7 @@ mod tests {
         let viewport_plan = plan(&viewport, &Purpose::Viewport, true);
         let ctx_keeps = |gpu: &Option<greycard_gpu::Context>| gpu.as_ref().unwrap().kept_sizes();
         gpu.as_ref().unwrap().keep_local_contrast_planes(true);
+        gpu.as_ref().unwrap().keep_sharpen_planes(true);
         walk(
             &viewport,
             &viewport_plan,
@@ -4461,6 +4473,7 @@ mod tests {
         .unwrap();
         assert_eq!(ctx_keeps(&gpu), none, "a set of another size goes");
         gpu.as_ref().unwrap().keep_local_contrast_planes(false);
+        gpu.as_ref().unwrap().keep_sharpen_planes(false);
 
         // The stages before the run as the device ran them, the run on
         // the CPU: the ops' rounding alone.

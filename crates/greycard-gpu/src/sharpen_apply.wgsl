@@ -30,6 +30,8 @@ struct Params {
     floor_pedestal: f32,
     // What the levels are read at, `SharpenOptions::level_scale`.
     level_scale: f32,
+    // The first row a whole-picture pass works: a band's, or zero.
+    row0: u32,
     kernel: array<vec4<f32>, 4>,
 }
 
@@ -54,19 +56,21 @@ fn sharpened_pixel(at: vec2<i32>) -> vec4<f32> {
 
 @compute @workgroup_size(16, 16, 1)
 fn apply_half(@builtin(global_invocation_id) gid: vec3<u32>) {
-    if gid.x >= p.size.x || gid.y >= p.size.y {
+    let row = gid.y + p.row0;
+    if gid.x >= p.size.x || row >= p.size.y {
         return;
     }
-    let at = vec2<i32>(gid.xy);
+    let at = vec2<i32>(i32(gid.x), i32(row));
     textureStore(out_half, at, halves_nearest(sharpened_pixel(at)));
 }
 
 @compute @workgroup_size(16, 16, 1)
 fn apply_full(@builtin(global_invocation_id) gid: vec3<u32>) {
-    if gid.x >= p.size.x || gid.y >= p.size.y {
+    let row = gid.y + p.row0;
+    if gid.x >= p.size.x || row >= p.size.y {
         return;
     }
-    let at = vec2<i32>(gid.xy);
+    let at = vec2<i32>(i32(gid.x), i32(row));
     let v = sharpened_pixel(at);
     textureStore(out_full, at, vec4<f32>(v.rgb, 1.0));
     textureStore(out_mask, at, vec4<f32>(v.a, 0.0, 0.0, 0.0));
@@ -76,19 +80,21 @@ fn apply_full(@builtin(global_invocation_id) gid: vec3<u32>) {
 // it: no sharpen to paint.
 @compute @workgroup_size(16, 16, 1)
 fn keep_half(@builtin(global_invocation_id) gid: vec3<u32>) {
-    if gid.x >= p.size.x || gid.y >= p.size.y {
+    let row = gid.y + p.row0;
+    if gid.x >= p.size.x || row >= p.size.y {
         return;
     }
-    let at = vec2<i32>(gid.xy);
+    let at = vec2<i32>(i32(gid.x), i32(row));
     textureStore(out_half, at, halves_nearest(vec4<f32>(textureLoad(rgb, at, 0).rgb, 0.0)));
 }
 
 @compute @workgroup_size(16, 16, 1)
 fn keep_full(@builtin(global_invocation_id) gid: vec3<u32>) {
-    if gid.x >= p.size.x || gid.y >= p.size.y {
+    let row = gid.y + p.row0;
+    if gid.x >= p.size.x || row >= p.size.y {
         return;
     }
-    let at = vec2<i32>(gid.xy);
+    let at = vec2<i32>(i32(gid.x), i32(row));
     textureStore(out_full, at, vec4<f32>(textureLoad(rgb, at, 0).rgb, 1.0));
     textureStore(out_mask, at, vec4<f32>(textureLoad(blend, at, 0).r, 0.0, 0.0, 0.0));
 }
@@ -97,10 +103,11 @@ fn keep_full(@builtin(global_invocation_id) gid: vec3<u32>) {
 // over the old, both on the pedestal.
 @compute @workgroup_size(16, 16, 1)
 fn delta(@builtin(global_invocation_id) gid: vec3<u32>) {
-    if gid.x >= p.size.x || gid.y >= p.size.y {
+    let row = gid.y + p.row0;
+    if gid.x >= p.size.x || row >= p.size.y {
         return;
     }
-    let at = vec2<i32>(gid.xy);
+    let at = vec2<i32>(i32(gid.x), i32(row));
     let old = textureLoad(lum, at, 0).r;
     let now = textureLoad(sharpened, at, 0).r;
     textureStore(out_delta, at, vec4<f32>(log2(now / old), 0.0, 0.0, 0.0));

@@ -41,6 +41,8 @@ struct Params {
     floor_pedestal: f32,
     // What the levels are read at, `SharpenOptions::level_scale`.
     level_scale: f32,
+    // The first row a whole-picture pass works: a band's, or zero.
+    row0: u32,
     // The kernel's taps, up to sixteen: a deconvolution kernel whole,
     // or the blend blur's one side, the center first.
     kernel: array<vec4<f32>, 4>,
@@ -109,10 +111,11 @@ fn blend_factor(c: f32, threshold: f32) -> f32 {
 // clip mask into `blend`.
 @compute @workgroup_size(16, 16, 1)
 fn prepare(@builtin(global_invocation_id) gid: vec3<u32>) {
-    if gid.x >= p.size.x || gid.y >= p.size.y {
+    let row = gid.y + p.row0;
+    if gid.x >= p.size.x || row >= p.size.y {
         return;
     }
-    let at = vec2<i32>(gid.xy);
+    let at = vec2<i32>(i32(gid.x), i32(row));
     let px = textureLoad(rgb, at, 0).rgb;
     let y = LUMA.x * px.x + LUMA.y * px.y + LUMA.z * px.z;
     textureStore(lum, at, vec4<f32>(max(y, 0.0) + p.pedestal, 0.0, 0.0, 0.0));
@@ -128,10 +131,11 @@ fn prepare(@builtin(global_invocation_id) gid: vec3<u32>) {
 // guide: what the threshold and the blend read is then the guide's.
 @compute @workgroup_size(16, 16, 1)
 fn guide_lstar(@builtin(global_invocation_id) gid: vec3<u32>) {
-    if gid.x >= p.size.x || gid.y >= p.size.y {
+    let row = gid.y + p.row0;
+    if gid.x >= p.size.x || row >= p.size.y {
         return;
     }
-    let at = vec2<i32>(gid.xy);
+    let at = vec2<i32>(i32(gid.x), i32(row));
     let px = textureLoad(rgb, at, 0).rgb;
     let y = LUMA.x * px.x + LUMA.y * px.y + LUMA.z * px.z;
     textureStore(lstar, at, vec4<f32>(l_star(y * p.level_scale), 0.0, 0.0, 0.0));
@@ -142,7 +146,8 @@ var<workgroup> scratch: array<f32, 256>;
 // The sum of one row of `blend`, a workgroup a row.
 @compute @workgroup_size(256, 1, 1)
 fn row_sum(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_id) lid: vec3<u32>) {
-    let y = i32(wid.x);
+    let row = wid.x + p.row0;
+    let y = i32(row);
     var acc = 0.0;
     for (var x = lid.x; x < p.size.x; x += 256u) {
         acc += textureLoad(blend, vec2<i32>(i32(x), y)).r;
@@ -156,7 +161,7 @@ fn row_sum(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_id) 
         workgroupBarrier();
     }
     if lid.x == 0u {
-        partials[p.offset + wid.x] = scratch[0];
+        partials[p.offset + row] = scratch[0];
     }
 }
 
@@ -214,10 +219,11 @@ fn tile_index(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_i
 // clip mask) into `tmp`.
 @compute @workgroup_size(16, 16, 1)
 fn dilate(@builtin(global_invocation_id) gid: vec3<u32>) {
-    if gid.x >= p.size.x || gid.y >= p.size.y {
+    let row = gid.y + p.row0;
+    if gid.x >= p.size.x || row >= p.size.y {
         return;
     }
-    let at = vec2<i32>(gid.xy);
+    let at = vec2<i32>(i32(gid.x), i32(row));
     var m = textureLoad(blend, at).r;
     if m != 0.0 {
         let x0 = max(at.x - 2, 0);
@@ -239,10 +245,11 @@ fn dilate(@builtin(global_invocation_id) gid: vec3<u32>) {
 // times the sigmoid of the local contrast, into `blend`.
 @compute @workgroup_size(16, 16, 1)
 fn contrast_blend(@builtin(global_invocation_id) gid: vec3<u32>) {
-    if gid.x >= p.size.x || gid.y >= p.size.y {
+    let row = gid.y + p.row0;
+    if gid.x >= p.size.x || row >= p.size.y {
         return;
     }
-    let at = vec2<i32>(gid.xy);
+    let at = vec2<i32>(i32(gid.x), i32(row));
     let xx = clamp(at.x, 2, i32(p.size.x) - 3);
     let yy = clamp(at.y, 2, i32(p.size.y) - 3);
     let b = textureLoad(tmp, at).r * blend_factor(contrast(xx, yy), p.threshold);
@@ -253,10 +260,11 @@ fn contrast_blend(@builtin(global_invocation_id) gid: vec3<u32>) {
 // the picture's edge; the kernel is one side, center first.
 @compute @workgroup_size(16, 16, 1)
 fn blur_rows(@builtin(global_invocation_id) gid: vec3<u32>) {
-    if gid.x >= p.size.x || gid.y >= p.size.y {
+    let row = gid.y + p.row0;
+    if gid.x >= p.size.x || row >= p.size.y {
         return;
     }
-    let at = vec2<i32>(gid.xy);
+    let at = vec2<i32>(i32(gid.x), i32(row));
     let last = i32(p.size.x) - 1;
     var acc = tap(0u) * textureLoad(blend, at).r;
     for (var k = 1u; k <= p.half; k++) {
@@ -271,10 +279,11 @@ fn blur_rows(@builtin(global_invocation_id) gid: vec3<u32>) {
 // The blend blur down the columns, `tmp` into `blend`.
 @compute @workgroup_size(16, 16, 1)
 fn blur_cols(@builtin(global_invocation_id) gid: vec3<u32>) {
-    if gid.x >= p.size.x || gid.y >= p.size.y {
+    let row = gid.y + p.row0;
+    if gid.x >= p.size.x || row >= p.size.y {
         return;
     }
-    let at = vec2<i32>(gid.xy);
+    let at = vec2<i32>(i32(gid.x), i32(row));
     let last = i32(p.size.y) - 1;
     var acc = tap(0u) * textureLoad(tmp, at).r;
     for (var k = 1u; k <= p.half; k++) {
@@ -290,9 +299,10 @@ fn blur_cols(@builtin(global_invocation_id) gid: vec3<u32>) {
 // its pedestal: what a block the sharpen never commits keeps.
 @compute @workgroup_size(16, 16, 1)
 fn init_sharpened(@builtin(global_invocation_id) gid: vec3<u32>) {
-    if gid.x >= p.size.x || gid.y >= p.size.y {
+    let row = gid.y + p.row0;
+    if gid.x >= p.size.x || row >= p.size.y {
         return;
     }
-    let at = vec2<i32>(gid.xy);
+    let at = vec2<i32>(i32(gid.x), i32(row));
     textureStore(tmp, at, textureLoad(lum, at));
 }

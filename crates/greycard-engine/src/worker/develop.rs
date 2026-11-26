@@ -68,6 +68,9 @@ pub(super) struct Round {
     /// The settle: the whole sharpen after a round that sharpened only
     /// what was shown, giving way to a newer develop.
     pub settle: bool,
+    /// A first round for a zoom in past what the picture on screen ran,
+    /// which gives way as the settle does.
+    pub under_hold: bool,
 }
 
 /// What a round does with a learned highlight fill its walk would have
@@ -99,6 +102,7 @@ impl Round {
             seen: None,
             quick: None,
             settle: false,
+            under_hold: false,
         }
     }
 
@@ -114,6 +118,7 @@ impl Round {
             seen: None,
             quick: None,
             settle: false,
+            under_hold: false,
         }
     }
 
@@ -135,6 +140,16 @@ impl Round {
         }
     }
 
+    /// A first round of what `seen` shows, for a zoom in past the
+    /// iterations of the picture on screen: sharpened as far as it
+    /// shows, giving way to a newer develop as the settle does.
+    pub(super) fn zoomed(seen: super::Seen) -> Self {
+        Self {
+            under_hold: true,
+            ..Self::first_seen(Some(seen))
+        }
+    }
+
     /// The next fill of a develop whose rounds so far left `ahead`, and
     /// its highlight fill when it is still to make.
     pub(super) fn next(ahead: (usize, usize)) -> Self {
@@ -147,6 +162,7 @@ impl Round {
             seen: None,
             quick: None,
             settle: false,
+            under_hold: false,
         }
     }
 }
@@ -170,6 +186,9 @@ enum Walk<'a> {
     /// From what the frame keeps, asking `hold` before each stage and
     /// inside the sharpen whether to give way: the settle's.
     Settle(&'a dyn Hold),
+    /// As `Plain`, sharpened as far as the window shows, asking `hold`
+    /// as the settle does: a zoom in's first round.
+    Part(&'a dyn Hold),
 }
 
 /// Develop `edit` on the open frame at `turn`: a walk of the window's
@@ -239,6 +258,8 @@ pub(super) fn develop_round(
         // shown, which gives way to a newer develop.
         let how = if round.settle {
             Walk::Settle(hold)
+        } else if round.under_hold {
+            Walk::Part(hold)
         } else {
             Walk::Plain
         };
@@ -372,7 +393,9 @@ fn develop_with(
     // at the turn the window draws.
     round.quick = None;
     let steps = match (&how, round.seen.as_ref()) {
-        (Walk::Plain, Some(seen)) if gpu.is_some() && super::seen::may_quicken(edit) => {
+        (Walk::Plain | Walk::Part(_), Some(seen))
+            if gpu.is_some() && super::seen::may_quicken(edit) =>
+        {
             match super::seen::quickened(&steps, seen, facts.full(), h.meta.radius) {
                 Some((steps, quick)) => {
                     round.quick = Some(quick);
@@ -445,7 +468,7 @@ fn develop_with(
     // the floor the models' sessions are kept over is measured from.
     let free_before = gpu.as_ref().and_then(|_| crate::ai::card_free_for_log());
     let (walked, unfilled) = match how {
-        Walk::Settle(hold) => (
+        Walk::Settle(hold) | Walk::Part(hold) => (
             walk(&steps, &plan, &walking, &mut h.kept, &mut models, gpu, hold),
             None,
         ),

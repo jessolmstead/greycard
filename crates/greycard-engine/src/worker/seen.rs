@@ -9,11 +9,12 @@
 //! settle, sharpens the whole frame and delivers again, giving way to
 //! a newer develop between its submissions. The picture at rest is the
 //! whole develop's to the bit, and a tile on screen at 1:1 or closer
-//! is that picture's already while a slider moves. A view moved past
-//! what the first round sharpened before the settle lands (a pan, a
-//! zoom, a turn) has a first round of what it shows first
-//! ([`Quick::shows`]); a save waiting on the settle has it made before
-//! the frame is left or the editor closes.
+//! is that picture's already while a slider moves. A view moved before
+//! the settle lands is drawn from the first round's picture until it
+//! does, unless it needs more iterations than that ran (a zoom in),
+//! which has a first round of its own ([`Quick::wants_more`]); a save
+//! waiting on the settle has it made before the frame is left or the
+//! editor closes.
 
 use greycard_core::develop::sharpen::{self, Part, Radius};
 use greycard_edit::Edit;
@@ -65,29 +66,91 @@ impl Quick {
         (part, iterations)
     }
 
-    /// Whether the picture this sharpened shows all `seen` shows as the
-    /// whole sharpen would: each tile seen among those sharpened, at no
-    /// fewer iterations than the view needs.
-    pub(super) fn shows(&self, seen: &Seen) -> bool {
+    /// Whether `seen` needs more iterations than this sharpened (a zoom
+    /// in past them) over a part of the picture, which a first round of
+    /// its own is made for. A view of every tile (enlarging a window at
+    /// a fit view, a zoom below where the view covers the picture) does
+    /// not: that round would be the whole sharpen, which the settle is.
+    /// Nor does a view of tiles this did not sharpen at no more
+    /// iterations (a pan, a zoom out): the settle covers it. Each such round runs
+    /// more iterations than the last, never more than the edit's, so a
+    /// move has no more of them than there are counts from the floor to
+    /// the edit's (`iterations_seen_at` gives eight to twenty at the
+    /// default), and in practice one or two.
+    pub(super) fn wants_more(&self, seen: &Seen) -> bool {
         let (part, iterations) = self.needs(seen);
-        let (w, h) = self.size;
-        let tile = sharpen::tile_for(h);
-        let within = |want: &Part, have: &Part| {
-            let ((wc, wb), (hc, hb)) = (want.tiles(w, h, tile), have.tiles(w, h, tile));
-            wc.is_empty()
-                || wb.is_empty()
-                || (hc.start <= wc.start
-                    && wc.end <= hc.end
-                    && hb.start <= wb.start
-                    && wb.end <= hb.end)
-        };
-        iterations <= self.iterations
-            && match (&part, &self.part) {
-                (_, None) => true,
-                (None, Some(_)) => false,
-                (Some(want), Some(have)) => within(want, have),
-            }
+        part.is_some() && iterations > self.iterations
     }
+}
+
+/// The rectangle of the tiles `quick` sharpened, pixels of its picture:
+/// left, top, right, bottom, the far ends exclusive; none for every tile.
+pub(super) fn sharpened_rect(quick: &Quick) -> Option<[u32; 4]> {
+    let part = quick.part?;
+    let (w, h) = quick.size;
+    let tile = sharpen::tile_for(h);
+    let (cols, bands) = part.tiles(w, h, tile);
+    let at = |v: usize, side: usize| (v * tile).min(side) as u32;
+    Some([
+        at(cols.start, w),
+        at(bands.start, h),
+        at(cols.end, w),
+        at(bands.end, h),
+    ])
+}
+
+/// `onto`, a first round's picture of the tiles `quick` sharpened, the
+/// rest of it unsharpened, given `from`'s pixels outside those tiles:
+/// the picture on screen before it, so a zoom in's round leaves what an
+/// earlier round sharpened as it was. Neither is a picture at rest, so
+/// what this composes is only ever shown, never kept. Nothing for
+/// pictures of other sizes or a round of every tile.
+pub(super) fn keep_outside(
+    ctx: &greycard_gpu::Context,
+    from: &greycard_gpu::wgpu::Texture,
+    onto: &greycard_gpu::wgpu::Texture,
+    quick: &Quick,
+) {
+    let (w, h) = (onto.width(), onto.height());
+    let Some(rect) = sharpened_rect(quick) else {
+        return;
+    };
+    if (from.width(), from.height()) != (w, h) || quick.size != (w as usize, h as usize) {
+        return;
+    }
+    let mut encoder = ctx.device().create_command_encoder(&Default::default());
+    for [l, t, r, b] in outside(rect, (w, h)) {
+        let at = |texture| greycard_gpu::wgpu::TexelCopyTextureInfo {
+            texture,
+            mip_level: 0,
+            origin: greycard_gpu::wgpu::Origin3d { x: l, y: t, z: 0 },
+            aspect: greycard_gpu::wgpu::TextureAspect::All,
+        };
+        encoder.copy_texture_to_texture(
+            at(from),
+            at(onto),
+            greycard_gpu::wgpu::Extent3d {
+                width: r - l,
+                height: b - t,
+                depth_or_array_layers: 1,
+            },
+        );
+    }
+    ctx.queue().submit(Some(encoder.finish()));
+}
+
+/// The rectangles of a `w` by `h` picture outside `rect`: the rows above
+/// and below it whole, and the two sides of it, none empty.
+fn outside([x0, y0, x1, y1]: [u32; 4], (w, h): (u32, u32)) -> Vec<[u32; 4]> {
+    [
+        [0, 0, w, y0],
+        [0, y1, w, h],
+        [0, y0, x0, y1],
+        [x1, y0, w, y1],
+    ]
+    .into_iter()
+    .filter(|[l, t, r, b]| l < r && t < b)
+    .collect()
 }
 
 /// `steps` with its sharpen made the one `seen` needs of a picture of
@@ -258,40 +321,85 @@ mod tests {
         assert!(at(wide, Some(0.7)) > 8);
     }
 
-    /// A first round's picture shows a view inside the tiles it
-    /// sharpened at its iterations or fewer; a pan past them, a zoom
-    /// that needs more iterations, or a part where every tile was
-    /// sharpened does not.
+    /// A first round asks for another only for a view of part of the
+    /// picture that needs more iterations than it ran: 1:1 needs every
+    /// iteration after a fit view's eight, and a view further in still
+    /// after a 0.4 view's; a view of the whole picture at 0.4 (a window
+    /// made larger at a fit view) does not, the settle being its round;
+    /// nor a pan past its tiles, a view inside them, or a zoom out.
     #[test]
-    fn a_first_round_shows_what_its_tiles_hold() {
+    fn a_first_round_wants_more_only_for_more_iterations() {
         let size = (8256, 5504);
         let steps = list(SharpenOptions::default());
+        let fit = Seen {
+            rect: [0.0, 0.0, 1.0, 1.0],
+            zoom: 0.26,
+        };
         let close = Seen {
             rect: [0.25, 0.25, 0.5, 0.5],
             zoom: 1.0,
         };
-        let (_, quick) = quickened(&steps, &close, size, Some(0.74)).expect("a part");
-        assert!(quick.shows(&close));
-        let inside = Seen {
-            rect: [0.3, 0.3, 0.45, 0.45],
-            zoom: 2.0,
+        let (_, at_fit) = quickened(&steps, &fit, size, Some(0.74)).expect("fewer");
+        assert_eq!(at_fit.iterations, 8);
+        assert!(at_fit.wants_more(&close), "1:1 needs every iteration");
+        assert!(!at_fit.wants_more(&fit));
+        assert!(
+            !at_fit.wants_more(&Seen { zoom: 0.15, ..fit }),
+            "further out"
+        );
+        let larger = Seen { zoom: 0.4, ..fit };
+        assert!(!at_fit.wants_more(&larger), "the whole picture: the settle");
+        let nearer = Seen {
+            rect: [0.2, 0.2, 0.8, 0.8],
+            zoom: 0.4,
         };
-        assert!(quick.shows(&inside));
+        assert!(at_fit.wants_more(&nearer), "0.4 needs eleven");
+        let (_, at_nearer) = quickened(&steps, &nearer, size, Some(0.74)).expect("fewer");
+        assert_eq!(at_nearer.iterations, 11);
+        assert!(at_nearer.wants_more(&close));
+        let (_, at_close) = quickened(&steps, &close, size, Some(0.74)).expect("a part");
         let panned = Seen {
             rect: [0.5, 0.25, 0.75, 0.5],
             zoom: 1.0,
         };
-        assert!(!quick.shows(&panned));
-        let out = Seen {
-            rect: [0.0, 0.0, 1.0, 1.0],
-            zoom: 0.25,
+        let inside = Seen {
+            rect: [0.3, 0.3, 0.45, 0.45],
+            zoom: 2.0,
         };
-        assert!(!quick.shows(&out), "every tile, though fewer iterations");
-        let (_, fit) = quickened(&steps, &out, size, Some(0.74)).expect("fewer");
-        assert!(fit.shows(&out));
-        assert!(!fit.shows(&close), "1:1 needs every iteration");
-        let further = Seen { zoom: 0.15, ..out };
-        assert!(fit.shows(&further));
+        for seen in [close, panned, inside, fit] {
+            assert!(!at_close.wants_more(&seen), "{seen:?}");
+        }
+    }
+
+    /// What lies outside a rectangle: every pixel once, none inside.
+    #[test]
+    fn outside_a_rectangle_is_every_other_pixel_once() {
+        let (w, h) = (40u32, 30u32);
+        for rect in [
+            [10, 5, 30, 20],
+            [0, 0, 40, 30],
+            [0, 0, 10, 30],
+            [35, 25, 40, 30],
+        ] {
+            let mut seen = vec![0u8; (w * h) as usize];
+            for [l, t, r, b] in outside(rect, (w, h)) {
+                for y in t..b {
+                    for x in l..r {
+                        seen[(y * w + x) as usize] += 1;
+                    }
+                }
+            }
+            for y in 0..h {
+                for x in 0..w {
+                    let inside = x >= rect[0] && x < rect[2] && y >= rect[1] && y < rect[3];
+                    assert_eq!(
+                        seen[(y * w + x) as usize],
+                        u8::from(!inside),
+                        "{rect:?} {x},{y}"
+                    );
+                }
+            }
+        }
     }
 
     /// A fill to make keeps the whole sharpen in the first round.
