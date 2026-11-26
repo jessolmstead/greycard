@@ -48,6 +48,8 @@ design note behind it.
   ([§741](https://github.com/jessolmstead/greycard/blob/master/docs/notes/741-the-sharpen-on-a-merge-at-its-reference-frames-levels.md)).
 - A Clarity, Dehaze, or Detail move on a big frame shows sooner: what the window shows is sharpened first, the rest after
   ([§745](https://github.com/jessolmstead/greycard/blob/master/docs/notes/745-the-sharpen-of-what-is-seen-first.md)).
+- After Esc hides a Linear or Radial shape's handles, a drag over the shape pans; its row brings them back (discussion 178,
+  [§748](https://github.com/jessolmstead/greycard/blob/master/docs/notes/748-a-shape-esc-put-down-is-out-of-hand.md)).
 - A focus stack develops each frame as the editor does, chromatic
   aberration corrected: finer texture, no color fringes, about 1.8
   times the time

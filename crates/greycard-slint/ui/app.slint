@@ -1747,6 +1747,8 @@ export component App inherits Window {
     /// Paint the capture sharpening's blend mask over the picture.
     in-out property <bool> show-sharpen-mask: false;
     in-out property <string> placing: "";
+    // A tool taken up asks for the shapes again.
+    changed placing => { if (root.placing != "") { root.handles-down = false; } }
     // The chosen adjustment's name, its shapes, the chosen shape and
     // its own controls, and how the next shape joins.
     in-out property <string> adjustment-name: "";
@@ -1861,8 +1863,10 @@ export component App inherits Window {
     in-out property <string> mask-kind: "";
     in-out property <[Pt]> mask-handles: [];
     // The chosen shape's handles put down by Esc, the shape still
-    // chosen: back with a press on its row or its body, or with
-    // another shape, mask or frame.
+    // chosen and its sliders acting on it, but nothing of it in hand
+    // on the picture: back only by an ask from the panel or the keys,
+    // a press on its row or its mask's, a tool taken up, another
+    // shape, mask or frame.
     in-out property <bool> handles-down: false;
     changed component => { root.handles-down = false; }
     changed mask-kind => { root.handles-down = false; }
@@ -4359,7 +4363,7 @@ export component App inherits Window {
                         target <=> root.target;
                         adjustment-on <=> root.adjustment-on;
                         collapsed-adjustments <=> root.collapsed-adjustments;
-                        target-changed(a) => { root.target-changed(a); }
+                        target-changed(a) => { root.handles-down = false; root.target-changed(a); }
                         adjustment-toggled(a) => { root.adjustment-toggled(a); }
                         mask-lit <=> root.mask-lit;
                         lit-changed => { root.lit-changed(); }

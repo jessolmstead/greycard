@@ -120,7 +120,8 @@ Intersect is how you limit one shape to a place, such as a
 
 Press **Esc** to put a drawing tool down, or click its button again.
 With no tool in hand, **Esc** hides a Linear or Radial shape's handles
-so you can see the picture; click its row or the shape to bring them
+so you can see the picture. With them away, a drag over the shape
+pans the picture; click its row, or its mask's row, to bring them
 back.
 
 ### Linear

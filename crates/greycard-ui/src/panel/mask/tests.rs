@@ -3670,11 +3670,11 @@ fn a_straightened_frame_draws_its_linear_only_once_its_size_is_known() {
 }
 
 /// Esc with nothing in hand puts a placed linear's handles down,
-/// the shape still chosen; a press on its row or on its band
-/// brings them back. With the brush in hand Esc puts the brush
-/// down and leaves the handles be.
+/// the shape still chosen; a press on its row or its mask's brings
+/// them back, a press on its band does not. With the brush in hand
+/// Esc puts the brush down and leaves the handles be.
 #[test]
-fn esc_puts_a_shapes_handles_down_and_a_press_brings_them_back() {
+fn esc_puts_a_shapes_handles_down_and_its_row_brings_them_back() {
     use crate::testing::press;
     use slint::platform::Key;
     let linear = Shape::Linear {
@@ -3712,10 +3712,14 @@ fn esc_puts_a_shapes_handles_down_and_a_press_brings_them_back() {
     assert!(!app.get_handles_down(), "the row brought them back");
     press(&app, Key::Escape);
     assert!(app.get_handles_down());
-    // Its band on the picture, clear of the handles.
+    // Its band on the picture, clear of the handles: the picture's
+    // press, not the shape's.
     let p = shown_at(&app, &state, base, 0.15, 0.375);
     click(&app, p.0, p.1);
-    assert!(!app.get_handles_down(), "the band brought them back");
+    assert!(app.get_handles_down(), "the band brought them back");
+    // Its mask's row.
+    crate::testing::click_key(&app, MASK_ROW, 1);
+    assert!(!app.get_handles_down(), "the mask's row brought them back");
     // The brush in hand: Esc is the brush's alone.
     app.invoke_add_shape("Brush".into(), "Add".into());
     assert_eq!(app.get_placing(), "Brush");
@@ -3726,6 +3730,101 @@ fn esc_puts_a_shapes_handles_down_and_a_press_brings_them_back() {
     app.set_mask_kind("Linear".into());
     press(&app, Key::Escape);
     assert!(app.get_handles_down(), "the next Esc is the handles'");
+}
+
+/// The view points of `shape`'s handles, as the render step draws
+/// them.
+fn draw_handles(app: &App, state: &Rc<Shared>, shape: &Shape) {
+    let pts: Vec<Pt> = shape
+        .handles()
+        .into_iter()
+        .map(|(u, v)| {
+            let (x, y) = source_to_view(&state.borrow(), app, u, v);
+            Pt { x, y }
+        })
+        .collect();
+    app.set_mask_handles(ModelRc::new(VecModel::from(pts)));
+}
+
+/// With its handles down by Esc a shape is not in hand on the
+/// picture: a drag over its body, and over where its center handle
+/// was, pans as with no shape chosen, and the shape stays as it
+/// was with its handles hidden. Its row brings the handles back,
+/// and a drag on the body then moves the shape as before.
+#[test]
+fn a_drag_on_a_shapes_body_pans_once_esc_put_its_handles_down() {
+    use crate::testing::press;
+    use slint::platform::Key;
+    let linear = Shape::Linear {
+        from: [0.5, 0.3],
+        to: [0.5, 0.45],
+    };
+    for (shape, on_body) in [
+        (linear, [(0.15, 0.375), (0.5, 0.375)]),
+        (a_radial(0.2, 0.1), [(0.6, 0.375), (0.5, 0.375)]),
+    ] {
+        let (app, state, _worker, base) = body_setup(shape.clone());
+        {
+            let st = state.borrow();
+            show_edit(&st, &st.develop.edit, &app, st.develop.target);
+        }
+        draw_handles(&app, &state, &shape);
+        app.set_mask_kind(shape.name().into());
+        press(&app, Key::Escape);
+        assert!(app.get_handles_down(), "Esc put the handles down");
+        for (u, v) in on_body {
+            let at = shown_at(&app, &state, base, u, v);
+            let was_center = state.borrow().develop.center;
+            crate::testing::drag(
+                &app,
+                &[at, (at.0 + 10.0, at.1 + 5.0), (at.0 + 40.0, at.1 + 20.0)],
+            );
+            assert_eq!(the_shape(&state), shape, "the shape moved at {u}, {v}");
+            assert_ne!(
+                state.borrow().develop.center,
+                was_center,
+                "the picture did not pan at {u}, {v}"
+            );
+            assert!(app.get_handles_down(), "the drag brought them back");
+            assert!(!app.get_mask_body_moving());
+            assert!(state.borrow().develop.mask_drag.is_none());
+        }
+        // Its row: the handles back, and the body the shape's again.
+        let (at, size) = crate::testing::by_id(&app, "AdjustmentsSection::invert-button");
+        click(&app, at.x - 60.0, at.y + size.height / 2.0);
+        assert!(!app.get_handles_down(), "the row brought them back");
+        draw_handles(&app, &state, &shape);
+        let at = shown_at(&app, &state, base, on_body[0].0, on_body[0].1);
+        let was_center = state.borrow().develop.center;
+        crate::testing::drag(&app, &[at, (at.0, at.1 + 10.0), (at.0, at.1 + 40.0)]);
+        assert_ne!(the_shape(&state), shape, "the body drag did not move it");
+        assert_eq!(state.borrow().develop.center, was_center, "it panned");
+    }
+}
+
+/// A tool taken up asks for the shapes again: the handles Esc put
+/// down stay back once the tool is put down.
+#[test]
+fn a_tool_taken_up_brings_the_handles_back() {
+    use crate::testing::press;
+    use slint::platform::Key;
+    let shape = a_radial(0.2, 0.1);
+    let (app, state, _worker, _base) = body_setup(shape.clone());
+    {
+        let st = state.borrow();
+        show_edit(&st, &st.develop.edit, &app, st.develop.target);
+    }
+    draw_handles(&app, &state, &shape);
+    app.set_mask_kind("Radial".into());
+    press(&app, Key::Escape);
+    assert!(app.get_handles_down());
+    app.invoke_add_shape("Radial".into(), "Add".into());
+    assert_eq!(app.get_placing(), "Radial");
+    slint::platform::update_timers_and_animations();
+    assert!(!app.get_handles_down(), "the tool brought them back");
+    press(&app, Key::Escape);
+    assert_eq!(app.get_placing(), "", "the tool put down");
+    assert!(!app.get_handles_down());
 }
 
 /// A mask's row under the pointer lights that mask over the

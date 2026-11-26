@@ -177,8 +177,10 @@ export component Viewport inherits Rectangle {
     out property <bool> shift-holds: root.placing == "Linear" || root.placing == "Radial";
     in-out property <string> mask-kind;
     in-out property <[Pt]> mask-handles;
-    // The handles put down by Esc: none drawn, and a press on the
-    // shape's body brings them back.
+    // The handles put down by Esc: none drawn, and the shape's body
+    // and handles take no press, so the picture pans as with no shape
+    // chosen. Only the panel brings them back (its rows, a tool, a new
+    // shape), never the picture.
     in-out property <bool> handles-down;
     in-out property <[MaskBox]> mask-boxes;
     in-out property <[MaskPick]> mask-picks;
@@ -214,9 +216,13 @@ export component Viewport inherits Rectangle {
         + root.mask-handles[3].x + root.mask-handles[3].y;
     // Whether a drag on a shape's body is moving it, for the window.
     out property <bool> mask-body-moving: ta.body-moving;
-    // A linear or radial shape chosen with no tool in hand: the only
-    // time a press on the picture can take hold of a shape's body.
+    // A linear or radial shape chosen with no tool in hand and its
+    // handles up: the only time a press on the picture can take hold
+    // of a shape's body. With the handles down by Esc the shape is not
+    // in hand on the picture, so its body neither moves nor shows a
+    // move cursor, and a drag there pans.
     property <bool> mask-body-live: (root.mask-kind == "Linear" || root.mask-kind == "Radial")
+        && !root.handles-down
         && !root.bare && root.picking == "" && root.placing == ""
         && root.retouch-mode == "" && !root.crop-mode && !root.level-mode
         && root.guide-mode == "";
@@ -621,7 +627,6 @@ export component Viewport inherits Rectangle {
                 self.body-down = e.button == PointerEventButton.left && !self.picked-down
                     && !self.placed-down && root.mask-body-live
                     && root.mask-body-at(self.mouse-x, self.mouse-y, root.mask-shape-key);
-                if (self.body-down) { root.handles-down = false; }
             } else if (e.kind == PointerEventKind.up) {
                 self.end-press(e.button == PointerEventButton.left);
             } else if (e.kind == PointerEventKind.cancel) {
