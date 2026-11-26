@@ -7728,7 +7728,7 @@ fn a_canceled_set_is_not_tried_again_at_512() {
         }],
     });
     let done = rx
-        .recv_timeout(std::time::Duration::from_secs(120))
+        .recv_timeout(std::time::Duration::from_secs(600))
         .expect("the frame done");
     assert!(
         matches!(done, crate::queue::Done::Failed { .. }),

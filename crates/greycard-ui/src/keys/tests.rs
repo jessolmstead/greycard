@@ -1387,7 +1387,11 @@ fn redo_bound_in_the_settings_sheet_is_what_the_window_goes_by() {
     row_of(&app, "redo").invoke_accessible_default_action();
     assert_eq!(value(&row_of(&app, "redo")), listening());
     with_ctrl(&app, "u", false);
-    assert_eq!(value(&row_of(&app, "redo")), "Ctrl+U");
+    // The row says the chord in the platform's words, Cmd on a Mac.
+    assert_eq!(
+        value(&row_of(&app, "redo")),
+        said("Ctrl+U", cfg!(target_os = "macos"))
+    );
     press(&app, Key::Escape);
     assert!(!app.get_settings_open());
     slint::platform::update_timers_and_animations();
