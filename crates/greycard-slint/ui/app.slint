@@ -1316,7 +1316,8 @@ export component App inherits Window {
         root.crop-toggled();
     }
     // New mask, by its button or by M: its name and shapes are in the
-    // MASK section, so the panel brings that section into view for it,
+    // MASK section, so the section opens, folding the rest under One
+    // section open at a time, and the panel brings it into view for it,
     // wherever the order has put it, once it is laid out (its slot's
     // Timer in the Develop and Masks stack).
     // At the most masks none is made, and nothing is to be brought in.
@@ -1327,6 +1328,7 @@ export component App inherits Window {
         let before = root.adjustment-names.length;
         root.mask-reveal-wanted = true;
         root.new-mask();
+        if (root.adjustment-names.length > before) { root.collapsed-mask = false; }
         if (root.adjustment-names.length <= before || root.shown-tab != "Masks") {
             root.mask-reveal-wanted = false;
         }
@@ -4362,13 +4364,12 @@ export component App inherits Window {
                         mask-lit <=> root.mask-lit;
                         lit-changed => { root.lit-changed(); }
                         // The button's new mask is named at once: its
-                        // section opens and its name takes the keys. M's
-                        // is not, as its shape is in hand for a drag.
+                        // name takes the keys. M's is not, as its shape
+                        // is in hand for a drag.
                         new-mask => {
                             let before = root.adjustment-names.length;
                             root.mask-new();
                             if (root.adjustment-names.length > before) {
-                                root.collapsed-mask = false;
                                 root.mask-name-wanted = true;
                             }
                         }

@@ -440,6 +440,53 @@ fn a_mask_chosen_or_made_shows_mask_alone_over_folds_set_unmade() {
     assert_eq!(open_folds(&app), ["adjustments", "mask"], "made by M");
 }
 
+/// One section open at a time, a mask chosen, and a section of its
+/// other than LIGHT opened by its header (MASK folds): a second mask
+/// made by New mask or by M shows MASK alone, then and after either
+/// mask is chosen again (issue 211).
+#[test]
+fn a_mask_made_over_a_chosen_masks_open_section_shows_mask_alone() {
+    let sections = [
+        ("GradingSection", "grading"),
+        ("CurvesSection", "curves"),
+        ("DetailSection", "detail"),
+    ];
+    for by_m in [false, true] {
+        for (section, fold) in sections {
+            let how = format!("{fold}, made by {}", if by_m { "M" } else { "New mask" });
+            let (app, _state, _worker) = one_open_window(true, crate::testing::folder(1));
+            app.invoke_select(0);
+            settled(&app);
+            show_tab(&app, "Masks");
+            click_new_mask(&app);
+            assert_eq!(open_folds(&app), ["adjustments", "mask"], "{how}: first");
+            click_header(&app, section);
+            assert_eq!(open_folds(&app), ["adjustments", fold], "{how}: opened");
+            if by_m {
+                crate::testing::press(&app, "m");
+                settled(&app);
+            } else {
+                click_new_mask(&app);
+            }
+            assert_eq!(app.get_target(), 2, "{how}: the second chosen");
+            assert_eq!(open_folds(&app), ["adjustments", "mask"], "{how}: made");
+            choose_mask(&app, 1);
+            assert_eq!(app.get_target(), 1, "{how}: the first chosen");
+            assert_eq!(
+                open_folds(&app),
+                ["adjustments", "mask"],
+                "{how}: the first chosen again"
+            );
+            choose_mask(&app, 2);
+            assert_eq!(
+                open_folds(&app),
+                ["adjustments", "mask"],
+                "{how}: the second chosen again"
+            );
+        }
+    }
+}
+
 /// One section open at a time, and two of Develop's sections left
 /// open while Develop's were unmade (a restored session, another
 /// tab): Develop shows one of them.
