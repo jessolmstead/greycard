@@ -698,6 +698,9 @@ comes across with its ratings and collections.
       in the destination's stack copy (§511): a stack's revision
       without file names, or Back up renaming the destination's file;
       the user's call
+- [ ] A file browser of our own for Back up and Bring back, to pick
+      the folder on the other side and see what is there, and for the
+      other places a folder or a file is chosen
 - [ ] The Lightroom mapper, after §342: the scales the fit proposes and
       did not ship (highlights, blacks, the curve, the mixer's bands)
       wait on a second shoot with export history; six exports from
