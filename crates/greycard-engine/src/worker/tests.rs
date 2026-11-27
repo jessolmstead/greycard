@@ -3982,11 +3982,13 @@ fn a_prefetch_counts_the_sharpen_s_set_still_held() {
         skipped("the sharpen's set beside a prefetch");
         return;
     };
-    assert_eq!(
-        Gpu::of(Some(&ctx)),
-        Gpu::Unified,
-        "lavapipe's memory is ours"
-    );
+    // A discrete card keeps the set on the card and charges it to
+    // neither side, so there is nothing to count: CI's lavapipe, whose
+    // memory is ours, is where this runs.
+    if Gpu::of(Some(&ctx)) != Gpu::Unified {
+        println!("SKIPPED: the sharpen's set beside a prefetch, on a discrete card");
+        return;
+    }
     let watch = ctx.sharpen_watch();
     let mut gpu = Some(ctx);
     let mut base = None;
