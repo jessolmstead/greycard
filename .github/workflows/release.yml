@@ -417,12 +417,22 @@ jobs:
       # request has to come back signed and checked or the leg fails,
       # so a release never ships unsigned in its place; on the ARM
       # leg, which may fail, that leaves its packages out.
+      #
+      # The repository variable WINDOWS_SIGNING set to "off" skips it
+      # with the secret left in place, for a release cut before
+      # SignPath is ready: `gh variable set WINDOWS_SIGNING --body off`,
+      # and `gh variable delete WINDOWS_SIGNING` to sign again.
       - name: Windows signing
         id: signing
         if: runner.os == 'Windows'
         env:
           SIGNPATH_API_TOKEN: ${{ secrets.SIGNPATH_API_TOKEN }}
+          WINDOWS_SIGNING: ${{ vars.WINDOWS_SIGNING }}
         run: |
+          if [ "$WINDOWS_SIGNING" = off ]; then
+            echo "::warning::WINDOWS_SIGNING is off; the Windows binaries and installer are unsigned"
+            exit 0
+          fi
           if [ -z "$SIGNPATH_API_TOKEN" ]; then
             echo "::warning::no SIGNPATH_API_TOKEN secret; the Windows binaries and installer are unsigned"
             exit 0
