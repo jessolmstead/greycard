@@ -28,7 +28,8 @@ mod handle;
 mod highlight_rounds;
 mod keep;
 mod masks;
-#[cfg(test)]
+// One measurement, read from /proc: Linux only, its helpers with it.
+#[cfg(all(test, target_os = "linux"))]
 mod memory_tests;
 #[cfg(test)]
 mod pan_tests;

@@ -177,7 +177,6 @@ fn measured_edit() -> Edit {
 /// prefetch's base of a second frame beside it.
 #[test]
 #[ignore = "a measurement: run by hand on lavapipe"]
-#[cfg(target_os = "linux")]
 fn what_an_open_frame_holds() {
     use greycard_gpu::wgpu;
     let (width, height) = std::env::var("GREYCARD_MEASURE_SIZE")
