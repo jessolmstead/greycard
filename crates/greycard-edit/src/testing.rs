@@ -59,7 +59,7 @@ pub(crate) fn fixed<T>(at: u64, install: &str, f: impl FnOnce() -> T) -> T {
 /// back: from then the golden files (`fixtures/*-at-10.*`) are what an
 /// earlier build wrote, and their writers refuse. Kept, not deleted,
 /// so the next schema's goldens are made the same way.
-pub(crate) const SCHEMA_10_CUT: bool = false;
+pub(crate) const SCHEMA_10_CUT: bool = true;
 
 /// The cut is not forgotten: from 0.13.0 on, [`SCHEMA_10_CUT`] is set.
 #[test]

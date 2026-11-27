@@ -68,8 +68,10 @@ the reasoning lives in `docs/notes.md`.
 - [ ] §753 on Metal: the pan after a Detail move at 102 MP, and what
       making the sharpen's planes costs per adjustment there
 - [ ] The shelf on the laptop it was sized for (§755): rest and peak
-      at 102 MP on 24 GB, measured; and whether the frame just left
-      should always be kept where the budget comes to none
+      at 102 MP on 24 GB, measured (stepping grew the swap by under
+      0.5 GB there, from 4.6 GB before, 2026-11-26); and whether the
+      frame just left should always be kept where the budget comes to
+      none
 - [ ] The open frame is held twice, the CPU base beside its upload of
       full floats (about 1 GB and 1.6 GB at 102 MP): drop the CPU base
       while the upload stands and read it back when it is needed, after
@@ -298,8 +300,7 @@ the reasoning lives in `docs/notes.md`.
 
 ## Next
 
-0.13.0: Canon highlights that hold more, and a learned denoiser that
-steps aside on a card it cannot run on.
+0.14.0: not yet chosen.
 
 
 ### Speed
@@ -1843,7 +1844,9 @@ release when the wait clears.
       SignPath's copies (§732)
 - [ ] The first release under SignPath Foundation's certificate
       (§732), which waits on its issue; the allowed branch names
-      tightened once a tag's request shows its ref
+      tightened once a tag's request shows its ref. 0.13.0 went out
+      unsigned, the repository variable `WINDOWS_SIGNING` off: delete
+      it, and give that release the changelog's line
 - [ ] A GPU path for the models on Windows on ARM: pyke publishes an
       ARM64 Windows build of ONNX Runtime with DirectML, no WebGPU,
       and DirectML ships with Windows, so ort-dylib could make our

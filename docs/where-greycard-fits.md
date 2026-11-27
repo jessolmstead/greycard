@@ -3,7 +3,7 @@
 A raw editor that works on the light the camera caught, keeps your
 folders in charge, and runs on Linux, macOS and Windows. This page
 says what the other editors chose and what greycard does differently,
-and ends with what is built and what is planned. Updated for 0.12.0,
+and ends with what is built and what is planned. Updated for 0.13.0,
 November 2026.
 
 ## The short version
@@ -140,14 +140,14 @@ planned; two computers share edits through a drive or NAS of your own.
 
 ## Where it stands
 
-Built, as of 0.12.0:
+Built, as of 0.13.0:
 
 - **Pipeline.** rawler decoding. Linear Rec.2020 from the camera
   matrix to the monitor profile, soft proofing, AgX as a second
   display curve. RCD, AMaZE and dual demosaic, on the GPU where
   there is one, Markesteijn for X-Trans with the profiled denoise, hot pixel repair and chromatic
   aberration correction on it too. Highlight reconstruction, chromatic aberration and
-  defringe, DCP profiles, a profiled denoiser and a learned one, on
+  defringe, DCP profiles, a profiled denoiser and a learned one, for Bayer and X-Trans, on
   Core ML on Apple silicon, deconvolution sharpening, lensfun
   corrections with a lens picker that takes Adobe LCP profiles, and a
   DNG's own corrections read. Every operation has a CPU reference and
@@ -161,7 +161,7 @@ Built, as of 0.12.0:
   looks, and a look fitted from the camera's own JPEG. A named history, snapshots, and
   versions of a frame in one sidecar.
 - **Masks.** Gradient, radial, brush, by lightness and by color, each
-  with its own light, color, white balance and detail, and an edge
+  with its own light, color, white balance, detail, and grain, and an edge
   refined to the picture's. Subject,
   background, sky, landscape (water, foliage, mountain, building),
   object and people's parts by model, on your machine.
@@ -186,7 +186,7 @@ Built, as of 0.12.0:
   preview when the drive is offline. Compare, versions side by side, stacks, a rejects folder
   with a way back, delete to the trash.
 - **Export.** Embedded profiles and EXIF, Adobe RGB beside sRGB,
-  Display P3 and Rec.2020, presets, watermark, border,
+  Display P3, Rec.2020, and a grey space, presets, watermark, border,
   a queue that survives a restart, a headless `--export`.
 - **Merge.** A bracket to HDR, on a tripod or by hand, frames shot
   turning to a panorama, and a focus stack, each to a linear DNG that edits as a
@@ -196,9 +196,10 @@ Built, as of 0.12.0:
   tentative. A Report a
   problem button that fills in the version, OS and GPU. A release
   check that can be turned off. Every word of the window in a
-  translator's catalog, English and French shipped so far.
+  translator's catalog: English and French, and drafts in ten more
+  languages.
 
-Planned, in order: tethering, and the learned denoiser for X-Trans.
+Planned: tethering.
 
 The reasoning behind every choice is in `docs/notes/`, one numbered
 section a file with `docs/notes.md` as the index, and the plan is

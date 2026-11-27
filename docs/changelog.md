@@ -3,31 +3,36 @@
 What's new in each version, newest first. Each item links to the
 design note behind it.
 
-## 0.13.0
+## 0.13.0, 2026-11-27
+
+The learned denoiser on Fujifilm X-Trans, Pentax raws, Grain and Output
+sharpen in a mask, better focus stacks, draft translations in ten more
+languages, performance improvements, and many tester fixes. Sidecars
+from this build are refused by 0.12.x.
 
 ### The window
 
-- Lambda, a fourth theme: Charcoal's greys with an orange accent, from Monocard's styling. Thanks to @sbusso (PR 213,
+- Lambda, a fourth theme: Charcoal's greys with an orange accent, from
+  Monocard's styling. Thanks to @sbusso (PR 213,
   [§750](https://github.com/jessolmstead/greycard/blob/master/docs/notes/750-lambda-a-fourth-theme.md)).
-- Redo can be changed in Settings > Keys: both its keys work until you set one, then only yours does (discussion 204,
+- Redo keybinding can be changed in Settings > Keys: both default key
+  combos work until you set one, then only yours does (discussion 204,
   [§749](https://github.com/jessolmstead/greycard/blob/master/docs/notes/749-a-key-moved-beats-a-key-by-default.md)).
-- A key you set for an action now wins over another action's default key, where the order of the list used to decide.
-- Defringe's Purple and Green read as group headings, set apart from the sliders under them (discussion 59).
+- A key you set for an action now wins over another action's default
+  key, where the order of the list used to decide.
+- Defringe's Purple and Green read as group headings, set apart from the
+  sliders under them (discussion 59).
 - Japanese, Chinese, and Korean text is drawn in its own region's
   typeface where the system has one; Linux needs a CJK font installed
   ([§727](https://github.com/jessolmstead/greycard/blob/master/docs/notes/727-cjk-text-in-its-region-s-typeface.md)).
-- In German, a native reader's words: Zuschneiden for the crop, Klonen
-  for Clone, and Preset for a preset.
 - Each white balance preset has an icon beside it in the menu: sun,
   cloud, shade, bulb, tube, and flash.
 - ART's `.arp` profiles beside a raw are offered and imported as
   RawTherapee's `.pp3` are; with both, the `.arp` is read and the `.pp3`
   named.
-- Draft German, Spanish, Italian, Dutch, Polish, Brazilian Portuguese,
-  Japanese, Korean, Simplified Chinese, and Traditional Chinese
-  translations,
-  not yet read by native speakers, each with a glossary of its terms;
-  corrections are welcome
+- Draft translations in German, Spanish, Italian, Dutch, Polish,
+  Brazilian Portuguese, Japanese, Korean, and Simplified and Traditional
+  Chinese; corrections are welcome
   ([how to send one](https://github.com/jessolmstead/greycard/blob/master/docs/translating.md)).
 - A screen reader can open a frame from the grid or the strip, hears a
   held-out filter chip as excluded, and hears each label once.
@@ -48,44 +53,57 @@ design note behind it.
 
 ### Develop
 
-- Pentax `.PEF` raws open in the editor, the library, and the import, each paired with
-  its camera JPEG (issue 197).
-- An HDR merge or a panorama is sharpened in its shadows as its frames are; such files look a little crisper, and edited thumbnails are made again once
+- Pentax `.PEF` raws open in the editor, the library, and the import,
+  each paired with its camera JPEG (issue 197).
+- An HDR merge or panorama is sharpened in its shadows as its frames
+  are; such files look a little crisper, and their thumbnails are remade
+  once
   ([§741](https://github.com/jessolmstead/greycard/blob/master/docs/notes/741-the-sharpen-on-a-merge-at-its-reference-frames-levels.md)).
-- A Clarity, Dehaze, or Detail move on a big frame shows sooner: what the window shows is sharpened first, the rest after
+- A Clarity, Dehaze, or Detail move on a big frame shows sooner: what
+  the window shows is sharpened first, the rest after
   ([§745](https://github.com/jessolmstead/greycard/blob/master/docs/notes/745-the-sharpen-of-what-is-seen-first.md)).
-- After Esc hides a Linear or Radial shape's handles, a drag over the shape pans; its row brings them back (discussion 178,
+- After Esc hides a Linear or Radial shape's handles, a drag over the
+  shape pans; its row brings them back (discussion 178,
   [§748](https://github.com/jessolmstead/greycard/blob/master/docs/notes/748-a-shape-esc-put-down-is-out-of-hand.md)).
-- Export has a grey space, Gray Gamma 2.2: one channel under a grey profile, with toning and grain's color dropped. Thanks to @sbusso (PR 216,
+- Export has a grey space, Gray Gamma 2.2: one channel under a grey
+  profile, with toning and grain's color dropped. Thanks to @sbusso (PR
+  216,
   [§751](https://github.com/jessolmstead/greycard/blob/master/docs/notes/751-greyscale-export.md)).
-- A mask has Grain: its Amount adds to or takes from the picture's under the mask, in one grain pattern
+- A mask has Grain: its Amount adds to or takes from the picture's under
+  the mask, in one grain pattern
   ([§752](https://github.com/jessolmstead/greycard/blob/master/docs/notes/752-grain-in-a-mask.md)).
 - A focus stack develops each frame as the editor does, chromatic
-  aberration corrected: finer texture, no color fringes, about 1.8
-  times the time
+  aberration corrected: finer texture, no color fringes, about 1.8 times
+  the time
   ([§739](https://github.com/jessolmstead/greycard/blob/master/docs/notes/739-the-focus-stack-on-the-full-develop.md)).
-- A focus stack of eight frames or more keeps faint, fine texture that it used to average away
+- A focus stack of eight frames or more keeps faint, fine texture that
+  it used to average away
   ([§740](https://github.com/jessolmstead/greycard/blob/master/docs/notes/740-the-stacks-coarse-word-on-faint-texture.md)).
-- A focus stack keeps its reconstructed highlights, and saturated reds and blues, as an HDR merge does
+- A focus stack keeps its reconstructed highlights, and saturated reds
+  and blues, as an HDR merge does
   ([§743](https://github.com/jessolmstead/greycard/blob/master/docs/notes/743-the-focus-stacks-highlights-under-headroom.md)).
-- A monochrome DNG's listed bad pixels are repaired, from a contributor's pull request; every DNG's edited pictures, masks, and fills are made again once
-  ([§744](https://github.com/jessolmstead/greycard/blob/master/docs/notes/744-a-monochrome-dngs-bad-pixels.md)).
-- A focus stack of many frames is aligned better toward its corners; a frame takes about a third of a second longer
+- A monochrome DNG's listed bad pixels are repaired; every DNG's edited
+  pictures, masks, and fills are made again once. Thanks to @sbusso
+  (PR 214,
+  [§744](https://github.com/jessolmstead/greycard/blob/master/docs/notes/744-a-monochrome-dngs-bad-pixels.md)).
+- A focus stack of many frames is aligned better toward its corners; a
+  frame takes about a third of a second longer
   ([§746](https://github.com/jessolmstead/greycard/blob/master/docs/notes/746-the-stacks-placing-blind-to-blur.md)).
-- A focus stack no longer rings a blown highlight with contours and a dark halo
+- A focus stack no longer rings a blown highlight with contours and a
+  dark halo
   ([§747](https://github.com/jessolmstead/greycard/blob/master/docs/notes/747-a-blown-speculars-spill-held-down.md)).
 - A focus stack can be made again with its frames denoised, from the
   Noise section or `greycard merge again --denoise`, and its file
   carries a noise profile.
-- Every edit's saturated and bright colors now reach the export's
-  limits at their hue, where they were clipped per channel
+- Every edit's saturated and bright colors now reach the export's limits
+  at their hue, where they were clipped per channel
   ([§735](https://github.com/jessolmstead/greycard/blob/master/docs/notes/735-the-gamut-op-at-the-output.md)).
 - Existing edits look different where colors are saturated or very
   bright, and every edited frame's kept pictures are made again, once.
 - AgX pictures render as before, look tables and Output sharpen
   included, unless a profile's tone curve replaces AgX.
-- The learned denoiser works on Fujifilm X-Trans raws, in the same
-  three tiers; each tier's X-Trans network is a separate download
+- The learned denoiser works on Fujifilm X-Trans raws, in the same three
+  tiers; each tier's X-Trans network is a separate download
   ([§731](https://github.com/jessolmstead/greycard/blob/master/docs/notes/731-the-learned-denoiser-on-x-trans.md)).
 - A mask's Output sharpen reaches +200 and has its own Radius and
   Threshold, for soft subjects
@@ -93,15 +111,16 @@ design note behind it.
 - A mask's Detail has an Output sharpen, −100 to +200: it takes the
   picture's sharpening away under the mask or adds its own (issue 135,
   [§730](https://github.com/jessolmstead/greycard/blob/master/docs/notes/730-output-sharpen-in-a-mask-and-its-radius.md)).
-- Output sharpen's Radius is in pixels of the picture made, so an
-  export made smaller is sharpened as the full frame is.
-- An export made smaller skips the sheet's Sharpen for a frame whose
+- Output sharpen's Radius is in pixels of the picture made, so an export
+  made smaller is sharpened as the full frame is.
+- An export made smaller skips the export menu's Sharpen for a frame whose
   edit has an Output sharpen, and the sheet says so.
 - A large generative fill the card cannot hold at 1024 runs at 512 as
   the last resort, where it was refused
-  ([§726](https://github.com/jessolmstead/greycard/blob/master/docs/notes/726-a-large-fill-at-512-as-the-last-resort.md), issue 142).
-- Lens profiles (`.lcp`) are read from the profile folder's subfolders, so Adobe's
-  maker folders can be copied or linked in whole
+  ([§726](https://github.com/jessolmstead/greycard/blob/master/docs/notes/726-a-large-fill-at-512-as-the-last-resort.md),
+  issue 142).
+- Lens profiles (`.lcp`) are read from the profile folder's subfolders,
+  so Adobe's maker folders can be copied or linked in whole
   ([§725](https://github.com/jessolmstead/greycard/blob/master/docs/notes/725-lens-profiles-from-subfolders.md)).
 - The crop has a choice of guides (golden ratio, golden spiral,
   diagonals, triangles); O steps through them and Shift+O, now taken,
@@ -109,8 +128,8 @@ design note behind it.
 - Light's sliders sit in two groups, a hairline between Shadows and
   Whites.
 - The line under Lens names its profile's source, lensfun or an Adobe
-  profile, and a switch greyed for lack of data says why on hover
-  (issue 189).
+  profile, and a switch greyed for lack of data says why on hover (issue
+  189).
 - The Vignette has a Style: Overlay darkens the picture as shown, so a
   bright corner darkens too; Natural is the falloff as before
   (discussion 170,
@@ -137,12 +156,13 @@ design note behind it.
 - Sidecars are schema 10: 0.12 and older can't read one that 0.13 has
   saved with an edit or exported, and write nothing over it
   ([§734](https://github.com/jessolmstead/greycard/blob/master/docs/notes/734-schema-10-as-built.md)).
-- One holding only a rating, flag, label, or turn they still read, and save again in their own form;
-  one holding more that they would lose, they refuse
+- 0.12 still reads and re-saves a sidecar holding only a rating, flag,
+  label, or turn, and refuses one holding more that it would lose
   ([§742](https://github.com/jessolmstead/greycard/blob/master/docs/notes/742-a-stateless-sidecar-0-12-refuses.md)).
-- The library index is newer too: 0.12 can't use one that 0.13 has opened, and leaves it alone (issue 199).
-- A frame only rated, flagged, or turned no longer counts as edited,
-  and its sidecar holds no edit
+- The library index is newer too: 0.12 can't use one that 0.13 has
+  opened, and leaves it alone (issue 199).
+- A frame only rated, flagged, or turned no longer counts as edited, and
+  its sidecar holds no edit
   ([§734](https://github.com/jessolmstead/greycard/blob/master/docs/notes/734-schema-10-as-built.md)).
 - A frame whose masks were placed under another turn opens read-only
   while its raw can't be reached to measure it
@@ -150,11 +170,8 @@ design note behind it.
 
 ### Install
 
-- A build from source says how many commits it is past the release,
-  as `0.12.0+135 (8bab17c)` (issue 199).
-- The Windows executables and the installer are signed, with SignPath
-  Foundation as the publisher
-  ([§732](https://github.com/jessolmstead/greycard/blob/master/docs/notes/732-the-windows-builds-signed-through-signpath.md)).
+- A build from source says how many commits it is past the release, as
+  `0.12.0+135 (8bab17c)` (issue 199).
 
 ### Fixes
 
@@ -166,22 +183,22 @@ design note behind it.
   PowerShot's frame is no longer faded (issue 201).
 - A keyword or caption holding a carriage return now reads back
   unchanged from the XMP greycard writes.
-- Pentax bodies lensfun files under Ricoh, such as the K-1 and K-3
-  III, now find their lens profiles (issue 197,
+- Pentax bodies lensfun files under Ricoh, such as the K-1 and K-3 III,
+  now find their lens profiles (issue 197,
   [§737](https://github.com/jessolmstead/greycard/blob/master/docs/notes/737-pentax-lenses-found-and-the-lens-in-an-export.md)).
 - A Pentax DNG's lens is read from its maker note, so its correction
   applies automatically (issue 197,
   [§737](https://github.com/jessolmstead/greycard/blob/master/docs/notes/737-pentax-lenses-found-and-the-lens-in-an-export.md)).
-- An export names the lens found or picked as LensModel when the
-  source file names none (issue 197,
+- An export names the lens found or picked as LensModel when the source
+  file names none (issue 197,
   [§737](https://github.com/jessolmstead/greycard/blob/master/docs/notes/737-pentax-lenses-found-and-the-lens-in-an-export.md)).
-- A Landscape mask no longer crashes the editor on a Mac: its menu
-  opens a turn after the answer, not inside it (issue 186).
-- An archive join of a frame turned on one computer no longer lands
-  its crop and masks a quarter turn off
+- A Landscape mask no longer crashes the editor on a Mac: its menu opens
+  a turn after the answer, not inside it (issue 186).
+- An archive join of a frame turned on one computer no longer lands its
+  crop and masks a quarter turn off
   ([§734](https://github.com/jessolmstead/greycard/blob/master/docs/notes/734-schema-10-as-built.md)).
-- Swap with original on one computer no longer mixes up the two
-  copies' versions at the next archive join
+- Swap with original on one computer no longer mixes up the two copies'
+  versions at the next archive join
   ([§734](https://github.com/jessolmstead/greycard/blob/master/docs/notes/734-schema-10-as-built.md)).
 - An orientation taken from an XMP beside the raw turns the masks and
   retouch with the crop, as soon as the frame can be measured
@@ -214,13 +231,13 @@ design note behind it.
 - No preset and no look read "None" in the window's language in the
   export sheet's and the Look section's pickers.
 - The filter bar's flag chips say their names in the window's language.
-- An export whose edit names a camera profile that is not there, or that
-  will not read, says so in its report, and the headless export exits 2
-  as for a missing look.
+- An export whose edit names a camera profile that is missing or
+  unreadable says so in its report, and the headless export exits 2.
 - `mm<=35` typed in the filter bar filters by focal length, where it was
   searched for as a word.
 - A mask's Shadows or Highlights stacked on the picture's past the
-  slider's limit no longer folds the tones; the sum is held at the limit.
+  slider's limit no longer folds the tones; the sum is held at the
+  limit.
 - The curve's backdrop no longer shows another mask's histogram, or the
   Original's, behind the edit's curve.
 - Edit in another program honors the export sheet's Metadata choice; its
@@ -242,41 +259,45 @@ design note behind it.
   millions of pixels wide, in the crop view or from a stored crop.
 - Turn left and Turn right keep the point you are zoomed in on, where
   the view jumped to the frame's middle.
-- A save no longer writes over another window's or machine's edit:
-  the other copy is kept beside the frame
+- A save no longer writes over another window's or machine's edit: the
+  other copy is kept beside the frame
   ([§722](https://github.com/jessolmstead/greycard/blob/master/docs/notes/722-a-save-that-looks-before-it-writes.md)).
 - In the export queue's grid, a frame whose export failed no longer
   wears the exported mark while its set runs.
 - An export of a crop dragged far out on a steep keystone, past 200
-  megapixels, fails with its reason instead of running out of memory;
-  at a smaller long edge it exports.
+  megapixels, fails with its reason instead of running out of memory.
 - A TIFF or JPEG in Rec.2020, Adobe RGB, or Display P3 shows its true
   colors in the grid, the filmstrip, and the culling loupe (issue 209).
-- With one section open at a time, a new mask no longer leaves MASK
-  and LIGHT open together (issue 211).
-- Add to collection no longer crashes with hundreds of collections:
-  the menu names the ten used last, and **All collections...** opens
-  a list to search (issue 203, a tester's pull request;
+- With one section open at a time, a new mask no longer leaves MASK and
+  LIGHT open together (issue 211).
+- Add to collection no longer crashes with hundreds of collections: the
+  menu names the ten used last, and **All collections...** opens a list
+  to search (issue 203, a tester's pull request;
   [§738](https://github.com/jessolmstead/greycard/blob/master/docs/notes/738-bound-the-add-to-collection-menu.md)).
-- No other menu fed by a list can grow past the window and crash:
-  Edit in, the archives, a preset's Move to group, and recent folders.
-- A lens no longer takes the profile of another line of its maker's,
-  such as an EF's for an EF-S or an FA's for a D FA*; such a picture
-  now opens uncorrected until a lens is picked (issue 197).
-- Edit in and the archive menus, when too long for the window, end with All apps... or All archives..., a list to search.
-- A library index from a newer greycard is left untouched, and the notice gives the reason first and stays through a folder opened (issue 199).
-- Back up and Bring back work over a slow link to a network archive, where they stopped after one frame with a timeout
+- No other menu fed by a list can grow past the window and crash: Edit
+  in, the archives, a preset's Move to group, and recent folders.
+- A lens no longer takes the profile of another line from its maker,
+  such as an EF's for an EF-S; the picture opens uncorrected until a
+  lens is picked (issue 197).
+- Edit in and the archive menus, when too long for the window, end with
+  All apps... or All archives..., a list to search.
+- A library index from a newer greycard is left untouched, and the
+  notice gives the reason first and stays through a folder opened (issue
+  199).
+- Back up and Bring back work over a slow link to a network archive,
+  where they stopped after one frame with a timeout
   ([§754](https://github.com/jessolmstead/greycard/blob/master/docs/notes/754-archive-copies-over-a-slow-link.md)).
-- On a Mac or an integrated GPU, big frames use less memory: kept neighbors are sized to what is free, and a prefetch waits for room
+- On a Mac or an integrated GPU, big frames use less memory: kept
+  neighbors are sized to what is free, and a prefetch waits for room
   ([§755](https://github.com/jessolmstead/greycard/blob/master/docs/notes/755-the-shelf-sized-to-the-machine-and-the-frame.md),
   [§753](https://github.com/jessolmstead/greycard/blob/master/docs/notes/753-the-settle-out-of-the-windows-way.md)).
-- A DNG with a linearization table, such as some DxO PureRAW files,
-  no longer develops six stops dark and magenta.
+- A DNG with a linearization table, such as some DxO PureRAW files, no
+  longer develops six stops dark and magenta.
 - A camera DNG that lists a tiny thumbnail first, a Leica M11's, shows
   its full preview in the grid, the loupe, and the camera match.
 - Zoomed in, the view stays on the same spot while Angle, the level,
-  the perspective sliders, the aspect, a turn, or a flip changes; a
-  turn keeps it in Cull's loupe and compare too.
+  perspective, the aspect, a turn, or a flip changes; a turn keeps it in
+  Cull too.
 - On a short window the Masks tab's list gives up rows sooner, so a
   mask's sliders keep at least 214 px of room (issue 157).
 - A graphics card that the learned denoiser crashes rests its tiers,
@@ -284,24 +305,24 @@ design note behind it.
   (discussion 168,
   [§712](https://github.com/jessolmstead/greycard/blob/master/docs/notes/712-a-learned-denoiser-that-loses-the-card-rests-there.md)).
 - A save that fails, on a full or read-only disk, is said: a lasting
-  note counts the edits not saved, a click tries again, and so do
-  leaving the folder and quitting.
+  note counts the unsaved edits, and a click, leaving the folder, or
+  quitting tries again.
 - A lens switch is greyed when the profile has no data of its kind, as
-  Vignetting is for many database lenses, and keeps its setting
-  (issue 182).
+  Vignetting is for many database lenses, and keeps its setting (issue
+  182).
 - A frame chosen in Cull's grid or on the lightbox's sheet is where the
   next run starts, as one the loupe showed already was.
 - The filmstrip's and the panels' edge arrows hold still while a crop
   handle is dragged past them, no longer flashing from side to side.
 - An XMP beside a raw larger than 64 MB is passed over on open and by
   the index, no longer read whole into memory.
-- A camera picture smaller than its raw, as in our merged panoramas,
-  no longer stands in small while the frame develops.
+- A camera picture smaller than its raw, as in our merged panoramas, no
+  longer stands in small while the frame develops.
 - On Windows, greycard no longer crashes a moment after its window
   closes once an AI model has run (discussion 168,
   [§714](https://github.com/jessolmstead/greycard/blob/master/docs/notes/714-windows-ends-without-teardown-once-a-model-is-loaded.md)).
-- On Windows, a graphics backend that keeps failing at start is given
-  up after three starts in a row, and the other is tried
+- On Windows, a graphics backend that keeps failing at start is given up
+  after three starts in a row, and the other is tried
   ([§713](https://github.com/jessolmstead/greycard/blob/master/docs/notes/713-the-gpu-marker-gives-up-and-is-written-whole.md)).
 
 ## 0.12.0, 2026-11-17
