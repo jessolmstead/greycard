@@ -46,7 +46,7 @@ editor:
 
 | Feature | Graphics memory, or the CPU | Download | Not available |
 |---|---|---|---|
-| **Learned denoiser** | 2 to 5 GB; a smaller card runs it in smaller pieces, slower. Without a GPU, on the CPU, slower again | 5 to 20 MB a tier, and up to 8 GB of saved results | Fujifilm X-Trans raws |
+| **Learned denoiser** | 2 to 5 GB; a smaller card runs it in smaller pieces, slower. Without a GPU, on the CPU, slower again | 5 to 20 MB a tier, as much again for X-Trans raws, and up to 8 GB of saved results | |
 | **Learned masks** | Sky 0.8 GiB, Object 2.5, People 4.4, Subject and Background 5.9; a card short of it runs the mask on the CPU. There a People shape takes several seconds, an iris about thirty | Sky 96 MB, Subject 114 MB, Object 184 MB, People 1.04 GB | |
 | **Patch fill** (the eraser) | 2 GB, or on the CPU about 3.5 GB of memory | 210 MB | |
 | **Generative remove** | 6.3 GiB, and 16-bit floats in shaders: on NVIDIA, a GTX 16 or RTX 20 series card or newer | 5.5 GB, and 390 MB for **Fast** | Intel Macs, Windows on ARM, machines without a GPU, and older NVIDIA cards |
@@ -67,8 +67,8 @@ editor:
 ## Before you start
 
 - **Raw files.** Tested with Canon, Fujifilm GFX and X-Trans, Sony,
-  Panasonic, Nikon, and Olympus and OM System raws. X-Trans raws develop without the learned
-  denoiser for now ([Fujifilm X-Trans](guide/develop.md#fujifilm-x-trans)).
+  Panasonic, Nikon, Olympus and OM System, Pentax, Leica, and Ricoh
+  raws.
   Nikon's High Efficiency raws (TicoRAW) don't open yet; only a build
   from source with the `nikon-he` feature reads them
   ([building.md](building.md)).
@@ -316,9 +316,8 @@ delete sheet.
 - The default look and the tone sliders don't match Lightroom's feel
   yet. Highlights and Whites came closer in 0.7; tell us when a frame
   looks too dark, too flat or odd in a way you can name.
-- The learned denoiser doesn't run on Fujifilm X-Trans raws yet, and
-  their chromatic aberration correction takes out less of a fringe
-  than on other raws.
+- On Fujifilm X-Trans raws the chromatic aberration correction takes
+  out less of a fringe than on other raws.
 - The high-quality denoisers are slow, taking tens of seconds on a
   large frame.
 - On Windows the display is treated as sRGB unless you pick your

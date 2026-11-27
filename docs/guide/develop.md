@@ -25,7 +25,8 @@ pan and zoom straight away.
   goes back to where you were.
 - The **Fit** button at the panel's foot fits the picture; its chevron,
   or a right-click on it, offers Fit, 25%, 33%, 50%, 100%, 200%, and
-  400%; under them, **Full screen** (**F11**).
+  400%; under them, **Full screen** (**F11**). Past 100%, each pixel
+  of the picture shows as a crisp block, as an export writes it.
 - **Drag** to move the picture when you are zoomed in. With a tool in
   hand that draws on the picture (a repair, or a mask's shape waiting
   for its drag), hold **Space** and drag (**Shift** too, except with a
@@ -296,31 +297,6 @@ measured against that camera's JPEGs, so a frame opens about as
 bright as the camera's own picture of it. A frame edited before 0.8 keeps the brightness it had; **Reset**
 takes it to its body's.
 
-### Highlight fill
-
-The switch under **Shadows**, off by default. Where a highlight
-clipped, as in a blown lamp, a sun, a bright sky, or backlit leaves,
-**Highlight fill** paints it in with the light and color a small model
-learned from photographs, carried in from the clipped area's edge. It
-works on every clipped pixel, one channel clipped or all three, so a
-frame with much bright foliage changes in many small places; a frame
-with nothing clipped is left as it was. The model is built into
-greycard, so nothing downloads.
-
-The picture comes first without the fill, and the status line says
-**the highlight fill is at work** until the filled one replaces it,
-usually within a second or two. Exports and the edit's thumbnails wait
-for the fill.
-
-The switch is greyed on a frame the fill does not work on yet: a JPEG
-or TIFF, an X-Trans raw, a linear or monochrome DNG, and a merge. It
-keeps its setting there, so a sync or paste that turns it on takes
-effect on the frames that can use it.
-
-It is shown in **Light** but travels with **Demosaic**: Light's
-switch, its reset, and ticking **Light** in a copy or a preset leave
-it alone; tick **Demosaic** to carry it.
-
 ### Display curve
 
 At the foot of **LIGHT**, on a raw, the **Display curve** switch
@@ -470,11 +446,8 @@ greys take the tint's hue.
 
 Raw only. Choose one of two kinds of noise reduction.
 
-On a Fujifilm X-Trans raw the section says "learned: not on X-Trans
-yet" and the learned tiers rest: the learned denoiser does not work on
-that sensor yet. **Denoise**, the profiled one, works as on any raw. A
-tier already set on an X-Trans frame (by a sync from another camera,
-say) can still be turned off. See [Demosaic](#demosaic).
+On a Fujifilm X-Trans raw the tiers run networks made for that
+sensor, each a download of its own the first time.
 
 On a graphics card that was lost while the learned denoiser ran, the
 section says "learned: not on this graphics card" and the tiers rest
@@ -680,7 +653,8 @@ back; they act above zero and are off below it.
 Below zero it takes the picture's sharpening away under the mask
 (−100 is none); above zero it adds, and works with the picture's own
 at zero. An export made smaller skips the export sheet's **Sharpen**
-for a frame sharpened here, so the two do not stack.
+for a frame with an Output sharpen, the picture's or a mask's, so the
+two do not stack.
 
 ## Vignette
 
@@ -693,7 +667,7 @@ Darkens or lightens the edges of the picture as cropped.
 | **Feather** | 0 to 100% | How soft the transition is. |
 | **Roundness** | −100 to +100 | 0 follows the frame's shape. Positive is rounder, toward a circle. Negative is squarer. |
 
-**Style** picks where the vignette acts. **Exposure**, the default,
+**Style** picks where the vignette acts. **Natural**, the default,
 turns the light down at the edges before the display curve, as a lens
 does: a bright sky at the edge rolls through the curve and stays
 bright. **Overlay** darkens the finished picture, after the display
@@ -736,9 +710,6 @@ another only if you see a problem in fine detail:
 When a learned denoiser is on, it does the demosaic itself and this
 choice has no effect.
 
-The **Highlight fill** switch in **Light** travels with this section:
-tick **Demosaic** in a preset, a paste, or a sync to carry it.
-
 ### Fujifilm X-Trans
 
 Fujifilm's X-series cameras (other than the GFX) use an X-Trans
@@ -754,10 +725,10 @@ A method made for the other kind of sensor, carried by a preset, a
 sync or a paste, is left off an X-Trans frame and the status line
 says so; the same goes the other way round.
 
-Two parts of the develop don't work on X-Trans yet: the learned
-denoiser, and the measured radius of **Auto radius** in **SHARPEN**,
-which uses its default radius instead. The profiled denoise and the
-hot pixel repair work as on any raw. The chromatic aberration
+One part of the develop doesn't work on X-Trans yet: the measured
+radius of **Auto radius** in **SHARPEN**, which uses its default
+radius instead. Both denoisers and the hot pixel repair work as on
+any raw. The chromatic aberration
 correction runs too, but takes out less of a fringe than on other
 raws for now, and little of a blue one.
 
@@ -778,7 +749,8 @@ Two Develop features download what they need the first time you use
 them. Each shows you its license before it downloads:
 
 - the lens correction database, which is under a megabyte
-- the learned denoiser, 5 to 20 MB depending on the tier
+- the learned denoiser, 5 to 20 MB depending on the tier, and as much
+  again for its X-Trans network
 
 Each one is downloaded once.
 **Download all** in Settings, Models downloads the denoiser's tiers with

@@ -438,7 +438,8 @@ it; the grid, the filmstrip and the lightbox then show its frames.
   one.
 - Right-click a frame (or a selection) and choose **Add to
   collection**, then a collection, or **New collection...** to make
-  one with those frames in it.
+  one with those frames in it. The menu names the collections used
+  last; **All collections...** lists the rest, with a field to search.
 - **B** adds the selected frames to the collection that is open, or
   else to the last one you added to or made this session. When every
   selected frame is in it already, **B** takes them out. With no
@@ -535,11 +536,19 @@ A newer greycard may write its `.gcd` files in a form an older one
 can't read: 0.13's are refused by 0.12, as 0.12's were by 0.11. An
 older version leaves such a frame alone rather than write over it:
 it won't open it or change its rating, its status line says why, and
-an export of it comes out unedited. From 0.13 on, a later version's file opens read-only
+an export of it comes out unedited. A `.gcd` holding only a rating,
+flag, label, or turn is the exception: 0.12 still reads it. From 0.13 on, a later version's file opens read-only
 where it can be shown at all. Once a version has saved a frame, open it with that
 version or a later one. A damaged `.gcd` is left alone the same way;
 move it aside or delete it, then open the folder again, to start the
-frame over.
+frame over. The library index is newer in 0.13 too: 0.12 can't use
+one that 0.13 has opened, and leaves it alone.
+
+If another window or computer changed a `.gcd` since greycard read
+it, and the two can't be joined, a save keeps the other copy beside
+it as `IMG_0001.CR3.gcd.other` and the status line says so. A save
+that fails, on a full or read-only disk, leaves a note counting the
+edits not saved; click it to try again.
 
 ### A hidden folder instead
 

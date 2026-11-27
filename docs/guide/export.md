@@ -36,7 +36,7 @@ clear in hand.
 | **Quality** | 50 to 100 | 92 | JPEG only. Higher is a larger file with fewer artifacts. |
 | **Long edge** | **Full**, **4096**, **2048**, **1024**, **Custom** | Full | The size of the picture's longer side, in pixels. An export is never made larger than the picture. |
 | **Pixels** | a number | 1600 | Shown with **Custom**. The sheet shows the size that comes out, such as 1600 × 1067. |
-| **Sharpen** | **Off**, **Low**, **Standard**, **High** | Standard | Sharpens the picture after it is made smaller, since shrinking softens it. It does nothing at **Full** size, and the label is dimmed then. |
+| **Sharpen** | **Off**, **Low**, **Standard**, **High** | Standard | Sharpens the picture after it is made smaller, since shrinking softens it. It does nothing at **Full** size, and the label is dimmed then. A frame whose edit has an [Output sharpen](develop.md#output-sharpen) takes that instead, and the sheet says so. |
 | **Color** | **sRGB**, **Display P3**, **Rec.2020**, **Adobe RGB**, **Gray Gamma 2.2** | sRGB | sRGB for the web and most screens. Display P3 for recent phones and Macs. Rec.2020 for the widest color. Adobe RGB for a print lab or a workflow that asks for it; it has its own gamma, and the file's profile says so. Gray Gamma 2.2 writes one grey channel; see [Grey](#grey). |
 | **Embed profile** | on or off | on | Writes the color profile into the file, so other programs show its colors correctly. Leave it on. |
 | **Metadata** | **All**, **No edit**, **None** | All | What the file says about where it came from. See below. |

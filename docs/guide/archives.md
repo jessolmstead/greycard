@@ -60,9 +60,10 @@ Each file is read back and checked after it is copied. Back up never
 writes over or deletes a picture on the archive.
 
 The copy runs in the background, with a bar and **Cancel** at the
-foot of the window. **Cancel** stops after the frame in hand. If the
-archive stops answering for a few seconds, the copy stops after its
-current frame and the status line says so. Run **Back up** again
+foot of the window. **Cancel** stops after the frame in hand. A slow
+link only slows it; if the archive stops answering for half a minute,
+the copy stops after its current frame and the status line says so.
+Run **Back up** again
 later; it skips what already arrived.
 
 ### The header's count

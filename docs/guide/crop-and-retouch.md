@@ -224,7 +224,9 @@ There are two engines. LaMa fills on any machine and at any size. On a
 machine with a GPU, the generative remove makes up what was behind what
 you remove, working in a window around the area up to 1024 pixels
 a side; a window up to four times that is scaled down to it and back,
-and a bigger one is still LaMa's.
+and a bigger one is still LaMa's. On a card that cannot hold a large
+fill at 1024, it runs at 512, softer in fine texture, rather than not
+at all.
 
 With **Fill** in hand, or a Fill chosen in the list, three buttons above
 the list say what makes it:

@@ -27,8 +27,8 @@ complete, battle-tested editor.
 - **Scopes for the mask:** parade, waveform and vectorscope, which you
   can limit to the masked area to get skin tones right.
 - **AI denoising on the raw sensor data.** I trained the model myself,
-  and it works a treat on Canon, Fujifilm GFX, Nikon, Sony and
-  Panasonic.
+  and it works a treat on Canon, Fujifilm GFX and X-Trans, Nikon,
+  Sony, and Panasonic.
 - **Your folders are the truth.** Edits live in a sidecar beside each
   raw. The library index makes finding and filtering fast without
   owning your photos.
@@ -64,11 +64,10 @@ complete, battle-tested editor.
 It opens what [rawler](https://github.com/dnglab/dnglab) decodes
 ([camera list](https://github.com/dnglab/dnglab/blob/main/SUPPORTED_CAMERAS.md)),
 and it's tested on Canon, Fujifilm GFX and X-Trans, Nikon, Sony,
-Panasonic, and Olympus and OM System raws.
+Panasonic, Olympus and OM System, Pentax, Leica, and Ricoh raws.
 
 ## Not there yet
 
-- The learned denoiser doesn't run on Fujifilm X-Trans raws yet.
 - Nikon High Efficiency raws only open in a build from source with the
   `nikon-he` feature. The format is licensed, and shipping its decoder
   means royalties. I'm working on it.
@@ -145,8 +144,8 @@ expected: [ko-fi.com/jessolmstead](https://ko-fi.com/jessolmstead).
 - [Changelog](docs/changelog.md)
 - [Design notes](docs/notes.md)
 - [Contributing](CONTRIBUTING.md)
-- [Translating](docs/translating.md): French is the first language,
-  and I'd love help with more
+- [Translating](docs/translating.md): French, and drafts in ten more
+  languages that want a native speaker's eye
 
 GPL-3.0-or-later. This product includes DNG technology under
 license by Adobe.
