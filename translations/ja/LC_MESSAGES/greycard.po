@@ -286,23 +286,20 @@ msgid "Left panel"
 msgstr "左パネル"
 
 #: crates/greycard-slint/ui/app.slint:6967
-#, fuzzy
 msgid "Search apps"
-msgstr "キー操作を検索"
+msgstr "アプリを検索"
 
 #: crates/greycard-slint/ui/app.slint:6967
-#, fuzzy
 msgid "Search archives"
-msgstr "キー操作を検索"
+msgstr "アーカイブを検索"
 
 #: crates/greycard-slint/ui/app.slint:6968
-#, fuzzy
 msgid "No matching apps."
-msgstr "コピーするものはありません。"
+msgstr "一致するアプリはありません。"
 
 #: crates/greycard-slint/ui/app.slint:6968
 msgid "No matching archives."
-msgstr ""
+msgstr "一致するアーカイブはありません。"
 
 #: crates/greycard-slint/ui/app.slint:7316
 msgid "Edit in"
@@ -507,11 +504,11 @@ msgstr "コレクションに追加"
 
 #: crates/greycard-slint/ui/panel/collection-picker-sheet.slint:12
 msgid "Search collections"
-msgstr ""
+msgstr "コレクションを検索"
 
 #: crates/greycard-slint/ui/panel/collection-picker-sheet.slint:13
 msgid "No matching collections."
-msgstr ""
+msgstr "一致するコレクションはありません。"
 
 #: crates/greycard-slint/ui/panel/collection-picker-sheet.slint:15
 msgid "New collection..."
@@ -1216,7 +1213,7 @@ msgstr "標準"
 
 #: crates/greycard-slint/ui/panel/deliver.slint:419
 msgid "Frames with Output sharpen use it instead"
-msgstr ""
+msgstr "出力シャープが設定された写真では、代わりにそちらを使います"
 
 #: crates/greycard-slint/ui/panel/deliver.slint:440
 msgid "Embed profile"
@@ -1809,7 +1806,7 @@ msgstr "撮影日時をずらす..."
 
 #: crates/greycard-slint/ui/panel/frame-menu.slint:319
 msgid "All collections..."
-msgstr ""
+msgstr "すべてのコレクション..."
 
 #: crates/greycard-slint/ui/panel/frame-menu.slint:329
 msgid "Remove {n} frame from {}"
@@ -1839,7 +1836,7 @@ msgstr "外部アプリで編集..."
 
 #: crates/greycard-slint/ui/panel/frame-menu.slint:362
 msgid "All apps..."
-msgstr ""
+msgstr "すべてのアプリ..."
 
 #. Frame menu: {} is Back up or Bring back, then an archive's name
 #: crates/greycard-slint/ui/panel/frame-menu.slint:375
@@ -1848,7 +1845,7 @@ msgstr "{1}へ{0}..."
 
 #: crates/greycard-slint/ui/panel/frame-menu.slint:388
 msgid "All archives..."
-msgstr ""
+msgstr "すべてのアーカイブ..."
 
 #: crates/greycard-slint/ui/panel/grid.slint:436
 msgid "{} and {n} other"
@@ -4042,6 +4039,9 @@ msgid ""
 "The library index is from a newer greycard and was left alone. Use that "
 "version, or close greycard and rename the file to start a new one: {path}"
 msgstr ""
+"ライブラリのインデックスは新しいgreycardのもので、変更していません。そのバー"
+"ジョンを使うか、greycardを閉じてファイルの名前を変更し、新しいインデックスを"
+"作成してください：{path}"
 
 #: crates/greycard-ui/src/library.rs:723
 msgid "the indexer panicked: {}"
@@ -5255,11 +5255,11 @@ msgstr "現像中..."
 
 #: crates/greycard-ui/src/panel/browser.rs:1360
 msgid "Read-only: made with a newer greycard"
-msgstr ""
+msgstr "読み取り専用：新しいgreycardで作成されています"
 
 #: crates/greycard-ui/src/panel/browser.rs:1392
 msgid "Read-only: {file}'s masks cannot be placed until its raw is reachable"
-msgstr ""
+msgstr "読み取り専用：{file}のRAWに接続できるまで、マスクを配置できません"
 
 #: crates/greycard-ui/src/panel/browser.rs:2143
 #: crates/greycard-ui/src/roots/landing.rs:179
@@ -7027,9 +7027,8 @@ msgstr "このグラフィックカードでは学習型ノイズ除去を使え
 
 #. WORDING PENDING the owner's sign-off.
 #: crates/greycard-ui/src/panel/merge.rs:802
-#, fuzzy
 msgid "no learned denoise in an X-Trans merge"
-msgstr "X-Transでは学習型ノイズ除去を使えません"
+msgstr "X-Transの合成では学習型ノイズ除去を使えません"
 
 #: crates/greycard-ui/src/panel/merge.rs:813
 #: crates/greycard-ui/src/panel/merge/tests.rs:1173

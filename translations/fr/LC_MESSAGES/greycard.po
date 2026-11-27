@@ -287,23 +287,20 @@ msgid "Left panel"
 msgstr "Panneau gauche"
 
 #: crates/greycard-slint/ui/app.slint:6967
-#, fuzzy
 msgid "Search apps"
-msgstr "Rechercher un raccourci"
+msgstr "Rechercher une application"
 
 #: crates/greycard-slint/ui/app.slint:6967
-#, fuzzy
 msgid "Search archives"
-msgstr "Rechercher un raccourci"
+msgstr "Rechercher une archive"
 
 #: crates/greycard-slint/ui/app.slint:6968
-#, fuzzy
 msgid "No matching apps."
-msgstr "Rien à copier."
+msgstr "Aucune application correspondante."
 
 #: crates/greycard-slint/ui/app.slint:6968
 msgid "No matching archives."
-msgstr ""
+msgstr "Aucune archive correspondante."
 
 #: crates/greycard-slint/ui/app.slint:7316
 msgid "Edit in"
@@ -510,11 +507,11 @@ msgstr "Ajouter à une collection"
 
 #: crates/greycard-slint/ui/panel/collection-picker-sheet.slint:12
 msgid "Search collections"
-msgstr ""
+msgstr "Rechercher une collection"
 
 #: crates/greycard-slint/ui/panel/collection-picker-sheet.slint:13
 msgid "No matching collections."
-msgstr ""
+msgstr "Aucune collection correspondante."
 
 #: crates/greycard-slint/ui/panel/collection-picker-sheet.slint:15
 msgid "New collection..."
@@ -1225,7 +1222,7 @@ msgstr "Standard"
 
 #: crates/greycard-slint/ui/panel/deliver.slint:419
 msgid "Frames with Output sharpen use it instead"
-msgstr ""
+msgstr "Les photos avec Netteté de sortie l'utilisent à la place"
 
 #: crates/greycard-slint/ui/panel/deliver.slint:440
 msgid "Embed profile"
@@ -1823,7 +1820,7 @@ msgstr "Décaler l'heure de prise de vue..."
 
 #: crates/greycard-slint/ui/panel/frame-menu.slint:319
 msgid "All collections..."
-msgstr ""
+msgstr "Toutes les collections..."
 
 #: crates/greycard-slint/ui/panel/frame-menu.slint:329
 msgid "Remove {n} frame from {}"
@@ -1855,7 +1852,7 @@ msgstr "Modifier dans..."
 
 #: crates/greycard-slint/ui/panel/frame-menu.slint:362
 msgid "All apps..."
-msgstr ""
+msgstr "Toutes les applications..."
 
 #. Frame menu: {} is Back up or Bring back, then an archive's name
 #: crates/greycard-slint/ui/panel/frame-menu.slint:375
@@ -1864,7 +1861,7 @@ msgstr "{} vers {}..."
 
 #: crates/greycard-slint/ui/panel/frame-menu.slint:388
 msgid "All archives..."
-msgstr ""
+msgstr "Toutes les archives..."
 
 #: crates/greycard-slint/ui/panel/grid.slint:436
 msgid "{} and {n} other"
@@ -4117,6 +4114,9 @@ msgid ""
 "The library index is from a newer greycard and was left alone. Use that "
 "version, or close greycard and rename the file to start a new one: {path}"
 msgstr ""
+"L'index de la bibliothèque vient d'une version plus récente de greycard et "
+"n'a pas été modifié. Utilisez cette version, ou fermez greycard et renommez "
+"le fichier pour en créer un nouveau : {path}"
 
 #: crates/greycard-ui/src/library.rs:723
 msgid "the indexer panicked: {}"
@@ -5413,11 +5413,13 @@ msgstr "développement..."
 
 #: crates/greycard-ui/src/panel/browser.rs:1360
 msgid "Read-only: made with a newer greycard"
-msgstr ""
+msgstr "Lecture seule : créé avec une version plus récente de greycard"
 
 #: crates/greycard-ui/src/panel/browser.rs:1392
 msgid "Read-only: {file}'s masks cannot be placed until its raw is reachable"
 msgstr ""
+"Lecture seule : les masques de {file} ne peuvent pas être placés tant que "
+"son RAW est inaccessible"
 
 #: crates/greycard-ui/src/panel/browser.rs:2143
 #: crates/greycard-ui/src/roots/landing.rs:179
@@ -7319,9 +7321,8 @@ msgstr "pas de réduction du bruit par apprentissage sur cette carte graphique"
 
 #. WORDING PENDING the owner's sign-off.
 #: crates/greycard-ui/src/panel/merge.rs:802
-#, fuzzy
 msgid "no learned denoise in an X-Trans merge"
-msgstr "pas de réduction du bruit par apprentissage sur X-Trans"
+msgstr "pas de réduction du bruit par apprentissage dans une fusion X-Trans"
 
 #: crates/greycard-ui/src/panel/merge.rs:813
 #: crates/greycard-ui/src/panel/merge/tests.rs:1173

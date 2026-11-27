@@ -286,23 +286,20 @@ msgid "Left panel"
 msgstr "왼쪽 패널"
 
 #: crates/greycard-slint/ui/app.slint:6967
-#, fuzzy
 msgid "Search apps"
-msgstr "단축키 검색"
+msgstr "앱 검색"
 
 #: crates/greycard-slint/ui/app.slint:6967
-#, fuzzy
 msgid "Search archives"
-msgstr "단축키 검색"
+msgstr "아카이브 검색"
 
 #: crates/greycard-slint/ui/app.slint:6968
-#, fuzzy
 msgid "No matching apps."
-msgstr "복사할 항목이 없습니다."
+msgstr "일치하는 앱이 없습니다."
 
 #: crates/greycard-slint/ui/app.slint:6968
 msgid "No matching archives."
-msgstr ""
+msgstr "일치하는 아카이브가 없습니다."
 
 #: crates/greycard-slint/ui/app.slint:7316
 msgid "Edit in"
@@ -507,11 +504,11 @@ msgstr "컬렉션에 추가"
 
 #: crates/greycard-slint/ui/panel/collection-picker-sheet.slint:12
 msgid "Search collections"
-msgstr ""
+msgstr "컬렉션 검색"
 
 #: crates/greycard-slint/ui/panel/collection-picker-sheet.slint:13
 msgid "No matching collections."
-msgstr ""
+msgstr "일치하는 컬렉션이 없습니다."
 
 #: crates/greycard-slint/ui/panel/collection-picker-sheet.slint:15
 msgid "New collection..."
@@ -1217,7 +1214,7 @@ msgstr "표준"
 
 #: crates/greycard-slint/ui/panel/deliver.slint:419
 msgid "Frames with Output sharpen use it instead"
-msgstr ""
+msgstr "출력 선명도가 설정된 사진은 대신 그 설정을 사용합니다"
 
 #: crates/greycard-slint/ui/panel/deliver.slint:440
 msgid "Embed profile"
@@ -1810,7 +1807,7 @@ msgstr "촬영 시간 이동..."
 
 #: crates/greycard-slint/ui/panel/frame-menu.slint:319
 msgid "All collections..."
-msgstr ""
+msgstr "모든 컬렉션..."
 
 #: crates/greycard-slint/ui/panel/frame-menu.slint:329
 msgid "Remove {n} frame from {}"
@@ -1840,7 +1837,7 @@ msgstr "외부 앱에서 편집..."
 
 #: crates/greycard-slint/ui/panel/frame-menu.slint:362
 msgid "All apps..."
-msgstr ""
+msgstr "모든 앱..."
 
 #. Frame menu: {} is Back up or Bring back, then an archive's name
 #: crates/greycard-slint/ui/panel/frame-menu.slint:375
@@ -1849,7 +1846,7 @@ msgstr "{0}: {1}..."
 
 #: crates/greycard-slint/ui/panel/frame-menu.slint:388
 msgid "All archives..."
-msgstr ""
+msgstr "모든 아카이브..."
 
 #: crates/greycard-slint/ui/panel/grid.slint:436
 msgid "{} and {n} other"
@@ -4035,6 +4032,8 @@ msgid ""
 "The library index is from a newer greycard and was left alone. Use that "
 "version, or close greycard and rename the file to start a new one: {path}"
 msgstr ""
+"라이브러리 색인이 더 새로운 greycard의 것이어서 그대로 두었습니다. 그 버전을 "
+"사용하거나, greycard를 닫고 파일 이름을 바꿔 새 색인을 시작하십시오: {path}"
 
 #: crates/greycard-ui/src/library.rs:723
 msgid "the indexer panicked: {}"
@@ -5250,11 +5249,12 @@ msgstr "현상 중..."
 
 #: crates/greycard-ui/src/panel/browser.rs:1360
 msgid "Read-only: made with a newer greycard"
-msgstr ""
+msgstr "읽기 전용: 더 새로운 greycard로 만들어졌습니다"
 
 #: crates/greycard-ui/src/panel/browser.rs:1392
 msgid "Read-only: {file}'s masks cannot be placed until its raw is reachable"
 msgstr ""
+"읽기 전용: {file}의 RAW에 연결할 수 있을 때까지 마스크를 배치할 수 없습니다"
 
 #: crates/greycard-ui/src/panel/browser.rs:2143
 #: crates/greycard-ui/src/roots/landing.rs:179
@@ -7019,9 +7019,8 @@ msgstr "이 그래픽 카드에서는 AI 노이즈 제거를 사용할 수 없�
 
 #. WORDING PENDING the owner's sign-off.
 #: crates/greycard-ui/src/panel/merge.rs:802
-#, fuzzy
 msgid "no learned denoise in an X-Trans merge"
-msgstr "X-Trans에서는 AI 노이즈 제거를 사용할 수 없습니다"
+msgstr "X-Trans 병합에서는 AI 노이즈 제거를 사용할 수 없습니다"
 
 #: crates/greycard-ui/src/panel/merge.rs:813
 #: crates/greycard-ui/src/panel/merge/tests.rs:1173

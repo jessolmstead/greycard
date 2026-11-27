@@ -286,23 +286,20 @@ msgid "Left panel"
 msgstr "Linkerpaneel"
 
 #: crates/greycard-slint/ui/app.slint:6967
-#, fuzzy
 msgid "Search apps"
-msgstr "Sneltoetsen zoeken"
+msgstr "Apps zoeken"
 
 #: crates/greycard-slint/ui/app.slint:6967
-#, fuzzy
 msgid "Search archives"
-msgstr "Sneltoetsen zoeken"
+msgstr "Archieven zoeken"
 
 #: crates/greycard-slint/ui/app.slint:6968
-#, fuzzy
 msgid "No matching apps."
-msgstr "Niets te kopiëren."
+msgstr "Geen overeenkomende apps."
 
 #: crates/greycard-slint/ui/app.slint:6968
 msgid "No matching archives."
-msgstr ""
+msgstr "Geen overeenkomende archieven."
 
 #: crates/greycard-slint/ui/app.slint:7316
 msgid "Edit in"
@@ -509,11 +506,11 @@ msgstr "Aan verzameling toevoegen"
 
 #: crates/greycard-slint/ui/panel/collection-picker-sheet.slint:12
 msgid "Search collections"
-msgstr ""
+msgstr "Verzamelingen zoeken"
 
 #: crates/greycard-slint/ui/panel/collection-picker-sheet.slint:13
 msgid "No matching collections."
-msgstr ""
+msgstr "Geen overeenkomende verzamelingen."
 
 #: crates/greycard-slint/ui/panel/collection-picker-sheet.slint:15
 msgid "New collection..."
@@ -1224,7 +1221,7 @@ msgstr "Standaard"
 
 #: crates/greycard-slint/ui/panel/deliver.slint:419
 msgid "Frames with Output sharpen use it instead"
-msgstr ""
+msgstr "Foto's met Uitvoerverscherping gebruiken in plaats hiervan die"
 
 #: crates/greycard-slint/ui/panel/deliver.slint:440
 msgid "Embed profile"
@@ -1822,7 +1819,7 @@ msgstr "Opnametijd verschuiven..."
 
 #: crates/greycard-slint/ui/panel/frame-menu.slint:319
 msgid "All collections..."
-msgstr ""
+msgstr "Alle verzamelingen..."
 
 #: crates/greycard-slint/ui/panel/frame-menu.slint:329
 msgid "Remove {n} frame from {}"
@@ -1854,7 +1851,7 @@ msgstr "Bewerken in..."
 
 #: crates/greycard-slint/ui/panel/frame-menu.slint:362
 msgid "All apps..."
-msgstr ""
+msgstr "Alle apps..."
 
 #. Frame menu: {} is Back up or Bring back, then an archive's name
 #: crates/greycard-slint/ui/panel/frame-menu.slint:375
@@ -1863,7 +1860,7 @@ msgstr "{} naar {}..."
 
 #: crates/greycard-slint/ui/panel/frame-menu.slint:388
 msgid "All archives..."
-msgstr ""
+msgstr "Alle archieven..."
 
 #: crates/greycard-slint/ui/panel/grid.slint:436
 msgid "{} and {n} other"
@@ -4102,6 +4099,9 @@ msgid ""
 "The library index is from a newer greycard and was left alone. Use that "
 "version, or close greycard and rename the file to start a new one: {path}"
 msgstr ""
+"De bibliotheekindex komt van een nieuwere greycard en is niet aangeraakt. "
+"Gebruik die versie, of sluit greycard en hernoem het bestand om een nieuwe "
+"te beginnen: {path}"
 
 #: crates/greycard-ui/src/library.rs:723
 msgid "the indexer panicked: {}"
@@ -5392,11 +5392,13 @@ msgstr "ontwikkelen..."
 
 #: crates/greycard-ui/src/panel/browser.rs:1360
 msgid "Read-only: made with a newer greycard"
-msgstr ""
+msgstr "Alleen-lezen: gemaakt met een nieuwere greycard"
 
 #: crates/greycard-ui/src/panel/browser.rs:1392
 msgid "Read-only: {file}'s masks cannot be placed until its raw is reachable"
 msgstr ""
+"Alleen-lezen: de maskers van {file} kunnen pas worden geplaatst als de raw "
+"ervan bereikbaar is"
 
 #: crates/greycard-ui/src/panel/browser.rs:2143
 #: crates/greycard-ui/src/roots/landing.rs:179
@@ -7275,9 +7277,8 @@ msgstr "geen aangeleerde ruisverwijdering op deze videokaart"
 
 #. WORDING PENDING the owner's sign-off.
 #: crates/greycard-ui/src/panel/merge.rs:802
-#, fuzzy
 msgid "no learned denoise in an X-Trans merge"
-msgstr "geen aangeleerde ruisverwijdering op X-Trans"
+msgstr "geen aangeleerde ruisverwijdering bij het samenvoegen van X-Trans"
 
 #: crates/greycard-ui/src/panel/merge.rs:813
 #: crates/greycard-ui/src/panel/merge/tests.rs:1173

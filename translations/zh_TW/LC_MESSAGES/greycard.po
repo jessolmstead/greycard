@@ -282,23 +282,20 @@ msgid "Left panel"
 msgstr "左側面板"
 
 #: crates/greycard-slint/ui/app.slint:6967
-#, fuzzy
 msgid "Search apps"
-msgstr "搜尋快速鍵"
+msgstr "搜尋應用程式"
 
 #: crates/greycard-slint/ui/app.slint:6967
-#, fuzzy
 msgid "Search archives"
-msgstr "搜尋快速鍵"
+msgstr "搜尋封存"
 
 #: crates/greycard-slint/ui/app.slint:6968
-#, fuzzy
 msgid "No matching apps."
-msgstr "沒有要拷貝的內容。"
+msgstr "沒有符合的應用程式。"
 
 #: crates/greycard-slint/ui/app.slint:6968
 msgid "No matching archives."
-msgstr ""
+msgstr "沒有符合的封存。"
 
 #: crates/greycard-slint/ui/app.slint:7316
 msgid "Edit in"
@@ -503,11 +500,11 @@ msgstr "加入收藏集"
 
 #: crates/greycard-slint/ui/panel/collection-picker-sheet.slint:12
 msgid "Search collections"
-msgstr ""
+msgstr "搜尋收藏集"
 
 #: crates/greycard-slint/ui/panel/collection-picker-sheet.slint:13
 msgid "No matching collections."
-msgstr ""
+msgstr "沒有符合的收藏集。"
 
 #: crates/greycard-slint/ui/panel/collection-picker-sheet.slint:15
 msgid "New collection..."
@@ -1212,7 +1209,7 @@ msgstr "標準"
 
 #: crates/greycard-slint/ui/panel/deliver.slint:419
 msgid "Frames with Output sharpen use it instead"
-msgstr ""
+msgstr "設有輸出銳利化的相片改用其輸出銳利化"
 
 #: crates/greycard-slint/ui/panel/deliver.slint:440
 msgid "Embed profile"
@@ -1805,7 +1802,7 @@ msgstr "調整拍攝時間..."
 
 #: crates/greycard-slint/ui/panel/frame-menu.slint:319
 msgid "All collections..."
-msgstr ""
+msgstr "所有收藏集..."
 
 #: crates/greycard-slint/ui/panel/frame-menu.slint:329
 msgid "Remove {n} frame from {}"
@@ -1835,7 +1832,7 @@ msgstr "以其他應用程式編輯..."
 
 #: crates/greycard-slint/ui/panel/frame-menu.slint:362
 msgid "All apps..."
-msgstr ""
+msgstr "所有應用程式..."
 
 #. Frame menu: {} is Back up or Bring back, then an archive's name
 #: crates/greycard-slint/ui/panel/frame-menu.slint:375
@@ -1844,7 +1841,7 @@ msgstr "{}到 {}..."
 
 #: crates/greycard-slint/ui/panel/frame-menu.slint:388
 msgid "All archives..."
-msgstr ""
+msgstr "所有封存..."
 
 #: crates/greycard-slint/ui/panel/grid.slint:436
 msgid "{} and {n} other"
@@ -4015,6 +4012,8 @@ msgid ""
 "The library index is from a newer greycard and was left alone. Use that "
 "version, or close greycard and rename the file to start a new one: {path}"
 msgstr ""
+"圖庫索引來自更新版本的 greycard，未作變更。請使用該版本，或關閉 greycard 並重"
+"新命名該檔案以建立新索引：{path}"
 
 #: crates/greycard-ui/src/library.rs:723
 msgid "the indexer panicked: {}"
@@ -5182,11 +5181,11 @@ msgstr "正在處理..."
 
 #: crates/greycard-ui/src/panel/browser.rs:1360
 msgid "Read-only: made with a newer greycard"
-msgstr ""
+msgstr "唯讀：由更新版本的 greycard 建立"
 
 #: crates/greycard-ui/src/panel/browser.rs:1392
 msgid "Read-only: {file}'s masks cannot be placed until its raw is reachable"
-msgstr ""
+msgstr "唯讀：{file} 的 RAW 檔案可存取之前，無法放置其遮色片"
 
 #: crates/greycard-ui/src/panel/browser.rs:2143
 #: crates/greycard-ui/src/roots/landing.rs:179
@@ -6899,9 +6898,8 @@ msgstr "此顯示卡不支援 AI 降噪"
 
 #. WORDING PENDING the owner's sign-off.
 #: crates/greycard-ui/src/panel/merge.rs:802
-#, fuzzy
 msgid "no learned denoise in an X-Trans merge"
-msgstr "X-Trans 不支援 AI 降噪"
+msgstr "X-Trans 合併不支援 AI 降噪"
 
 #: crates/greycard-ui/src/panel/merge.rs:813
 #: crates/greycard-ui/src/panel/merge/tests.rs:1173
