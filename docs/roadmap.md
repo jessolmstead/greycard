@@ -1689,11 +1689,24 @@ clears or a tester asks for it.
       (discussion 59, 2026-11-09). Asked for again as the stand-in
       for darktable's tone equalizer, with more bands than Light's
       three (reddit, 2026-11-23)
-- [ ] An export batch timed end to end on a few hundred edited
-      frames, masks and fills included, and the slow stage found; a
-      tester's job took days against hours in Lightroom, the switching
-      between frames named as the worst of it (discussion 59,
-      2026-11-06)
+- [ ] An export's finish and encode run while the next frame
+      develops, on a writer thread: a third of a batch's time on a GPU
+      (§761)
+- [ ] A learned denoiser's answer the same fresh and from its disk
+      cache: the cache's 16-bit store rounds it, so a first develop
+      and a later one differ by up to 6 levels of 255 in the shadows;
+      the fresh answer through the same rounding, or floats in the
+      cache. Changes one path's pixels: the owner's call (§761's
+      timing, 2026-11-28)
+- [ ] The denoiser's disk cache sized for a shoot: 8 GB holds about
+      70 frames at 45 MP, so an export of 300 runs the network again;
+      and its write off the export's path
+- [ ] An export from the window borrows the window's denoiser, Sky,
+      and fill sessions; today it loads a second copy of each beside
+      them, twice the card's memory on a small GPU
+- [ ] An export batch timed in the window's own queue and on a small
+      or integrated GPU, where a tester's job took days (discussion
+      59, 2026-11-06); a batch from the command line is timed (§761)
 - [ ] An aarch64 Linux package for the ARM laptops and Asahi Macs:
       a release leg on GitHub's ARM runner, ONNX Runtime's
       linux-aarch64 build in the registry, the AppImage tooling for

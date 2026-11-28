@@ -57,8 +57,7 @@ pub(super) fn render_open(
         gpu,
     )?;
     drop(kept);
-    let rendered = crate::finish::finish_file(&image, edit, &finish, settings)
-        .map_err(|e| format!("{e:#}"))?;
+    let rendered = timed_finish(&image, edit, &finish, settings)?;
     left_out.extend(lens_left_out(input, edit, lenses));
     Ok((rendered, left_out))
 }
@@ -181,9 +180,27 @@ pub(super) fn walk_export(
         gpu,
     )?;
     drop(kept);
-    let rendered = crate::finish::finish_file(&image, edit, &finish, settings)
-        .map_err(|e| format!("{e:#}"))?;
+    let rendered = timed_finish(&image, edit, &finish, settings)?;
     Ok((rendered, left_out))
+}
+
+/// [`crate::finish::finish_file`], its time in the log.
+fn timed_finish(
+    image: &WorkingImage,
+    edit: &Edit,
+    finish: &crate::finish::FinishInput,
+    settings: &greycard_render::export::Settings,
+) -> Result<greycard_render::export::Rendered, String> {
+    let started = Instant::now();
+    let rendered =
+        crate::finish::finish_file(image, edit, finish, settings).map_err(|e| format!("{e:#}"))?;
+    tracing::info!(
+        "finished {}x{} for the export in {:.2} s",
+        rendered.width,
+        rendered.height,
+        started.elapsed().as_secs_f64()
+    );
+    Ok(rendered)
 }
 
 /// `input` walked under `edit` at `turn` through its stage list for
@@ -331,6 +348,7 @@ fn write_rendered(
             .map(|n| n.to_string_lossy().into_owned()),
         edit: Some(edit.to_json()),
     };
+    let started = Instant::now();
     greycard_render::export::write(
         rendered,
         // The sheet's words in the file's XMP as the frame was made.
@@ -339,7 +357,12 @@ fn write_rendered(
         shifted.as_ref(),
         &origin,
     )
-    .map_err(|e| format!("{e:#}"))
+    .map_err(|e| format!("{e:#}"))?;
+    tracing::info!(
+        "encoded and written in {:.2} s",
+        started.elapsed().as_secs_f64()
+    );
+    Ok(())
 }
 
 #[cfg(test)]

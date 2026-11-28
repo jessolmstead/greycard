@@ -23,6 +23,9 @@ design note behind it.
 - An open frame takes less of the GPU's memory: about 400 MB less at
   102 megapixels, and 1.2 GB less with Clarity and Dehaze on
   ([§758](https://github.com/jessolmstead/greycard/blob/master/docs/notes/758-a-picture-on-the-device-as-three-planes.md)).
+- With no usable GPU, the AI features hold far less memory: an export
+  batch rests at 1.7 GB between frames where it held 13 GB
+  ([§761](https://github.com/jessolmstead/greycard/blob/master/docs/notes/761-an-export-batch-timed-and-the-cpu-arena.md)).
 
 ### Fixes
 

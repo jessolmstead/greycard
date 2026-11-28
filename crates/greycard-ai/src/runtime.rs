@@ -190,7 +190,7 @@ impl Provider {
             // over the desktop under the default and 8.3 GB under lazy
             // release, the remove's own share 7.3 GB either way.
             Provider::WebGpu => Some(ort::ep::WebGPU::default().build().error_on_failure()),
-            Provider::Cpu => None,
+            Provider::Cpu => Some(cpu_ep().build()),
             #[allow(unreachable_patterns)]
             _ => None,
         }
@@ -1658,6 +1658,19 @@ fn winner_first(providers: &[Provider], winner: Provider) -> Vec<Provider> {
 /// Core ML fuses the pair itself from the weight file.
 pub const CORE_ML_UNFUSED: &str = "MatMulAddFusion";
 
+/// The CPU's provider, without ONNX Runtime's arena. With it, each
+/// session kept its largest run's working memory after the run, for as
+/// long as the session lived: an export of 26 frames with no GPU, the
+/// three denoiser tiers, Subject, Sky, and LaMa among them, rested at
+/// 13 GB between frames and peaked at 15.6 GB; without it, 1.7 GB and
+/// 6.5 GB, the files the same. It costs the denoiser, which runs the
+/// session once a tile and now allocates each tile's buffers afresh,
+/// 6 to 9 percent of its time on the CPU; the models that run once a
+/// frame (Subject, Sky, the parts, LaMa) are as quick.
+fn cpu_ep() -> ort::ep::CPU {
+    ort::ep::CPU::default().with_arena_allocator(false)
+}
+
 /// A session on `provider`, warmed up unless `skip_warm`, and with
 /// `timed` the seconds of a second warm run: the first pays for
 /// compiling shaders or a Core ML specialization, which a tile does
@@ -2097,6 +2110,34 @@ mod tests {
         let x = ort::value::Tensor::from_array(([1usize, 4], vec![1.0f32, 2.0, 3.0, 4.0])).unwrap();
         let outputs = session.run(ort::inputs!["x" => x]).unwrap();
         outputs["y"].try_extract_tensor::<f32>().unwrap().1.to_vec()
+    }
+
+    /// The CPU's sessions are made without the arena that held each
+    /// one's largest run between frames ([`cpu_ep`]), and still answer.
+    #[test]
+    fn the_cpu_runs_without_its_arena() {
+        assert!(
+            format!("{:?}", cpu_ep()).contains("use_arena: false"),
+            "{:?}",
+            cpu_ep()
+        );
+        assert!(Provider::Cpu.dispatch(Path::new("add.onnx"), &[]).is_some());
+        if let Err(why) = init() {
+            absent_in_test(why);
+            return;
+        }
+        let model =
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/external/named/add.onnx");
+        let mut session = build_session(
+            &model,
+            GraphOptimizationLevel::Level1,
+            Provider::Cpu,
+            &[],
+            &ExternalWeights::default(),
+        )
+        .unwrap();
+        assert_eq!(add(&mut session), [11.0, 22.0, 33.0, 44.0]);
+        assert_eq!(add(&mut session), [11.0, 22.0, 33.0, 44.0]);
     }
 
     /// A build with the table that fails on WebGPU, and the fallback
