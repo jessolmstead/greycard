@@ -240,10 +240,26 @@ fn pick_among<'a>(tags: &[&'a str], wanted: &str) -> Option<&'a str> {
 /// The catalog for the system's languages, most preferred first: the
 /// first that has one, else English.
 pub fn system() -> &'static str {
-    sys_locale::get_locales()
-        .map(|l| pick(&l))
-        .find(|t| !t.is_empty())
-        .unwrap_or("")
+    first_of(sys_locale::get_locales())
+}
+
+/// The catalog for a list of languages, most preferred first. English
+/// is the source and has no catalog, so it ends the walk where it
+/// stands: with English first and German after it, the window is
+/// English, not the first language further down that has a catalog
+/// (issue 226).
+fn first_of(wanted: impl IntoIterator<Item = String>) -> &'static str {
+    for language in wanted {
+        let catalog = pick(&language);
+        let english = language
+            .split(['-', '_', '.', '@'])
+            .next()
+            .is_some_and(|l| l.eq_ignore_ascii_case("en"));
+        if english || !catalog.is_empty() {
+            return catalog;
+        }
+    }
+    ""
 }
 
 /// Put the language of `tag` (from [`pick`]) in force; empty, or a tag
@@ -689,6 +705,18 @@ msgstr "\a\b\f\v\101\x42\t"
 
     /// A tag picks its catalog, a regional or encoded locale its
     /// language's, and a language with none English.
+    #[test]
+    fn english_among_the_systems_languages_ends_the_walk() {
+        let of = |tags: &[&str]| first_of(tags.iter().map(|t| t.to_string()));
+        assert_eq!(of(&["en-SE", "de-DE"]), "");
+        assert_eq!(of(&["en_US.UTF-8", "fr"]), "");
+        assert_eq!(of(&["de-DE", "en-SE"]), "de");
+        // A language with no catalog is passed over for the next.
+        assert_eq!(of(&["sv-SE", "de-DE"]), "de");
+        assert_eq!(of(&["sv-SE", "en-SE", "de-DE"]), "");
+        assert_eq!(of(&[]), "");
+    }
+
     #[test]
     fn a_language_picks_its_catalog_or_english() {
         let tags = ["de", "fr", "pt_BR"];

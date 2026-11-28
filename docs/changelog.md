@@ -33,6 +33,9 @@ design note behind it.
   hundreds of megabytes to read; history is held to its 50 steps at
   the read
   ([§757](https://github.com/jessolmstead/greycard/blob/master/docs/notes/757-history-capped-at-the-read-and-the-join-checked.md)).
+- With English first among the system's languages and another after
+  it, the window follows the system in English, not the other language
+  (issue 226).
 - A float TIFF holding a NaN or an infinite sample no longer shows
   black in the window, spreading to the pixels beside it, where the
   export showed color
