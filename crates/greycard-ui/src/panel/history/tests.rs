@@ -2065,3 +2065,221 @@ fn a_waiting_undone_row_clicked_over_a_moved_panel_is_refused() {
     assert!(s.current_waits());
     assert_eq!(s.current_written().into_owned(), written);
 }
+
+/// The frame menu up over strip frame `i`, by a right-click there.
+fn open_frame_menu(app: &App, i: usize) {
+    use slint::platform::{PointerEventButton, WindowEvent};
+    let (x, y) = crate::testing::strip_cell(app, i);
+    let position = slint::LogicalPosition::new(x, y);
+    for event in [
+        WindowEvent::PointerMoved { position },
+        WindowEvent::PointerPressed {
+            position,
+            button: PointerEventButton::Right,
+        },
+        WindowEvent::PointerReleased {
+            position,
+            button: PointerEventButton::Right,
+        },
+    ] {
+        app.window().dispatch_event(event);
+    }
+    assert!(app.get_menu_up(), "the menu is up");
+}
+
+/// The frame menu's Clear history, as the window shows it: an entry
+/// has no id of ours (Slint draws the menu's entries itself), so it is
+/// known by its title.
+fn clear_entry(app: &App) -> i_slint_backend_testing::ElementHandle {
+    let title = crate::i18n::text("Clear history");
+    let found: Vec<_> = crate::testing::menu_entries(app)
+        .into_iter()
+        .filter(|e| e.accessible_label().as_deref() == Some(title.as_str()))
+        .collect();
+    assert_eq!(found.len(), 1, "one Clear history in the frame menu");
+    found.into_iter().next().unwrap()
+}
+
+/// Clear history chosen from the frame menu over the open frame `i`,
+/// by a click on its entry; the menu closed after, whatever it did.
+fn choose_clear(app: &App, i: usize) {
+    open_frame_menu(app, i);
+    clear_entry(app).mock_single_click(slint::platform::PointerEventButton::Left);
+    for _ in 0..5 {
+        i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(5));
+        slint::platform::update_timers_and_animations();
+    }
+    if app.get_menu_up() {
+        crate::testing::press(app, slint::platform::Key::Escape);
+    }
+    assert!(!app.get_menu_up());
+}
+
+/// Clear history (discussion 167): in the frame menu, greyed out on a
+/// fresh frame, where a click on it does nothing; chosen, it takes out
+/// every state but the Original and the current one, the snapshot kept
+/// and the edit unchanged, and Undo puts them back.
+#[test]
+fn the_frame_menu_clears_the_open_frames_history_and_undo_puts_it_back() {
+    let app = crate::testing::window(2);
+    let (state, _worker) = crate::testing::state_for(&app, crate::testing::folder(2));
+    app.invoke_select(0);
+    // A fresh frame: there, and greyed out.
+    open_frame_menu(&app, 0);
+    assert!(!app.get_menu_can_clear_history());
+    crate::testing::press(&app, slint::platform::Key::Escape);
+
+    // Three steps and a snapshot.
+    for ev in [0.3, 0.6] {
+        app.set_exposure(ev);
+        save(&app, &state);
+    }
+    app.invoke_snapshot_taken();
+    app.set_exposure(0.9);
+    save(&app, &state);
+    let (current, snapshots) = {
+        let st = state.borrow();
+        let s = &st.sidecars[0];
+        assert_eq!(s.history.len(), 3);
+        (s.current().clone(), s.snapshots.clone())
+    };
+    choose_clear(&app, 0);
+    {
+        let st = state.borrow();
+        let s = &st.sidecars[0];
+        assert_eq!(s.history.len(), 1, "the Original and the current state");
+        assert_eq!(s.current(), &current, "the edit unchanged");
+        assert_eq!(s.snapshots, snapshots);
+        assert_eq!(s.cleared.len(), 2);
+        assert!(!s.can_clear_history());
+    }
+    assert_eq!(app.get_history_rows().row_count(), 2);
+    assert!(app.get_can_undo());
+    // Undo takes the clear back, the edit still the same; Redo clears
+    // again.
+    app.invoke_undo();
+    {
+        let st = state.borrow();
+        let s = &st.sidecars[0];
+        assert_eq!(s.history.len(), 3);
+        assert_eq!(s.current(), &current);
+        assert!(s.cleared.is_empty());
+    }
+    assert_eq!(app.get_history_rows().row_count(), 4);
+    assert!(app.get_can_redo());
+    app.invoke_redo();
+    assert_eq!(state.borrow().sidecars[0].history.len(), 1);
+    assert_eq!(state.borrow().sidecars[0].current(), &current);
+}
+
+/// Two edits undone back to the Original, then Clear history: what was
+/// undone goes, with no history to clear, and Undo brings it back to
+/// redo.
+#[test]
+fn clear_history_back_at_the_original_takes_what_was_undone() {
+    let app = crate::testing::window(1);
+    let (state, _worker) = crate::testing::state_for(&app, crate::testing::folder(1));
+    app.invoke_select(0);
+    for ev in [0.3, 0.6] {
+        app.set_exposure(ev);
+        save(&app, &state);
+    }
+    app.invoke_undo();
+    app.invoke_undo();
+    assert_eq!(state.borrow().sidecars[0].history.len(), 0);
+    assert_eq!(state.borrow().sidecars[0].redo.len(), 2);
+    choose_clear(&app, 0);
+    {
+        let st = state.borrow();
+        let s = &st.sidecars[0];
+        assert!(s.history.is_empty() && s.redo.is_empty());
+        assert_eq!(s.cleared.len(), 2);
+    }
+    assert!(!app.get_can_redo());
+    assert!(app.get_can_undo());
+    app.invoke_undo();
+    assert_eq!(state.borrow().sidecars[0].redo.len(), 2);
+    app.invoke_redo();
+    assert_eq!(state.borrow().sidecars[0].redo.len(), 0, "cleared again");
+    assert_eq!(app.get_exposure(), 0.0);
+}
+
+/// A mark made before Clear history is older than the clear: the first
+/// undo takes back the clear, the mark after it. And back at the
+/// Original, with only undone steps cleared, the clear is still the
+/// keys' undo before the session's marks.
+#[test]
+fn an_undo_takes_back_a_clear_before_an_older_mark() {
+    let app = crate::testing::window(1);
+    let (state, _worker) = crate::testing::state_for(&app, crate::testing::folder(1));
+    app.invoke_select(0);
+    let history = |state: &Rc<Shared>| state.borrow().sidecars[0].history.len();
+    let rating = |state: &Rc<Shared>| state.borrow().sidecars[0].meta.rating;
+    // An edit, a mark, a clear.
+    for ev in [0.3, 0.6] {
+        app.set_exposure(ev);
+        save(&app, &state);
+    }
+    app.invoke_meta_key("3".into());
+    assert_eq!(rating(&state), 3);
+    choose_clear(&app, 0);
+    assert_eq!(history(&state), 1);
+    app.invoke_undo();
+    assert_eq!(history(&state), 2, "the clear first");
+    assert_eq!(rating(&state), 3);
+    app.invoke_undo();
+    assert_eq!(rating(&state), 0, "then the mark");
+    assert_eq!(history(&state), 2);
+
+    // A mark, the edits undone to the Original, a clear of what was
+    // undone: the clear first.
+    app.invoke_meta_key("4".into());
+    // The mark back, then both edits.
+    for _ in 0..3 {
+        app.invoke_undo();
+    }
+    {
+        let st = state.borrow();
+        assert_eq!(st.sidecars[0].history.len(), 0);
+        assert_eq!(st.sidecars[0].redo.len(), 2);
+    }
+    app.invoke_meta_key("5".into());
+    choose_clear(&app, 0);
+    assert!(state.borrow().sidecars[0].redo.is_empty());
+    app.invoke_undo();
+    assert_eq!(state.borrow().sidecars[0].redo.len(), 2, "the clear first");
+    assert_eq!(rating(&state), 5, "the mark kept");
+}
+
+/// A sidecar read-only (a newer build's file) offers no Clear history,
+/// though its history has something to clear. And the entry greyed out
+/// takes no click: the menu put up over the read-only file, the file
+/// made writable under it, a click on the entry still clears nothing
+/// (the testing backend says nothing of an entry's being enabled, so
+/// this is how the `enabled` binding is held to).
+#[test]
+fn clear_history_is_not_offered_on_a_read_only_sidecar() {
+    let app = crate::testing::window(1);
+    let (state, _worker) = crate::testing::state_for(&app, crate::testing::folder(1));
+    app.invoke_select(0);
+    for ev in [0.3, 0.6] {
+        app.set_exposure(ev);
+        save(&app, &state);
+    }
+    state.borrow_mut().sidecars[0].newer = Some(99);
+    assert!(state.borrow().sidecars[0].read_only());
+    choose_clear(&app, 0);
+    assert_eq!(state.borrow().sidecars[0].history.len(), 2);
+    assert!(state.borrow().sidecars[0].cleared.is_empty());
+    open_frame_menu(&app, 0);
+    assert!(!app.get_menu_can_clear_history());
+    state.borrow_mut().sidecars[0].newer = None;
+    clear_entry(&app).mock_single_click(slint::platform::PointerEventButton::Left);
+    assert_eq!(state.borrow().sidecars[0].history.len(), 2, "greyed out");
+    if app.get_menu_up() {
+        crate::testing::press(&app, slint::platform::Key::Escape);
+    }
+    // Writable, the menu offers it again, and a click clears.
+    choose_clear(&app, 0);
+    assert_eq!(state.borrow().sidecars[0].history.len(), 1);
+}

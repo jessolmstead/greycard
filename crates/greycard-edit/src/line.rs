@@ -549,6 +549,25 @@ pub struct Line {
     /// that keeps the snapshot drops its tombstone. At most
     /// [`TOMBSTONES`], the oldest going first.
     pub snapshots_removed: BTreeMap<String, u64>,
+    /// The states Clear history took out of this line, by id, each at
+    /// the time it went, this machine's clock: written as `cleared`,
+    /// left out when none, so a join drops them from a copy that still
+    /// has them rather than bring them back ([`Self::clear_history`]).
+    /// Never the first state or a current one, which a join keeps
+    /// whatever the tombstones say; a join drops the tombstone of a
+    /// state it holds. At most [`TOMBSTONES`], the oldest going first.
+    /// An older build reads past the key and drops it on its next
+    /// write: the cleared states may then come back from a copy that
+    /// has them.
+    pub cleared: BTreeMap<String, u64>,
+    /// What the last Clear history took out, held for this session so
+    /// Undo puts it back ([`Self::undo`]): never written, and gone at a
+    /// step, a move, or a join, or with the line.
+    pub(crate) clear_undo: Option<Box<Cleared>>,
+    /// When Undo took back a Clear history, if that was the last thing
+    /// it took back, so Redo clears again ([`Self::redo`]). Dropped as
+    /// `clear_undo` is.
+    pub(crate) clear_redo: Option<Order>,
     /// Whether [`Self::current`] is a recorded state. A line nobody
     /// developed holds none (§724): its current is the frame's start,
     /// made by whoever reads the file from the settings and the frame
@@ -577,6 +596,18 @@ pub struct Line {
     /// or one whose base is gone. Not written; while there are any, the
     /// sidecar is not written either ([`crate::Sidecar::unread`]).
     pub(crate) unread: usize,
+}
+
+/// What a Clear history took out of a line, for its Undo: the history
+/// after the first state, what was undone, and the tombstones it laid.
+#[derive(Debug, Clone)]
+pub(crate) struct Cleared {
+    history: Vec<Step>,
+    redo: Vec<Step>,
+    laid: Vec<String>,
+    /// When the clear was made: what an undo weighs it by against the
+    /// session's other acts ([`Line::undo_order`]).
+    order: Order,
 }
 
 /// The repair sources chosen for a line's patches, by [`source_key`].
@@ -686,6 +717,8 @@ struct LineIn {
     #[serde(deserialize_with = "meta::loose")]
     snapshots_removed: BTreeMap<String, u64>,
     #[serde(deserialize_with = "meta::loose")]
+    cleared: BTreeMap<String, u64>,
+    #[serde(deserialize_with = "meta::loose")]
     sources: Sources,
     #[serde(rename = "#unread")]
     unread: usize,
@@ -712,6 +745,7 @@ impl From<LineIn> for Line {
             head_at,
             snapshots,
             snapshots_removed,
+            cleared,
             mut sources,
             unread,
         } = read;
@@ -725,8 +759,8 @@ impl From<LineIn> for Line {
         // is read: a file that has it with no current state (no build
         // writes one) would otherwise be held here as it is not written,
         // its history asking for a shape its next read does not.
-        let (history, undone, line_id, head_at, mut snapshots) = if recorded {
-            (history, undone, line_id, head_at, snapshots)
+        let (history, undone, line_id, head_at, mut snapshots, cleared) = if recorded {
+            (history, undone, line_id, head_at, snapshots, cleared)
         } else {
             Default::default()
         };
@@ -754,12 +788,21 @@ impl From<LineIn> for Line {
             head_at,
             snapshots,
             snapshots_removed,
+            cleared,
+            clear_undo: None,
+            clear_redo: None,
             recorded,
             seeded: false,
             sources,
             unread,
         };
         line.parents_read_at_nine();
+        // A tombstone for a state the line holds stands for nothing (no
+        // build writes one): the state is kept, as a join keeps it.
+        let held: std::collections::HashSet<String> =
+            line.held_ids().into_iter().map(str::to_string).collect();
+        line.cleared.retain(|id, _| !held.contains(id));
+        cap_tombstones(&mut line.cleared);
         // An undone id the line holds stands for no undone state.
         let mut undone = std::mem::take(&mut line.undone);
         cap_undone(&mut undone, &line.held_ids());
@@ -796,6 +839,8 @@ struct LineOut<'a> {
     snapshots: Option<&'a Vec<Snapshot>>,
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     snapshots_removed: &'a BTreeMap<String, u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    cleared: Option<&'a BTreeMap<String, u64>>,
     #[serde(skip_serializing_if = "Sources::is_empty")]
     sources: &'a Sources,
 }
@@ -826,6 +871,7 @@ impl Serialize for Line {
             head_at: self.head_at.as_ref().filter(|_| recorded),
             snapshots: recorded.then_some(&self.snapshots),
             snapshots_removed: &self.snapshots_removed,
+            cleared: Some(&self.cleared).filter(|c| recorded && !c.is_empty()),
             sources: &self.sources,
         }
         .serialize(serializer)
@@ -853,6 +899,9 @@ impl PartialEq for Line {
             head_at: _,
             snapshots,
             snapshots_removed,
+            cleared,
+            clear_undo: _,
+            clear_redo: _,
             recorded,
             seeded: _,
             sources,
@@ -873,6 +922,7 @@ impl PartialEq for Line {
             && self.undone_written() == other.undone_written()
             && *snapshots == other.snapshots
             && *snapshots_removed == other.snapshots_removed
+            && *cleared == other.cleared
             // None yet is the one the save gives it, made from the line
             // ([`crate::Sidecar::fill_ids`]): equal to any.
             && (line_id.is_empty() || other.line_id.is_empty() || *line_id == other.line_id)
@@ -1782,7 +1832,18 @@ impl Line {
     /// current one, the history, what was undone, and the snapshots.
     pub(crate) fn show(&mut self, turn: u8, shape: Option<Measured>) {
         show_state(&mut self.current, &mut self.current_written, turn, shape);
-        for s in self.history.iter_mut().chain(self.redo.iter_mut()) {
+        // What a Clear history holds for Undo too, so it comes back
+        // shown as the rest.
+        let held = self
+            .clear_undo
+            .iter_mut()
+            .flat_map(|c| c.history.iter_mut().chain(c.redo.iter_mut()));
+        for s in self
+            .history
+            .iter_mut()
+            .chain(self.redo.iter_mut())
+            .chain(held)
+        {
             show_state(&mut s.edit, &mut s.written, turn, shape);
         }
         for s in &mut self.snapshots {
@@ -1915,7 +1976,16 @@ impl Line {
         let mut took = self
             .current_written
             .fill_sources(&mut self.current, sources);
-        for s in self.history.iter_mut().chain(self.redo.iter_mut()) {
+        let held = self
+            .clear_undo
+            .iter_mut()
+            .flat_map(|c| c.history.iter_mut().chain(c.redo.iter_mut()));
+        for s in self
+            .history
+            .iter_mut()
+            .chain(self.redo.iter_mut())
+            .chain(held)
+        {
             took |= s.written.fill_sources(&mut s.edit, sources);
         }
         for s in &mut self.snapshots {
@@ -1947,6 +2017,8 @@ impl Line {
     /// two copies under two turns show the same state two ways.
     pub(crate) fn into_written(self) -> Line {
         let mut line = self;
+        // Held for this session's Undo only, never joined.
+        line.drop_clear_undo();
         let to_written = |edit: &mut Edit, written: &mut Written| {
             let w = written.edit(edit).into_owned();
             let before_placed = written.before_placed;
@@ -2074,6 +2146,8 @@ impl Line {
             written: std::mem::replace(&mut self.current_written, written),
         };
         self.history.push(previous);
+        // A step: a Clear history before it is no longer Undo's.
+        self.drop_clear_undo();
         // The earliest stays; what follows it goes.
         self.cap_history();
         self.leave_redo();
@@ -2278,9 +2352,125 @@ impl Line {
     /// nothing moved.
     pub fn go_to(&mut self, index: usize) -> bool {
         let from = self.position();
-        while self.position() > index && self.undo() {}
-        while self.position() < index && self.redo() {}
-        self.position() != from
+        while self.position() > index && self.step_back() {}
+        while self.position() < index && self.step_forward() {}
+        let moved = self.position() != from;
+        if moved {
+            self.drop_clear_undo();
+        }
+        moved
+    }
+
+    /// Whether Clear history has anything to take: a state between the
+    /// first and the current one, or one undone.
+    pub fn can_clear_history(&self) -> bool {
+        self.recorded && (self.history.len() > 1 || !self.redo.is_empty())
+    }
+
+    /// Clear history: every state but the first (the Original, or the
+    /// earliest kept) and the current one taken out, what was undone
+    /// with them; the snapshots stay. The current edit, and so the
+    /// picture, does not change, nor does any id. Each state taken out
+    /// leaves a tombstone ([`Self::cleared`]), so a join with a copy
+    /// that still has it drops it there too; the exports made from it go
+    /// with it, the frame's last export kept ([`Self::last_export`]).
+    ///
+    /// One step that [`Self::undo`] takes back, for this session: what
+    /// went is held in memory until a step, a move through the history,
+    /// or a join, and never written. False, and nothing changed, when
+    /// there is nothing to clear ([`Self::can_clear_history`]).
+    pub fn clear_history(&mut self) -> bool {
+        if !self.can_clear_history() {
+            return false;
+        }
+        // Every state has its id to lay a tombstone with.
+        self.fill_ids();
+        // The first state stays; a line whose only other states were
+        // undone (back at its first state, or with none before the
+        // current) has only what was undone to clear.
+        let history: Vec<Step> = if self.history.len() > 1 {
+            self.history.drain(1..).collect()
+        } else {
+            Vec::new()
+        };
+        let redo = std::mem::take(&mut self.redo);
+        let held: std::collections::HashSet<String> =
+            self.held_ids().into_iter().map(str::to_string).collect();
+        let now = crate::versions::now();
+        let mut laid = Vec::new();
+        for id in history.iter().chain(&redo).filter_map(|s| s.id.as_ref()) {
+            if !held.contains(id) && !self.cleared.contains_key(id) {
+                self.cleared.insert(id.clone(), now);
+                laid.push(id.clone());
+            }
+        }
+        cap_tombstones(&mut self.cleared);
+        self.clear_undo = Some(Box::new(Cleared {
+            history,
+            redo,
+            laid,
+            order: Order::act(),
+        }));
+        self.clear_redo = None;
+        true
+    }
+
+    /// The last Clear history taken back: its states where they were,
+    /// its tombstones lifted. False when there is none to take back.
+    fn unclear_history(&mut self) -> bool {
+        let Some(cleared) = self.clear_undo.take() else {
+            return false;
+        };
+        let Cleared {
+            history,
+            redo,
+            laid,
+            order: _,
+        } = *cleared;
+        self.history.extend(history);
+        self.redo = redo;
+        for id in &laid {
+            self.cleared.remove(id);
+        }
+        self.clear_redo = Some(Order::next());
+        true
+    }
+
+    /// What a Clear history held for Undo let go: the line moved on.
+    fn drop_clear_undo(&mut self) {
+        self.clear_undo = None;
+        self.clear_redo = None;
+    }
+
+    /// Whether Undo has something to take back: a step, or a Clear
+    /// history.
+    pub fn can_undo(&self) -> bool {
+        self.clear_undo.is_some() || !self.history.is_empty()
+    }
+
+    /// Whether Redo has something to do again: a step undone, or a
+    /// Clear history.
+    pub fn can_redo(&self) -> bool {
+        self.clear_redo.is_some() || !self.redo.is_empty()
+    }
+
+    /// When what an undo would take back was done, to weigh it against
+    /// the session's other acts (a mark): a Clear history held for Undo
+    /// when there is one, else the current state's making; none when
+    /// there is nothing to undo.
+    pub fn undo_order(&self) -> Option<Order> {
+        match &self.clear_undo {
+            Some(c) => Some(c.order),
+            None => (!self.history.is_empty()).then_some(self.current_order),
+        }
+    }
+
+    /// When what a redo would do again was undone: a Clear history's
+    /// undo when that was the last undone, else the newest state on
+    /// the redo stack's; none when there is nothing to redo.
+    pub fn redo_order(&self) -> Option<Order> {
+        self.clear_redo
+            .or_else(|| self.redo.last().map(|s| s.order))
     }
 
     /// Keep the current state under `name`; its index.
@@ -2362,8 +2552,21 @@ impl Line {
     }
 
     /// Back to the previous state; false at the beginning. The state
-    /// undone keeps its words on the redo stack.
+    /// undone keeps its words on the redo stack. Right after a Clear
+    /// history, the clear is what is taken back ([`Self::clear_history`]).
     pub fn undo(&mut self) -> bool {
+        if self.unclear_history() {
+            return true;
+        }
+        let moved = self.step_back();
+        if moved {
+            self.clear_redo = None;
+        }
+        moved
+    }
+
+    /// One state back, undone onto the redo stack.
+    fn step_back(&mut self) -> bool {
         let Some(previous) = self.history.pop() else {
             return false;
         };
@@ -2438,8 +2641,22 @@ impl Line {
         kept
     }
 
-    /// Forward again; false when nothing was undone.
+    /// Forward again; false when nothing was undone. Right after an
+    /// undo of a Clear history, the clear is done again.
     pub fn redo(&mut self) -> bool {
+        if self.clear_redo.is_some() {
+            self.clear_redo = None;
+            return self.clear_history();
+        }
+        let moved = self.step_forward();
+        if moved {
+            self.clear_undo = None;
+        }
+        moved
+    }
+
+    /// One state forward, off the redo stack.
+    fn step_forward(&mut self) -> bool {
         let Some(next) = self.redo.pop() else {
             return false;
         };
@@ -2481,6 +2698,9 @@ impl Line {
     /// own; under new ones the renamed run is a branch of its own, and
     /// a join keeps both. True when any state changed.
     pub fn rename_look(&mut self, from: &str, to: &str) -> bool {
+        // What a Clear history holds would come back under the old
+        // name and ids: let go, as a step lets it go.
+        self.drop_clear_undo();
         let mut renamed = false;
         for snapshot in &mut self.snapshots {
             renamed |= snapshot.written.rename_look(&mut snapshot.edit, from, to);

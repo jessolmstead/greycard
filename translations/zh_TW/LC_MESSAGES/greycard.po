@@ -23,281 +23,281 @@ msgid "Fit"
 msgstr "符合視窗"
 
 #. The button that answers it: Save, Create, Delete.
-#: crates/greycard-slint/ui/app.slint:967
+#: crates/greycard-slint/ui/app.slint:971
 msgid "Save"
 msgstr "儲存"
 
 #. The field's hint: a collection's name, or a version's.
-#: crates/greycard-slint/ui/app.slint:970
+#: crates/greycard-slint/ui/app.slint:974
 msgid "Name, or Set/Name"
 msgstr "名稱，或「組合/名稱」"
 
 #. The preset group sheet's button when a new group is made
-#: crates/greycard-slint/ui/app.slint:1523
+#: crates/greycard-slint/ui/app.slint:1527
 msgid "Create"
 msgstr "建立"
 
 #. The camera match sheet's Fit button; it also reads 'Fit N groups'
-#: crates/greycard-slint/ui/app.slint:2425
+#: crates/greycard-slint/ui/app.slint:2429
 msgid "Fit"
 msgstr "擬合"
 
 #. The status line as shown.
-#: crates/greycard-slint/ui/app.slint:2463
+#: crates/greycard-slint/ui/app.slint:2467
 msgid "preparing..."
 msgstr "正在準備..."
 
-#: crates/greycard-slint/ui/app.slint:2548
+#: crates/greycard-slint/ui/app.slint:2552
 msgid "Proof: {}"
 msgstr "校樣：{}"
 
-#: crates/greycard-slint/ui/app.slint:2548
+#: crates/greycard-slint/ui/app.slint:2552
 msgid "Proof: {} · gamut"
 msgstr "校樣：{} · 色域"
 
-#: crates/greycard-slint/ui/app.slint:2551
+#: crates/greycard-slint/ui/app.slint:2555
 msgid "File"
 msgstr "檔案"
 
 #. The five canvas shades, in Settings and the View menu
-#: crates/greycard-slint/ui/app.slint:2576
+#: crates/greycard-slint/ui/app.slint:2580
 msgid "Black"
 msgstr "黑色"
 
 #. The five canvas shades, in Settings and the View menu
-#: crates/greycard-slint/ui/app.slint:2576
+#: crates/greycard-slint/ui/app.slint:2580
 msgid "Dark grey"
 msgstr "深灰色"
 
 #. The five canvas shades, in Settings and the View menu
-#: crates/greycard-slint/ui/app.slint:2576
+#: crates/greycard-slint/ui/app.slint:2580
 msgid "Light grey"
 msgstr "淺灰色"
 
 #. The five canvas shades, in Settings and the View menu
-#: crates/greycard-slint/ui/app.slint:2576
+#: crates/greycard-slint/ui/app.slint:2580
 msgid "Mid grey"
 msgstr "中灰色"
 
 #. The five canvas shades, in Settings and the View menu
-#: crates/greycard-slint/ui/app.slint:2576
+#: crates/greycard-slint/ui/app.slint:2580
 msgid "White"
 msgstr "白色"
 
 #. The download ask's yes button, for a model or the lens database
-#: crates/greycard-slint/ui/app.slint:2687
+#: crates/greycard-slint/ui/app.slint:2691
 msgid "Download"
 msgstr "下載"
 
 #. The download ask's button that declines for now
-#: crates/greycard-slint/ui/app.slint:2689
+#: crates/greycard-slint/ui/app.slint:2693
 msgid "Not now"
 msgstr "以後再說"
 
 #. The models ask's button that downloads every model
-#: crates/greycard-slint/ui/app.slint:2696
+#: crates/greycard-slint/ui/app.slint:2700
 msgid "Download all"
 msgstr "全部下載"
 
-#: crates/greycard-slint/ui/app.slint:4299
+#: crates/greycard-slint/ui/app.slint:4303
 msgid "Queued for export, shown as it will export. Edit it from its folder."
 msgstr "已排入匯出佇列，顯示的是匯出後的樣子。請到它所在的資料夾中編輯。"
 
 #. The Loupe's mode button at the top of the develop panel
-#: crates/greycard-slint/ui/app.slint:4310
+#: crates/greycard-slint/ui/app.slint:4314
 msgid "Cull"
 msgstr "挑片"
 
-#: crates/greycard-slint/ui/app.slint:4315
+#: crates/greycard-slint/ui/app.slint:4319
 msgid "Cull mode"
 msgstr "挑片模式"
 
 #. Develop, Crop, Masks, and Retouch
-#: crates/greycard-slint/ui/app.slint:4334
+#: crates/greycard-slint/ui/app.slint:4338
 msgid "Panel tabs"
 msgstr "面板分頁"
 
 #. The Loupe's mode buttons at the top of the develop panel
-#: crates/greycard-slint/ui/app.slint:4337
+#: crates/greycard-slint/ui/app.slint:4341
 msgid "Crop"
 msgstr "裁切"
 
 #. The Loupe's mode buttons at the top of the develop panel
-#: crates/greycard-slint/ui/app.slint:4337
+#: crates/greycard-slint/ui/app.slint:4341
 msgid "Develop"
 msgstr "編修"
 
 #. The Loupe's mode buttons at the top of the develop panel
-#: crates/greycard-slint/ui/app.slint:4337
+#: crates/greycard-slint/ui/app.slint:4341
 msgid "Masks"
 msgstr "遮色片"
 
 #. The Loupe's mode buttons at the top of the develop panel
-#: crates/greycard-slint/ui/app.slint:4337
+#: crates/greycard-slint/ui/app.slint:4341
 msgid "Retouch"
 msgstr "修飾"
 
 #. View menu
-#: crates/greycard-slint/ui/app.slint:5563
+#: crates/greycard-slint/ui/app.slint:5567
 msgid "Full screen"
 msgstr "全螢幕"
 
 #. View menu
-#: crates/greycard-slint/ui/app.slint:5563
+#: crates/greycard-slint/ui/app.slint:5567
 msgid "Full screen (F11)"
 msgstr "全螢幕 (F11)"
 
 #. File menu
-#: crates/greycard-slint/ui/app.slint:5571
+#: crates/greycard-slint/ui/app.slint:5575
 msgid "Export..."
 msgstr "匯出..."
 
 #. File menu
-#: crates/greycard-slint/ui/app.slint:5571
+#: crates/greycard-slint/ui/app.slint:5575
 msgid "Stop export"
 msgstr "停止匯出"
 
 #. View menu
-#: crates/greycard-slint/ui/app.slint:5702
+#: crates/greycard-slint/ui/app.slint:5706
 msgid "Right panel"
 msgstr "右側面板"
 
 #. View menu
-#: crates/greycard-slint/ui/app.slint:5704
+#: crates/greycard-slint/ui/app.slint:5708
 msgid "Hide panel"
 msgstr "隱藏面板"
 
 #. View menu
-#: crates/greycard-slint/ui/app.slint:5704
+#: crates/greycard-slint/ui/app.slint:5708
 msgid "Show panel"
 msgstr "顯示面板"
 
 #. View menu: the filmstrip
-#: crates/greycard-slint/ui/app.slint:5741
+#: crates/greycard-slint/ui/app.slint:5745
 msgid "Filmstrip"
 msgstr "底片列"
 
 #. View menu: the filmstrip
-#: crates/greycard-slint/ui/app.slint:5743
+#: crates/greycard-slint/ui/app.slint:5747
 msgid "Hide filmstrip"
 msgstr "隱藏底片列"
 
 #. View menu: the filmstrip
-#: crates/greycard-slint/ui/app.slint:5743
+#: crates/greycard-slint/ui/app.slint:5747
 msgid "Show filmstrip"
 msgstr "顯示底片列"
 
 #. Frame menu: {} is Back up or Bring back, over a list of archives
-#: crates/greycard-slint/ui/app.slint:5905
+#: crates/greycard-slint/ui/app.slint:5909
 msgid "{} to"
 msgstr "{}到"
 
 #. The view button at the top left: the grid
-#: crates/greycard-slint/ui/app.slint:5951
+#: crates/greycard-slint/ui/app.slint:5955
 msgid "Library"
 msgstr "圖庫"
 
-#: crates/greycard-slint/ui/app.slint:5955
+#: crates/greycard-slint/ui/app.slint:5959
 msgid "Library view"
 msgstr "圖庫檢視"
 
 #. The view button at the top left: one frame
-#: crates/greycard-slint/ui/app.slint:5969
+#: crates/greycard-slint/ui/app.slint:5973
 msgid "Loupe"
 msgstr "放大檢視"
 
-#: crates/greycard-slint/ui/app.slint:5973
+#: crates/greycard-slint/ui/app.slint:5977
 msgid "Loupe view"
 msgstr "放大檢視"
 
 #. File menu
-#: crates/greycard-slint/ui/app.slint:6061
+#: crates/greycard-slint/ui/app.slint:6065
 msgid "Open folder..."
 msgstr "開啟資料夾..."
 
 #. File menu
-#: crates/greycard-slint/ui/app.slint:6094
+#: crates/greycard-slint/ui/app.slint:6098
 msgid "Import..."
 msgstr "匯入..."
 
-#: crates/greycard-slint/ui/app.slint:6117
+#: crates/greycard-slint/ui/app.slint:6121
 msgid "Stop import"
 msgstr "停止匯入"
 
-#: crates/greycard-slint/ui/app.slint:6117
+#: crates/greycard-slint/ui/app.slint:6121
 msgid "Stopping..."
 msgstr "正在停止..."
 
-#: crates/greycard-slint/ui/app.slint:6118
+#: crates/greycard-slint/ui/app.slint:6122
 msgid "Importing the catalog..."
 msgstr "正在匯入目錄..."
 
 #. File menu, under Import
-#: crates/greycard-slint/ui/app.slint:6139
+#: crates/greycard-slint/ui/app.slint:6143
 msgid "From a card or folder..."
 msgstr "從記憶卡或資料夾..."
 
 #. File menu, under Import
-#: crates/greycard-slint/ui/app.slint:6144
+#: crates/greycard-slint/ui/app.slint:6148
 msgid "A Lightroom catalog..."
 msgstr "Lightroom 目錄..."
 
 #. Help menu: a newer version is out; {} is its number
-#: crates/greycard-slint/ui/app.slint:6503
+#: crates/greycard-slint/ui/app.slint:6507
 msgid "{} is available"
 msgstr "{} 已推出"
 
 #. Help menu: under the version note
-#: crates/greycard-slint/ui/app.slint:6512
+#: crates/greycard-slint/ui/app.slint:6516
 msgid "Not now: do not offer {} again"
 msgstr "以後再說：不再提示 {}"
 
-#: crates/greycard-slint/ui/app.slint:6520
+#: crates/greycard-slint/ui/app.slint:6524
 msgid "Settings..."
 msgstr "設定..."
 
-#: crates/greycard-slint/ui/app.slint:6528
+#: crates/greycard-slint/ui/app.slint:6532
 msgid "Help"
 msgstr "說明"
 
-#: crates/greycard-slint/ui/app.slint:6531
+#: crates/greycard-slint/ui/app.slint:6535
 msgid "Help menu"
 msgstr "說明選單"
 
 #. Help menu: the keys sheet, with the key that opens it
-#: crates/greycard-slint/ui/app.slint:6552
+#: crates/greycard-slint/ui/app.slint:6556
 msgid "Keys (?)"
 msgstr "快速鍵 (?)"
 
-#: crates/greycard-slint/ui/app.slint:6556
+#: crates/greycard-slint/ui/app.slint:6560
 msgid "User guide"
 msgstr "使用者指南"
 
-#: crates/greycard-slint/ui/app.slint:6561
+#: crates/greycard-slint/ui/app.slint:6565
 msgid "Report a problem..."
 msgstr "回報問題..."
 
-#: crates/greycard-slint/ui/app.slint:6631
+#: crates/greycard-slint/ui/app.slint:6635
 msgid "Left panel"
 msgstr "左側面板"
 
-#: crates/greycard-slint/ui/app.slint:6967
+#: crates/greycard-slint/ui/app.slint:6971
 msgid "Search apps"
 msgstr "搜尋應用程式"
 
-#: crates/greycard-slint/ui/app.slint:6967
+#: crates/greycard-slint/ui/app.slint:6971
 msgid "Search archives"
 msgstr "搜尋封存"
 
-#: crates/greycard-slint/ui/app.slint:6968
+#: crates/greycard-slint/ui/app.slint:6972
 msgid "No matching apps."
 msgstr "沒有符合的應用程式。"
 
-#: crates/greycard-slint/ui/app.slint:6968
+#: crates/greycard-slint/ui/app.slint:6972
 msgid "No matching archives."
 msgstr "沒有符合的封存。"
 
-#: crates/greycard-slint/ui/app.slint:7316
+#: crates/greycard-slint/ui/app.slint:7320
 msgid "Edit in"
 msgstr "外部編輯"
 
@@ -1659,187 +1659,191 @@ msgstr "資料夾"
 msgid "With subfolders"
 msgstr "包含子資料夾"
 
-#: crates/greycard-slint/ui/panel/frame-menu.slint:157
+#: crates/greycard-slint/ui/panel/frame-menu.slint:162
 msgid "Copy settings"
 msgstr "拷貝設定"
 
-#: crates/greycard-slint/ui/panel/frame-menu.slint:157
+#: crates/greycard-slint/ui/panel/frame-menu.slint:162
 msgid "Copy settings of {}"
 msgstr "拷貝 {} 的設定"
 
-#: crates/greycard-slint/ui/panel/frame-menu.slint:164
+#: crates/greycard-slint/ui/panel/frame-menu.slint:169
 msgid "Paste settings"
 msgstr "貼上設定"
 
-#: crates/greycard-slint/ui/panel/frame-menu.slint:165
+#: crates/greycard-slint/ui/panel/frame-menu.slint:170
 msgid "Paste settings from {}"
 msgstr "從 {} 貼上設定"
 
-#: crates/greycard-slint/ui/panel/frame-menu.slint:166
+#: crates/greycard-slint/ui/panel/frame-menu.slint:171
 msgid "Paste settings from {} onto {n} frame..."
 msgid_plural "Paste settings from {} onto {n} frames..."
 msgstr[0] "將 {} 的設定貼至 {n} 張相片..."
 
-#: crates/greycard-slint/ui/panel/frame-menu.slint:172
+#: crates/greycard-slint/ui/panel/frame-menu.slint:177
 msgid "Sync {n} frame to {}..."
 msgid_plural "Sync {n} frames to {}..."
 msgstr[0] "將 {n} 張相片同步到 {}..."
 
 #. Fills {} in 'Sync N frames to {}...' for an unnamed open frame
-#: crates/greycard-slint/ui/panel/frame-menu.slint:174
+#: crates/greycard-slint/ui/panel/frame-menu.slint:179
 msgid "this one"
 msgstr "此相片"
 
-#: crates/greycard-slint/ui/panel/frame-menu.slint:178
+#: crates/greycard-slint/ui/panel/frame-menu.slint:183
 msgid "Reset to Original"
 msgstr "重設為原始狀態"
 
-#: crates/greycard-slint/ui/panel/frame-menu.slint:183
+#: crates/greycard-slint/ui/panel/frame-menu.slint:187
+msgid "Clear history"
+msgstr "清空步驟記錄"
+
+#: crates/greycard-slint/ui/panel/frame-menu.slint:193
 msgid "New version"
 msgstr "新增版本"
 
-#: crates/greycard-slint/ui/panel/frame-menu.slint:188
+#: crates/greycard-slint/ui/panel/frame-menu.slint:198
 msgid "New version from the original"
 msgstr "從原始狀態新增版本"
 
-#: crates/greycard-slint/ui/panel/frame-menu.slint:193
+#: crates/greycard-slint/ui/panel/frame-menu.slint:203
 msgid "Rename version..."
 msgstr "重新命名版本..."
 
-#: crates/greycard-slint/ui/panel/frame-menu.slint:198
+#: crates/greycard-slint/ui/panel/frame-menu.slint:208
 msgid "Swap with the original"
 msgstr "與原始相片互換"
 
-#: crates/greycard-slint/ui/panel/frame-menu.slint:203
+#: crates/greycard-slint/ui/panel/frame-menu.slint:213
 msgid "Delete version..."
 msgstr "刪除版本..."
 
-#: crates/greycard-slint/ui/panel/frame-menu.slint:207
+#: crates/greycard-slint/ui/panel/frame-menu.slint:217
 msgid "Compare versions"
 msgstr "比較版本"
 
-#: crates/greycard-slint/ui/panel/frame-menu.slint:214
+#: crates/greycard-slint/ui/panel/frame-menu.slint:224
 msgid "Stack {n} frame"
 msgid_plural "Stack {n} frames"
 msgstr[0] "堆疊 {n} 張相片"
 
-#: crates/greycard-slint/ui/panel/frame-menu.slint:218
+#: crates/greycard-slint/ui/panel/frame-menu.slint:228
 msgid "Collapse stack"
 msgstr "收合堆疊"
 
-#: crates/greycard-slint/ui/panel/frame-menu.slint:218
+#: crates/greycard-slint/ui/panel/frame-menu.slint:228
 msgid "Expand stack"
 msgstr "展開堆疊"
 
-#: crates/greycard-slint/ui/panel/frame-menu.slint:222
+#: crates/greycard-slint/ui/panel/frame-menu.slint:232
 msgid "Set as top of stack"
 msgstr "設為堆疊頂端"
 
-#: crates/greycard-slint/ui/panel/frame-menu.slint:226
+#: crates/greycard-slint/ui/panel/frame-menu.slint:236
 msgid "Remove from stack"
 msgstr "從堆疊中移出"
 
-#: crates/greycard-slint/ui/panel/frame-menu.slint:230
+#: crates/greycard-slint/ui/panel/frame-menu.slint:240
 msgid "Compare stack"
 msgstr "比較堆疊"
 
-#: crates/greycard-slint/ui/panel/frame-menu.slint:234
+#: crates/greycard-slint/ui/panel/frame-menu.slint:244
 msgid "Unstack"
 msgstr "取消堆疊"
 
-#: crates/greycard-slint/ui/panel/frame-menu.slint:238
+#: crates/greycard-slint/ui/panel/frame-menu.slint:248
 msgid "Stack bursts"
 msgstr "堆疊連拍"
 
-#: crates/greycard-slint/ui/panel/frame-menu.slint:242
+#: crates/greycard-slint/ui/panel/frame-menu.slint:252
 msgid "Merge to HDR"
 msgstr "合併為 HDR"
 
-#: crates/greycard-slint/ui/panel/frame-menu.slint:246
+#: crates/greycard-slint/ui/panel/frame-menu.slint:256
 msgid "Merge to Panorama"
 msgstr "合併為全景"
 
-#: crates/greycard-slint/ui/panel/frame-menu.slint:250
+#: crates/greycard-slint/ui/panel/frame-menu.slint:260
 msgid "Merge to Focus stack"
 msgstr "合併為焦點堆疊"
 
-#: crates/greycard-slint/ui/panel/frame-menu.slint:255
+#: crates/greycard-slint/ui/panel/frame-menu.slint:265
 msgid "Leave lightbox"
 msgstr "離開燈箱"
 
-#: crates/greycard-slint/ui/panel/frame-menu.slint:255
+#: crates/greycard-slint/ui/panel/frame-menu.slint:265
 msgid "Lightbox"
 msgstr "燈箱"
 
-#: crates/greycard-slint/ui/panel/frame-menu.slint:260
+#: crates/greycard-slint/ui/panel/frame-menu.slint:270
 msgid "Rating"
 msgstr "星等"
 
-#: crates/greycard-slint/ui/panel/frame-menu.slint:263
+#: crates/greycard-slint/ui/panel/frame-menu.slint:273
 msgid "No stars"
 msgstr "無星等"
 
-#: crates/greycard-slint/ui/panel/frame-menu.slint:271
+#: crates/greycard-slint/ui/panel/frame-menu.slint:281
 msgid "Pick"
 msgstr "留用"
 
-#: crates/greycard-slint/ui/panel/frame-menu.slint:278
+#: crates/greycard-slint/ui/panel/frame-menu.slint:288
 msgid "Reject"
 msgstr "排除"
 
-#: crates/greycard-slint/ui/panel/frame-menu.slint:285
+#: crates/greycard-slint/ui/panel/frame-menu.slint:295
 msgid "Unflag"
 msgstr "取消旗標"
 
-#: crates/greycard-slint/ui/panel/frame-menu.slint:302
+#: crates/greycard-slint/ui/panel/frame-menu.slint:312
 msgid "Shift capture time of {n} frame..."
 msgid_plural "Shift capture time of {n} frames..."
 msgstr[0] "調整 {n} 張相片的拍攝時間..."
 
-#: crates/greycard-slint/ui/panel/frame-menu.slint:303
+#: crates/greycard-slint/ui/panel/frame-menu.slint:313
 msgid "Shift capture time..."
 msgstr "調整拍攝時間..."
 
-#: crates/greycard-slint/ui/panel/frame-menu.slint:319
+#: crates/greycard-slint/ui/panel/frame-menu.slint:329
 msgid "All collections..."
 msgstr "所有收藏集..."
 
-#: crates/greycard-slint/ui/panel/frame-menu.slint:329
+#: crates/greycard-slint/ui/panel/frame-menu.slint:339
 msgid "Remove {n} frame from {}"
 msgid_plural "Remove {n} frames from {}"
 msgstr[0] "從 {} 移出 {n} 張相片"
 
-#: crates/greycard-slint/ui/panel/frame-menu.slint:330
+#: crates/greycard-slint/ui/panel/frame-menu.slint:340
 msgid "Remove from {}"
 msgstr "從 {} 移出"
 
-#: crates/greycard-slint/ui/panel/frame-menu.slint:334
+#: crates/greycard-slint/ui/panel/frame-menu.slint:344
 msgid "Remove from queue..."
 msgstr "從佇列移出..."
 
-#: crates/greycard-slint/ui/panel/frame-menu.slint:339
+#: crates/greycard-slint/ui/panel/frame-menu.slint:349
 msgid "Reveal in file manager"
 msgstr "在檔案管理員中顯示"
 
-#: crates/greycard-slint/ui/panel/frame-menu.slint:343
+#: crates/greycard-slint/ui/panel/frame-menu.slint:353
 msgid "Export {n} frame..."
 msgid_plural "Export {n} frames..."
 msgstr[0] "匯出 {n} 張相片..."
 
-#: crates/greycard-slint/ui/panel/frame-menu.slint:348
+#: crates/greycard-slint/ui/panel/frame-menu.slint:358
 msgid "Edit in..."
 msgstr "以其他應用程式編輯..."
 
-#: crates/greycard-slint/ui/panel/frame-menu.slint:362
+#: crates/greycard-slint/ui/panel/frame-menu.slint:372
 msgid "All apps..."
 msgstr "所有應用程式..."
 
 #. Frame menu: {} is Back up or Bring back, then an archive's name
-#: crates/greycard-slint/ui/panel/frame-menu.slint:375
+#: crates/greycard-slint/ui/panel/frame-menu.slint:385
 msgid "{} to {}..."
 msgstr "{}到 {}..."
 
-#: crates/greycard-slint/ui/panel/frame-menu.slint:388
+#: crates/greycard-slint/ui/panel/frame-menu.slint:398
 msgid "All archives..."
 msgstr "所有封存..."
 
@@ -5123,7 +5127,7 @@ msgid "{name} removed; Settings can restore it"
 msgstr "已移除 {name}；可在設定中還原"
 
 #: crates/greycard-ui/src/panel/assets.rs:2297
-#: crates/greycard-ui/src/panel/history.rs:1020
+#: crates/greycard-ui/src/panel/history.rs:1075
 msgid "{name} removed"
 msgstr "已移除 {name}"
 
@@ -6166,35 +6170,35 @@ msgstr "{name}，{taken}；按一下可移除"
 msgid "{name}, {taken}; click to restore, double-click to rename"
 msgstr "{name}，{taken}；按一下還原，按兩下重新命名"
 
-#: crates/greycard-ui/src/panel/history.rs:833
+#: crates/greycard-ui/src/panel/history.rs:876
 msgid " with the export preset {name}"
 msgstr "，使用匯出預設集 {name}"
 
-#: crates/greycard-ui/src/panel/history.rs:837
+#: crates/greycard-ui/src/panel/history.rs:880
 msgid ""
 "{file}, exported {when}{preset}; click to go back to the state it was "
 "exported from"
 msgstr "{file}，匯出於 {when}{preset}；按一下可回到匯出時的狀態"
 
-#: crates/greycard-ui/src/panel/history.rs:847
+#: crates/greycard-ui/src/panel/history.rs:890
 msgid "the current state: {name}"
 msgstr "目前狀態：{name}"
 
-#: crates/greycard-ui/src/panel/history.rs:850
+#: crates/greycard-ui/src/panel/history.rs:893
 msgid "step {i}: {name}; click to make it current"
 msgstr "第 {i} 步：{name}；按一下設為目前狀態"
 
-#: crates/greycard-ui/src/panel/history.rs:895
+#: crates/greycard-ui/src/panel/history.rs:950
 msgid "{name} taken; type a name for it"
 msgstr "已建立快照 {name}；請為它輸入名稱"
 
-#: crates/greycard-ui/src/panel/history.rs:927
-#: crates/greycard-ui/src/panel/history.rs:941
-#: crates/greycard-ui/src/panel/history.rs:948
+#: crates/greycard-ui/src/panel/history.rs:982
+#: crates/greycard-ui/src/panel/history.rs:996
+#: crates/greycard-ui/src/panel/history.rs:1003
 msgid "{name} restored"
 msgstr "已還原 {name}"
 
-#: crates/greycard-ui/src/panel/history.rs:944
+#: crates/greycard-ui/src/panel/history.rs:999
 msgid "{name} is the current state"
 msgstr "{name} 是目前狀態"
 
@@ -6862,7 +6866,7 @@ msgstr[0] "最多 {n} 個調整"
 msgid "nothing placed"
 msgstr "未放置任何內容"
 
-#: crates/greycard-ui/src/panel/menu.rs:291 crates/greycard-ui/src/tree.rs:912
+#: crates/greycard-ui/src/panel/menu.rs:292 crates/greycard-ui/src/tree.rs:912
 msgid "could not show {}: {e}"
 msgstr "無法顯示 {}：{e}"
 

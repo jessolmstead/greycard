@@ -11,6 +11,13 @@ design note behind it.
   tier's X-Trans network
   ([§756](https://github.com/jessolmstead/greycard/blob/master/docs/notes/756-the-learned-denoiser-in-a-merge-of-x-trans-frames.md)).
 
+### The window
+
+- **Clear history**, in the frame's menu, keeps the Original, the
+  current state, and the snapshots, and shrinks the sidecar
+  (discussion 167,
+  [§760](https://github.com/jessolmstead/greycard/blob/master/docs/notes/760-clear-history.md)).
+
 ### Speed
 
 - An open frame takes less of the GPU's memory: about 400 MB less at

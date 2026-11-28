@@ -200,6 +200,10 @@ export component App inherits Window {
     callback menu-edit-in(int);
     /// The frame menu's Reset to Original, over the selection.
     callback menu-reset();
+    /// The frame menu's Clear history, over the open frame only, and
+    /// whether it has something to clear.
+    in property <bool> menu-can-clear-history: false;
+    callback menu-clear-history();
     /// The Settings sheet's Edit in list, every app added, by name;
     /// its Add..., and its × on the app at a place.
     in property <[string]> edit-in-list: [];
@@ -7315,6 +7319,8 @@ export component App inherits Window {
         edit-in(i) => { root.menu-edit-in(i); root.menu-done(); }
         edit-in-all => { root.choice-sheet-ask("edit-in", @tr("Edit in")); }
         reset => { root.menu-reset(); root.menu-done(); }
+        can-clear-history: root.menu-can-clear-history;
+        clear-history => { root.menu-clear-history(); root.menu-done(); }
         // The sheet takes the focus itself, as the time shift's does.
         export => {
             root.menu-export();

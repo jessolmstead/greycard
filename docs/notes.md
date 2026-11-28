@@ -771,3 +771,4 @@ in its section; the roadmap and the changelog only point at it.
 - [§757. History capped at the read, and the join checked](notes/757-history-capped-at-the-read-and-the-join-checked.md) (2026-11-27)
 - [§758. A picture on the device as three planes](notes/758-a-picture-on-the-device-as-three-planes.md) (2026-11-27)
 - [§759. A picture's samples, let in finite](notes/759-a-pictures-samples-let-in-finite.md) (2026-11-28)
+- [§760. Clear history](notes/760-clear-history.md) (2026-11-28)

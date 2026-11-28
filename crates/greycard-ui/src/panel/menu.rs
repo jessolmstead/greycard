@@ -209,6 +209,7 @@ pub(crate) fn menu_asked(state: &Rc<Shared>, app: &App, row: i32) {
             .into(),
     );
     app.set_menu_version(st.version_name(file).unwrap_or_default().into());
+    app.set_menu_can_clear_history(crate::panel::history::can_clear_history(&st, file));
     app.set_menu_compare(
         st.file_at(file)
             .is_some_and(|f| crate::panel::versions::compare_set(&st, f).0.len() > 1),

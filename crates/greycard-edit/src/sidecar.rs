@@ -970,6 +970,12 @@ impl Sidecar {
         self.line.redo()
     }
 
+    /// [`Line::clear_history`] on version 0.
+    pub fn clear_history(&mut self) -> bool {
+        self.show_if_stale();
+        self.line.clear_history()
+    }
+
     /// Version 0's line and every version's, version 0 first.
     /// How many of the file's states could not be read (§724): while
     /// there are any, nothing writes the sidecar, which would hide

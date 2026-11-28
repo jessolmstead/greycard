@@ -27,6 +27,8 @@ use crate::line::{Order, Written};
 use crate::meta::Facts;
 use crate::{Edit, Exported, HISTORY, Line, Sidecar, Snapshot, Step, Version};
 
+#[cfg(test)]
+mod clear_tests;
 #[cfg(any(test, feature = "testing"))]
 pub mod join_check;
 
@@ -399,7 +401,7 @@ pub fn compare(local: &Sidecar, other: &Sidecar) -> Compared {
     }
     let same_lines = local.versions.len() == other.versions.len()
         && version_ids(local).all(|v| match (local.line(v), other.line(v)) {
-            (Some(a), Some(b)) => state_ids(a) == state_ids(b),
+            (Some(a), Some(b)) => state_ids(a) == state_ids(b) && a.cleared == b.cleared,
             _ => false,
         });
     if same_lines {
@@ -443,10 +445,15 @@ fn in_order(shorter: &[String], longer: &[String]) -> bool {
 }
 
 /// Whether line `a` carries nothing outside its states that line `b`
-/// has not: every snapshot of `a` in `b`, and every export record of
-/// `a` on a state `b` has, with the record.
+/// has not: every snapshot of `a` in `b`, every state `a` cleared
+/// cleared in `b` too ([`Line::cleared`]: a copy whose history was
+/// cleared stands among the other's states, and is not behind it), and
+/// every export record of `a` on a state `b` has, with the record.
 fn lacks_nothing(a: &Line, b: &Line) -> bool {
     if !a.snapshots.iter().all(|s| b.snapshots.contains(s)) {
+        return false;
+    }
+    if !a.cleared.keys().all(|id| b.cleared.contains_key(id)) {
         return false;
     }
     let b_exports: HashMap<String, &[Exported]> =
@@ -973,6 +980,11 @@ fn join_line(newer: &Line, older: &Line, host: Option<&str>, seen: bool) -> Line
     // a state is one state on both whichever side chose its source.
     let (newer, older) = &Line::joined_sources(newer, older);
     let (newer, older) = &Line::joined_parents(newer, older);
+    // What Clear history took out on either copy goes from both: the
+    // tombstones of both, and each copy's history without the states
+    // they name, but for its first state and its current one.
+    let cleared = crate::line::joined_tombstones(&newer.cleared, &older.cleared, |_| false);
+    let (newer, older) = &(newer.without(&cleared), older.without(&cleared));
     // A line nobody developed holds no state (§724): the other copy's
     // line is the join, its start the newer's when neither has one.
     if !newer.recorded || !older.recorded {
@@ -982,6 +994,11 @@ fn join_line(newer: &Line, older: &Line, host: Option<&str>, seen: bool) -> Line
             older.clone()
         };
         joined.redo.clear();
+        let held: HashSet<String> = joined.held_ids().into_iter().map(str::to_string).collect();
+        joined.cleared = cleared.clone();
+        joined.cleared.retain(|id, _| !held.contains(id));
+        joined.clear_undo = None;
+        joined.clear_redo = None;
         joined.last_export = match (&newer.last_export, &older.last_export) {
             (Some(a), Some(b)) => Some(if a.at >= b.at { a } else { b }.clone()),
             (a, b) => a.clone().or_else(|| b.clone()),
@@ -1535,6 +1552,13 @@ fn join_line(newer: &Line, older: &Line, host: Option<&str>, seen: bool) -> Line
     // new join's.
     joined.head_at = crate::line::HeadAt::later(&newer.head_at, &older.head_at);
     joined.undone = joined_undone(&joined, newer, older);
+    // The tombstones of both, less those of a state kept: a first or a
+    // current state, which no tombstone takes.
+    let held = joined.held_ids();
+    joined.cleared = cleared
+        .into_iter()
+        .filter(|(id, _)| !held.contains(id.as_str()))
+        .collect();
     joined
 }
 
@@ -1732,6 +1756,23 @@ impl Line {
             parent = step.id.clone().expect("just filled");
         }
         filled
+    }
+
+    /// This line without the states `cleared` names (Clear history's
+    /// tombstones, [`Line::cleared`]) from its history after the first
+    /// and from what was undone: never its first state or its current
+    /// one, and never a snapshot.
+    fn without(&self, cleared: &std::collections::BTreeMap<String, u64>) -> Line {
+        let mut line = self.clone();
+        if cleared.is_empty() {
+            return line;
+        }
+        let gone = |s: &Step| s.id.as_ref().is_some_and(|id| cleared.contains_key(id));
+        let mut first = true;
+        line.history
+            .retain(|s| std::mem::take(&mut first) || !gone(s));
+        line.redo.retain(|s| !gone(s));
+        line
     }
 
     /// Put `state` after the current one as a recorded state, its id

@@ -1805,9 +1805,9 @@ clears or a tester asks for it.
 - [ ] Choose a color grading wheel without enlarging it or moving
       its point: the name chooses, the icon beside it enlarges
       (discussion 166)
-- [ ] Clear history: keep Original, the current state, and the
-      snapshots (discussion 167); the sidecar's size is the item
-      under Bugs
+- [ ] Clear history, what is left (§760): on every selected frame;
+      and a copy that synced between a clear and its Undo keeps the
+      steps cleared (discussion 167)
 - [ ] More grain: a higher ceiling than Amount's 100%, and a
       roughness control (issue 169)
 - [ ] Detail by scale, as RawTherapee's Wavelet Levels and ART's

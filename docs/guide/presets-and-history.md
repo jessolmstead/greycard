@@ -250,6 +250,12 @@ balance on".
   the Original, puts the edit back there as one step, "Reset to
   Original", which Ctrl+Z takes back. It is there with the section
   folded too.
+- **Clear history**, in the frame's menu, takes every step out of the
+  open frame's history but the Original and the current state. The
+  picture and the snapshots stay as they are, and the sidecar gets
+  smaller. Undo takes it back until your next edit or until the
+  folder is closed. A copy of the sidecar on another computer drops
+  the same steps when the two are synced.
 
 The history keeps the last 50 steps, plus "Original". Use a snapshot
 for a state you want to keep for good.

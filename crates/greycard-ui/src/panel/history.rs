@@ -39,8 +39,8 @@ pub(crate) fn show_history(st: &State, app: &App) {
     // Which version the history is of, after its title: none for the
     // file's own.
     app.set_history_version(st.version_name(c).unwrap_or_default().into());
-    app.set_can_undo(!sidecar.history.is_empty());
-    app.set_can_redo(!sidecar.redo.is_empty());
+    app.set_can_undo(sidecar.can_undo());
+    app.set_can_redo(sidecar.can_redo());
     app.set_history_resettable(!crate::panel::reset::at_original(st, c));
     // The headers' resets by the panel, which a frame's open puts its
     // edit on before the frame is the current one.
@@ -554,11 +554,12 @@ fn mark_to_step(
 pub(crate) fn marks_first(st: &State, app: &App, back: bool) -> Option<Option<crate::tags::Reach>> {
     let line = st.current.and_then(|c| st.line(c));
     let mark = mark_to_step(st, app, back);
+    // A Clear history held for Undo is the edit's too, weighed by when
+    // it was made ([`greycard_edit::Line::undo_order`]).
     let edit = if back {
-        line.filter(|l| !l.history.is_empty())
-            .map(|l| l.current_order)
+        line.and_then(|l| l.undo_order())
     } else {
-        line.and_then(|l| l.redo.last()).map(|s| s.order)
+        line.and_then(|l| l.redo_order())
     };
     let order = mark.as_ref().map(|(_, o)| *o);
     crate::tags::marks_first(order, edit).then(|| mark.and_then(|(at, _)| at))
@@ -641,6 +642,48 @@ fn show_marks_step(state: &Rc<Shared>, app: &App, next: Option<usize>, said: Opt
         }
         app.set_status(said.into());
     }
+}
+
+/// Whether the frame menu offers Clear history for the frame `c` it
+/// was opened over: the open frame only, its version on screen, with
+/// something to clear, its sidecar the frame's own and not read-only
+/// (a newer build's file, or one with states this build could not
+/// read). With sidecars off it is offered as every history action
+/// is, the history living in memory only.
+pub(crate) fn can_clear_history(st: &State, c: usize) -> bool {
+    st.current == Some(c)
+        && !crate::panel::queue_view::frozen(st)
+        && crate::rows::not_kept(st, c).is_none()
+        && st
+            .file_at(c)
+            .and_then(|f| st.sidecars.get(f))
+            .is_none_or(|s| !s.read_only())
+        && st.line(c).is_some_and(|l| l.can_clear_history())
+}
+
+/// Clear history on the open frame's version on screen
+/// ([`greycard_edit::Line::clear_history`]), the sidecar written. What
+/// the panel holds is a state first, so nothing of it goes; the edit,
+/// and so the picture, does not change.
+fn clear_history(st: &mut State, app: &App) {
+    if crate::panel::queue_view::refused(st, "a clear of the history") {
+        return;
+    }
+    let Some(c) = st.current else {
+        return;
+    };
+    if !can_clear_history(st, c) {
+        return;
+    }
+    // In culling the panel is not the frame's.
+    if st.culling.cull.is_none() {
+        record_panel(st, app);
+    }
+    if !st.line_mut(c).is_some_and(|mut l| l.clear_history()) {
+        return;
+    }
+    write_sidecar(st, c);
+    show_history(st, app);
 }
 
 pub(crate) fn install(app: &App, state: &Rc<Shared>, worker: &Rc<Worker>) {
@@ -856,6 +899,18 @@ pub(crate) fn install(app: &App, state: &Rc<Shared>, worker: &Rc<Worker>) {
                 }
                 None => peek(&mut st, &app, None, ""),
             }
+        });
+    }
+    // The frame menu's Clear history: the open frame's version on
+    // screen, its history but the Original and the current state taken
+    // out, the snapshots kept; one step Undo takes back this session.
+    {
+        let (state, app_weak) = (state.clone(), app.as_weak());
+        app.on_menu_clear_history(move || {
+            let Some(app) = app_weak.upgrade() else {
+                return;
+            };
+            clear_history(&mut state.borrow_mut(), &app);
         });
     }
     // The snapshots: taken from the current state, restored as a

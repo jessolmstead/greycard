@@ -7,7 +7,7 @@
 use std::collections::HashSet;
 
 use super::join;
-use crate::Sidecar;
+use crate::{Line, Sidecar};
 
 /// Every invariant below of `a` and `b`, each joined both ways, with
 /// itself, and twice: a panic names the one that broke.
@@ -26,6 +26,14 @@ use crate::Sidecar;
 /// - A copy joined with itself holds what it held: every line, each
 ///   with the same states, the same meta, and the same turn; and that
 ///   join joined with itself is the same again.
+/// - No state Clear history took out on either copy ([`Line::cleared`])
+///   in the join, but a copy's first state or its current one; each
+///   copy's current state still in the join, unless the other has seen
+///   that copy's last revision; and the tombstones take nothing else: the
+///   join with them and without has the same snapshots, first state,
+///   and current edit on every line.
+///
+/// [`Line::cleared`]: crate::Line::cleared
 pub fn check(a: &Sidecar, b: &Sidecar) {
     holds_each_once("a", &filled(a));
     holds_each_once("b", &filled(b));
@@ -33,6 +41,13 @@ pub fn check(a: &Sidecar, b: &Sidecar) {
     let ba = join(b, a);
     for (why, j) in [("a with b", &ab), ("b with a", &ba)] {
         joined_right(why, j);
+        nothing_cleared_comes_back(why, a, b, j);
+        for (input, s, other) in [("a", a, b), ("b", b, a)] {
+            let seen = s.revisions.last().is_some_and(|r| other.knows(&r.hash));
+            if !seen {
+                currents_kept(why, input, s, other, j);
+            }
+        }
         for (input, s, other) in [("a", a, b), ("b", b, a)] {
             // A copy the other has seen whole is in it as it chose to
             // keep it: what it lacks it dropped on purpose.
@@ -50,6 +65,7 @@ pub fn check(a: &Sidecar, b: &Sidecar) {
         written(&ab) == written(&join(a, b)),
         "a with b joined twice differs"
     );
+    tombstones_take_only_history(a, b, &ab);
     assert!(written(&ab) == written(&ba), "a with b is not b with a");
     for (why, s) in [("a with itself", a), ("b with itself", b)] {
         let j = join(s, s);
@@ -75,6 +91,121 @@ pub fn check(a: &Sidecar, b: &Sidecar) {
         assert!(
             again == written(&j),
             "{why}: joined with itself again changed"
+        );
+    }
+}
+
+/// No state of the join's lines that either copy's line of that id
+/// cleared, but a first state or a current one of either copy's.
+fn nothing_cleared_comes_back(why: &str, a: &Sidecar, b: &Sidecar, j: &Sidecar) {
+    let (a, b) = (filled(a), filled(b));
+    for line in j.lines().filter(|l| !l.line_id.is_empty()) {
+        let inputs: Vec<&Line> = [&a, &b]
+            .into_iter()
+            .flat_map(|s| s.lines())
+            .filter(|l| l.line_id == line.line_id)
+            .collect();
+        let gone: HashSet<&str> = inputs
+            .iter()
+            .flat_map(|l| l.cleared.keys().map(String::as_str))
+            .collect();
+        if gone.is_empty() {
+            continue;
+        }
+        let kept: HashSet<&str> = inputs
+            .iter()
+            .flat_map(|l| {
+                l.history
+                    .first()
+                    .and_then(|s| s.id())
+                    .into_iter()
+                    .chain(l.current_id())
+            })
+            .collect();
+        for s in &line.history {
+            if let Some(id) = s.id() {
+                assert!(
+                    !gone.contains(id) || kept.contains(id),
+                    "{why}: the cleared state {id} came back on the line {}",
+                    line.line_id
+                );
+            }
+        }
+    }
+}
+
+/// The current state of `s`'s original line among its joined line's
+/// states, as written: an edit made on that copy is never lost to a
+/// join that has not seen it. Unless `other` holds a state of the same
+/// id with other content: a join takes one id for one state, and two
+/// contents under one id (a file no build writes) are not this check's.
+fn currents_kept(why: &str, input: &str, s: &Sidecar, other: &Sidecar, j: &Sidecar) {
+    let (s, other) = (written(&filled(s)), written(&filled(other)));
+    let (j, line) = (written(j), &s.line);
+    if !line.recorded() || line.line_id.is_empty() {
+        return;
+    }
+    let id = line.current_id();
+    let clash = other.lines().any(|l| {
+        l.history
+            .iter()
+            .chain(&l.redo)
+            .map(|s| (s.id(), s.edit()))
+            .chain([(l.current_id(), l.current())])
+            .any(|(i, e)| i.is_some() && i == id && e != line.current())
+    });
+    if clash {
+        return;
+    }
+    let Some(held) = j.lines().find(|l| l.line_id == line.line_id) else {
+        return;
+    };
+    assert!(
+        held.edits().any(|e| e == line.current()),
+        "{why}: {input}'s current state lost from the line {}",
+        line.line_id
+    );
+}
+
+/// The join of `a` and `b` with every tombstone of Clear history and
+/// without: the same snapshots, first state, and current edit on every
+/// line, the tombstones taking only history. Where the tombstones are
+/// all that tells two copies apart, which is the newer is theirs to
+/// say, and the two joins are not compared.
+fn tombstones_take_only_history(a: &Sidecar, b: &Sidecar, ab: &Sidecar) {
+    let bare = |s: &Sidecar| {
+        let mut s = s.clone();
+        for line in s.lines_mut() {
+            line.cleared.clear();
+        }
+        s
+    };
+    let (bare_a, bare_b) = (bare(a), bare(b));
+    if bare_a == *a && bare_b == *b {
+        return;
+    }
+    if super::newer_of(a, b) != super::newer_of(&bare_a, &bare_b) {
+        return;
+    }
+    let (ab, bare_ab) = (written(ab), written(&join(&bare_a, &bare_b)));
+    for line in ab.lines() {
+        let Some(other) = bare_ab.lines().find(|l| l.line_id == line.line_id) else {
+            continue;
+        };
+        assert!(
+            line.snapshots == other.snapshots,
+            "a tombstone took a snapshot on the line {}",
+            line.line_id
+        );
+        assert!(
+            line.history.first().and_then(|s| s.id()) == other.history.first().and_then(|s| s.id()),
+            "a tombstone took the first state on the line {}",
+            line.line_id
+        );
+        assert!(
+            line.current() == other.current(),
+            "a tombstone moved the current state on the line {}",
+            line.line_id
         );
     }
 }
@@ -172,7 +303,7 @@ mod tests {
     /// another line on each side, and a file holding one line id more
     /// than once. A state at version 10 is a recorded one; `{}`, at
     /// version 1 and at the start, reads as a line nobody developed.
-    const HOSTILE: [&str; 10] = [
+    const HOSTILE: [&str; 12] = [
         // A line id held twice in one file (no build writes one), the
         // first time on a line read as nobody developed.
         r#"{"current":{},"line_id":"9e3779b97f4a7c15","versions":[
@@ -215,6 +346,22 @@ mod tests {
         r#"{"current":{"version":10,"light":{"exposure":1}},"line_id":"daa66d2c7ddf743f",
             "original_at":7,"versions":[{"id":"c1","made":5,
             "line":{"current":{"version":10},"line_id":"9e3779b97f4a7c15"}}]}"#,
+        // A history cleared on one copy and whole on the other, the
+        // tombstones also naming the other's current state and a state
+        // of a version.
+        r#"{"current":{"version":10,"light":{"exposure":3}},"id":"s3","parent":"s2",
+            "history":[{"version":10,"id":"s0"}],"line_id":"9e3779b97f4a7c15",
+            "cleared":{"s1":9,"s2":9,"t1":9},
+            "versions":[{"id":"c1","made":5,"line":{"current":{"version":10,"light":{"exposure":5}},
+                "history":[{"version":10,"id":"t0"}],"cleared":{"t1":9},
+                "line_id":"3c6ef372fe94f82a"}}]}"#,
+        r#"{"current":{"version":10,"light":{"exposure":2}},"id":"s2","parent":"s1",
+            "history":[{"version":10,"id":"s0"},
+                {"version":10,"light":{"exposure":1},"id":"s1","parent":"s0"}],
+            "line_id":"9e3779b97f4a7c15",
+            "versions":[{"id":"c1","made":5,"line":{"current":{"version":10,"light":{"exposure":5}},
+                "history":[{"version":10,"id":"t0"},{"version":10,"light":{"exposure":4},"id":"t1"}],
+                "line_id":"3c6ef372fe94f82a"}}]}"#,
     ];
 
     /// Every pair of the hostile files, each also against itself read
@@ -227,6 +374,28 @@ mod tests {
             for b in &files[i..] {
                 check(a, b);
             }
+        }
+    }
+
+    /// A history cleared on one copy and whole on the other: the join
+    /// either way holds none of the cleared states but the other copy's
+    /// current one, on the original and on the version, and keeps the
+    /// tombstones of what it does not hold.
+    #[test]
+    fn a_join_drops_what_either_copy_cleared_but_a_current_state() {
+        let (a, b) = (read(HOSTILE[10]), read(HOSTILE[11]));
+        check(&a, &b);
+        for j in [super::join(&a, &b), super::join(&b, &a)] {
+            let ids = super::super::state_ids(&j.line);
+            assert!(!ids.iter().any(|i| i == "s1"), "{ids:?}");
+            assert!(ids.iter().any(|i| i == "s2") && ids.iter().any(|i| i == "s3"));
+            assert_eq!(
+                j.line.cleared.keys().collect::<Vec<_>>(),
+                ["s1", "t1"],
+                "s2 is held, so not tombstoned"
+            );
+            let v = super::super::state_ids(&j.versions[0].line);
+            assert!(!v.iter().any(|i| i == "t1"), "{v:?}");
         }
     }
 
@@ -314,12 +483,54 @@ mod tests {
             }
             out.push(at);
         }
+        /// Clear history on one line of `v` (the original's, or a
+        /// version's), by the file: its history after the first state
+        /// out, their ids tombstoned.
+        fn clear(v: &mut Value, pick: usize) {
+            let mut lines: Vec<&mut serde_json::Map<String, Value>> = Vec::new();
+            let Value::Object(root) = v else {
+                return;
+            };
+            let mut versions = root.remove("versions");
+            lines.push(root);
+            if let Some(Value::Array(vs)) = &mut versions {
+                for v in vs {
+                    if let Some(Value::Object(l)) = v.get_mut("line") {
+                        lines.push(l);
+                    }
+                }
+            }
+            let n = lines.len();
+            let line = &mut lines[pick % n];
+            if let Some(Value::Array(history)) = line.get("history").cloned() {
+                let ids: serde_json::Map<String, Value> = history
+                    .iter()
+                    .skip(1)
+                    .filter_map(|s| s.get("id").and_then(Value::as_str))
+                    .map(|id| (id.to_string(), Value::from(9)))
+                    .collect();
+                line.insert(
+                    "history".into(),
+                    Value::Array(history.into_iter().take(1).collect()),
+                );
+                line.insert("cleared".into(), Value::Object(ids));
+            }
+            if let (Some(vs), Value::Object(root)) = (versions, v) {
+                root.insert("versions".into(), vs);
+            }
+        }
         let mut checked = 0;
         while checked < pairs {
             let mut two = [
                 seeds[below(seeds.len())].clone(),
                 seeds[below(seeds.len())].clone(),
             ];
+            // One file in two places, cleared on one of them.
+            if below(3) == 0 {
+                two[1] = two[0].clone();
+                let (side, pick) = (below(2), below(4));
+                clear(&mut two[side], pick);
+            }
             for _ in 0..1 + below(4) {
                 let (to, from) = if below(2) == 0 { (0, 1) } else { (1, 0) };
                 let mut there = Vec::new();
