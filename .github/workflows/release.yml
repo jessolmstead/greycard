@@ -333,6 +333,16 @@ jobs:
             done
           fi
 
+      # The guide's system requirements give the glibc the editor runs
+      # on and the newer one the AI features need. Held here, so a
+      # toolchain or a runtime that asks for more fails the release
+      # until the guide and these numbers say so.
+      - name: The glibc the guide gives
+        if: runner.os == 'Linux'
+        run: |
+          sh scripts/glibc-floor.sh 2.35 target/release/greycard target/release/greycard-ui
+          sh scripts/glibc-floor.sh 2.38 target/release/libonnxruntime.so target/release/libwebgpu_dawn.so
+
       # The JPEG XS check again, on what was built: every error rawler's
       # JPEG XS decoder can return names the format, so a binary with the
       # decoder in it carries the text and one without it does not.
