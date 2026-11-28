@@ -1504,6 +1504,11 @@ clears or a tester asks for it.
 - [ ] Bloom: a soft glow around the highlights
 - [ ] Halation: the red glow film gives a bright edge, as an effect
       of its own beside the grain
+- [ ] Diffusion: a mist filter's veil, the highlights spread wide and
+      the contrast eased, apart from Bloom's tight glow
+- [ ] The effects as one section beside Grain (Bloom, Halation,
+      Diffusion), each in a mask as Grain is (§752), and drawn at the
+      picture's scale so an export of any size matches the view
 
 #### User Requests
 
