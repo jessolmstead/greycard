@@ -1190,6 +1190,10 @@ clears or a tester asks for it.
       Asked 2026-10-19. Two testers would rather unzip anywhere,
       as RawTherapee ships, than install: the zip runs in place today
       from bin\, and the guide says so; keep it beside the installer
+- [ ] The Windows on ARM installer says it is for ARM and names the
+      x86_64 one when run on an Intel or AMD PC; today it shows Inno's
+      "does not support the version of Windows" (discussion 220). Low
+      priority
 
 
 #### Library
