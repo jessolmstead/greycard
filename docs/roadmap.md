@@ -1437,7 +1437,9 @@ clears or a tester asks for it.
       both parity floors; 4-bit fails them. A CPU branch in `Remove`
       with a RAM check, and the file in the registry (issue 153)
 - [ ] A crop copied to other frames, and the crop's numbers shown so
-      one can be typed (discussion 59, 2026-11-12)
+      one can be typed (discussion 59, 2026-11-12; issue 221)
+- [ ] A crop's History row says its size, "Crop (2400 x 1799)", so
+      one crop step is told from another (issue 221, 2026-11-28)
 - [ ] A question to answer: what a middle click's sync should do
       with masks. Today it takes the last sync's or paste's checks:
       all, none, or the clicked frame's masks of the same names as
@@ -1724,6 +1726,21 @@ clears or a tester asks for it.
       country, sublocation), the model's name and age, and the model
       and property releases (2026-11-15). Open: the whole IPTC Photo
       Metadata Standard, or a chosen set
+- [ ] Keywords written into exports (`dc:subject`), and a `{title}`
+      token in the export's Name; open: what the token is for a frame
+      with no title (discussion 147, 2026-11-28)
+- [ ] The time of day in a name: `%H`, `%M`, and `%S` in
+      `{date:FMT}`, for the import's Name and the export's, so files
+      from several cameras sort by time in a file manager (issue 223,
+      2026-11-28)
+- [ ] Hasselblad 3FR and FFF files listed and opened: neither
+      extension is among the raws a folder shows, though rawler
+      decodes 3FR; check an X2D file, and Phocus's compressed FFF
+      apart (issue 222, 2026-11-28)
+- [ ] One camera, one name: a Sony's JPEG says SONY and its raw Sony,
+      so the Camera chip lists the body twice; a camera JPEG's make
+      and model through the same table as a raw's (issue 225,
+      2026-11-28)
 - [ ] The filter bar's chip row says that it scrolls: with many
       cameras and lenses it runs past the right edge and nothing shows
       there is more (the wheel, a drag, or Shift and the wheel move it,
@@ -1835,7 +1852,7 @@ clears or a tester asks for it.
       the export has nothing (found reviewing issue 180)
 - [ ] A look named by its file, not the .cube's TITLE, and the looks
       folder read with its subfolders, shown as a tree (pixls,
-      2026-11-18)
+      2026-11-18; issue 224)
 - [ ] A relative sync: the change, not the value, applied across the
       selected frames (issue 106)
 - [ ] Canon headroom (§716) on more bodies and ISOs: the 850D at ISO
