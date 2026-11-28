@@ -16,7 +16,7 @@ Opening, culling, developing, and exporting.
 
 | | Minimum | Recommended |
 |---|---|---|
-| **Operating system** | Linux with glibc 2.39 or newer (Ubuntu 24.04, Fedora 40, Debian 13, or later); macOS 13.4 or newer; Windows 10 or newer, 64-bit | The same |
+| **Operating system** | Linux with glibc 2.35 or newer (Ubuntu 22.04, Debian 12, Linux Mint 21, or later), and 2.38 for the AI features (Ubuntu 24.04, Fedora 39, Debian 13); macOS 13.4 or newer; Windows 10 or newer, 64-bit | The same |
 | **Processor** | Any 64-bit Intel or AMD processor; Apple silicon or an Intel Mac; Windows on ARM | The same; for the AI features, see below |
 | **Graphics** | None: greycard draws in software and develops on the CPU, slowly | A GPU with Vulkan (Linux, Windows) or Metal (Mac) |
 | **Memory** | 8 GB | 16 GB |
@@ -26,7 +26,10 @@ Opening, culling, developing, and exporting.
 - **Without a GPU** greycard still opens, and says so in the status
   line at the start, once more after the first develop, and in the
   log. A 24 MP frame takes about 14 s on a 2012 quad-core.
-- **On Linux**, the tarball and the AppImage both need glibc 2.39.
+- **On Linux**, the tarball and the AppImage both need glibc 2.35.
+  The learned denoiser, the AI masks, and the generative remove need
+  2.38, the floor of the runtime under them; on an older system the
+  rest of the editor works without them.
 - **On a Mac**, the Intel build is newer than the Apple silicon one.
   A Mac's graphics memory is its memory.
 - **On Windows on ARM**, take the `aarch64-windows` files. It is a new
