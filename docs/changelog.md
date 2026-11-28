@@ -11,6 +11,17 @@ design note behind it.
   tier's X-Trans network
   ([§756](https://github.com/jessolmstead/greycard/blob/master/docs/notes/756-the-learned-denoiser-in-a-merge-of-x-trans-frames.md)).
 
+### Fixes
+
+- A sidecar holding a very long history no longer takes seconds and
+  hundreds of megabytes to read; history is held to its 50 steps at
+  the read
+  ([§757](https://github.com/jessolmstead/greycard/blob/master/docs/notes/757-history-capped-at-the-read-and-the-join-checked.md)).
+- Edits joined from two computers come out the same whichever joins
+  first, and an untouched picture's version is no longer joined onto
+  its original
+  ([§757](https://github.com/jessolmstead/greycard/blob/master/docs/notes/757-history-capped-at-the-read-and-the-join-checked.md)).
+
 ## 0.13.0, 2026-11-27
 
 The learned denoiser on Fujifilm X-Trans, Pentax raws, Grain and Output

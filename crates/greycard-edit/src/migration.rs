@@ -454,7 +454,8 @@ pub(crate) fn migrate_line(
         obj.insert("current".into(), migrated(current)?);
     }
     if let Some(serde_json::Value::Array(history)) = obj.remove("history") {
-        let (history, lost) = crate::sparse::whole_history(history, budget);
+        let (mut history, lost) = crate::sparse::whole_history(history, budget);
+        cap_read_history(&mut history);
         let history: Result<Vec<_>> = history.into_iter().map(migrated).collect();
         obj.insert("history".into(), serde_json::Value::Array(history?));
         if lost > 0 {
@@ -478,6 +479,27 @@ pub(crate) fn migrate_line(
         obj.insert("snapshots".into(), serde_json::Value::Array(snapshots));
     }
     Ok(())
+}
+
+/// A history read held to the cap every build writes under
+/// ([`crate::HISTORY`]): the first state stays, the oldest after it
+/// go, without the write cap's care for repeats and export records.
+/// Before any state is migrated or read, so a
+/// file of many tiny states costs what a capped one does: each state
+/// read is a whole edit, some 1.5 KB held, whatever few bytes it is
+/// written in. No build writes more, so only a file no build made
+/// loses any, and a step recorded on it would cap it the same.
+fn cap_read_history(history: &mut Vec<serde_json::Value>) {
+    if history.len() <= crate::HISTORY {
+        return;
+    }
+    let extra = history.len() - crate::HISTORY;
+    history.drain(1..1 + extra);
+    log::warn!(
+        "a history of {} states is read capped at {}",
+        extra + crate::HISTORY,
+        crate::HISTORY
+    );
 }
 
 #[cfg(test)]

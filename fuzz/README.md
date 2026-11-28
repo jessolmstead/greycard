@@ -10,6 +10,7 @@ crash.
 | Target               | Reads                                                        |
 |----------------------|--------------------------------------------------------------|
 | `sidecar_json`       | an edit sidecar, `.gcd`                                      |
+| `join_json`          | two sidecars of one frame, a NUL between them, joined        |
 | `edit_json`          | one edit, migrated from its schema                           |
 | `preset_json`        | a preset, `.gcp`, and the edit it makes                      |
 | `lightroom_xmp`      | a Lightroom preset or XMP sidecar, through the mapper        |
@@ -38,6 +39,14 @@ GREYCARD_DCP_FUZZ_SECS=600 cargo test -p greycard-core --lib mutated_profiles --
 
 `GREYCARD_DCP_CORPUS` adds a folder of profiles to start from, and
 `GREYCARD_DCP_ARTIFACTS` is where a failing input is written.
+
+`join_json`'s checks (`greycard_edit::sync::join_check`) run in the edit
+crate's tests too, over pairs made by hand and a few hundred mutated
+ones; `GREYCARD_JOIN_SWEEP` sets how many:
+
+```sh
+GREYCARD_JOIN_SWEEP=20000 cargo test -p greycard-edit --lib mutated_copies
+```
 
 ## Running
 

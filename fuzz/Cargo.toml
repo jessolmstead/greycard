@@ -17,7 +17,9 @@ libfuzzer-sys = "0.4"
 serde_json = "1"
 # `testing` for the checks the dcp target shares with the core's tests.
 greycard-core = { path = "../crates/greycard-core", features = ["testing"] }
-greycard-edit = { path = "../crates/greycard-edit" }
+# `testing` for the checks the join target shares with the edit
+# crate's tests.
+greycard-edit = { path = "../crates/greycard-edit", features = ["testing"] }
 greycard-edit-io = { path = "../crates/greycard-edit-io" }
 greycard-library = { path = "../crates/greycard-library" }
 
@@ -33,6 +35,13 @@ members = ["."]
 [[bin]]
 name = "sidecar_json"
 path = "fuzz_targets/sidecar_json.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "join_json"
+path = "fuzz_targets/join_json.rs"
 test = false
 doc = false
 bench = false

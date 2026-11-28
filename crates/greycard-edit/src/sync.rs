@@ -27,6 +27,9 @@ use crate::line::{Order, Written};
 use crate::meta::Facts;
 use crate::{Edit, Exported, HISTORY, Line, Sidecar, Snapshot, Step, Version};
 
+#[cfg(any(test, feature = "testing"))]
+pub mod join_check;
+
 /// The parent id of a history's first state: a hash of nothing.
 pub const ZERO_ID: &str = "0000000000000000000000000000000000000000000000000000000000000000";
 
@@ -1547,8 +1550,12 @@ fn joined_undone(joined: &Line, newer: &Line, older: &Line) -> Vec<String> {
 
 /// Which copy is the newer: the one written later
 /// ([`Sidecar::written_at`]); on a tie the greater latest revision
-/// hash, then host, then the greater id of the current state; and the
-/// first when nothing tells them apart.
+/// hash, then host, then the greater id of the current state, then the
+/// greater file as written; and the first when nothing tells them
+/// apart, which is then the same file as written. So the pair is ordered alike
+/// whichever side is local, also two copies of no revision, one time,
+/// and an original nobody developed (whose current has no id) that
+/// differ only in their versions.
 fn newer_of(local: &Sidecar, other: &Sidecar) -> Side {
     let key = |s: &Sidecar| {
         let latest = s.revisions.last();
@@ -1559,10 +1566,18 @@ fn newer_of(local: &Sidecar, other: &Sidecar) -> Side {
             state_ids(s).pop().unwrap_or_default(),
         )
     };
-    if key(other) > key(local) {
-        Side::Other
-    } else {
-        Side::Local
+    // The file only on a tie of the rest, which no two saves since
+    // §233 make: a revision hash differs wherever the content does.
+    // With every line's state ids, which a state read at 9 is given in
+    // that schema's form: one file written twice from two such reads.
+    let file = |s: &Sidecar| {
+        let ids: Vec<Vec<String>> = s.lines().map(state_ids).collect();
+        (serde_json::to_string(s).unwrap_or_default(), ids)
+    };
+    match key(other).cmp(&key(local)) {
+        std::cmp::Ordering::Greater => Side::Other,
+        std::cmp::Ordering::Equal if file(other) > file(local) => Side::Other,
+        _ => Side::Local,
     }
 }
 

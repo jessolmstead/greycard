@@ -23,12 +23,11 @@ the reasoning lives in `docs/notes.md`.
 - [ ] Slint asks the card for every feature it has, so wgpu warns of
       `MAPPABLE_PRIMARY_BUFFERS` at every start; ask only for what we
       use, upstream in Slint
-- [ ] A sidecar of many tiny states costs memory and time past its
-      size: 100,000 `{}` history entries (300 KB) take 644 MB and 17 s
-      over three reads, since no read caps history. Cap at read, charge
-      each state against the budget, or refuse past a count
-- [ ] A fuzz target for the join of two sidecars: a throwaway one
-      found a line id held twice, which no kept target reaches
+- [ ] A sidecar of many snapshots or versions still costs a whole
+      edit each at read, as its history did before §757; no cap, since
+      a user can have many of either
+- [ ] The join's fuzz target run under libFuzzer: only its checks
+      have run, over mutated pairs in a test (§757)
 - [ ] The Back up sheet says "N frames already there have newer
       sidecars here" for every sidecar-only item, also when the
       archive's edit is the newer one coming home, or a join

@@ -768,3 +768,4 @@ in its section; the roadmap and the changelog only point at it.
 - [§754. Archive copies over a slow link](notes/754-archive-copies-over-a-slow-link.md) (2026-11-26)
 - [§755. The shelf, sized to the machine and the frame](notes/755-the-shelf-sized-to-the-machine-and-the-frame.md) (2026-11-26)
 - [§756. The learned denoiser in a merge of X-Trans frames](notes/756-the-learned-denoiser-in-a-merge-of-x-trans-frames.md) (2026-11-27)
+- [§757. History capped at the read, and the join checked](notes/757-history-capped-at-the-read-and-the-join-checked.md) (2026-11-27)

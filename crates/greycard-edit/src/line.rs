@@ -1576,6 +1576,14 @@ impl Line {
             self.recorded = false;
             self.current_id = None;
             self.current_parent = None;
+            // Nor its id, when it moved, or what it undid, which such a
+            // line has none of and does not write (as its read has
+            // none): an id kept here is held by no line of the file,
+            // and a join would place another copy's line of that id on
+            // this one.
+            self.line_id.clear();
+            self.head_at = None;
+            self.undone.clear();
             // Nothing of the state read is kept: the root a step records
             // later is this build's, its id made as this build makes one.
             self.current_written = Written::at(self.current_written.shown_for());
