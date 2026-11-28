@@ -1497,7 +1497,9 @@ clears or a tester asks for it.
       controls, over a depth map a model estimates, and a phone's
       embedded depth where the file carries one (issue 217). The map
       is what a depth blur needs too
-- [ ] Maybe: Depth mapping for blur
+- [ ] Lens blur: a blur by depth with a chosen focus distance and
+      aperture, highlights opening into the lens's discs, over the
+      Depth mask's map
 - [ ] Maybe: a Fill painted but not generated kept in the sidecar, as
       a row in the list marked not made, so its strokes survive a quit;
       build it if strokes lost at quit are missed
@@ -1506,9 +1508,17 @@ clears or a tester asks for it.
       of its own beside the grain
 - [ ] Diffusion: a mist filter's veil, the highlights spread wide and
       the contrast eased, apart from Bloom's tight glow
+- [ ] Light leaks: warm light spilled in from an edge, its place,
+      color, and strength chosen, made in the program and not from
+      scanned overlays
+- [ ] Film burn: the overexposed, color-shifted end of a roll across
+      part of the frame
+- [ ] Borders: a film rebate, a plain mat, or a rough edge around the
+      export, the picture scaled inside it or the canvas grown
 - [ ] The effects as one section beside Grain (Bloom, Halation,
-      Diffusion), each in a mask as Grain is (§752), and drawn at the
-      picture's scale so an export of any size matches the view
+      Diffusion, Light leaks, Film burn), each in a mask as Grain is
+      (§752), and drawn at the picture's scale so an export of any
+      size matches the view
 
 #### User Requests
 
