@@ -42,8 +42,8 @@ use greycard_core::develop::dehaze::{
 use greycard_core::image::WorkingImage;
 
 use crate::plumbing::{
-    SAMPLED, STORAGE_BUFFER, STORAGE_BUFFER_READ, groups, layout_at, pipeline, storage_texture,
-    uniform,
+    PICTURE, PICTURE_OUT, STORAGE_BUFFER, STORAGE_BUFFER_READ, groups, layout_at, picture_texture,
+    picture_view, pipeline, storage_texture, uniform,
 };
 use crate::{Context, Error, Image, Result};
 
@@ -95,27 +95,27 @@ impl Pipelines {
             source: wgpu::ShaderSource::Wgsl(with_halves!("dehaze.wgsl").into()),
         });
         use wgpu::StorageTextureAccess::WriteOnly;
-        use wgpu::TextureFormat::{Rgba16Float, Rgba32Float};
+        use wgpu::TextureFormat::Rgba16Float;
         // The bindings as the shader numbers them; each layout the
         // subset its kernels use.
         let sums_layout = layout_at(
             device,
             "dehaze block sums",
-            &[(0, uniform(false)), (1, SAMPLED), (2, STORAGE_BUFFER)],
+            &[(0, uniform(false)), (1, PICTURE), (2, STORAGE_BUFFER)],
         );
         let apply_layout = layout_at(
             device,
             "dehaze apply",
             &[
                 (0, uniform(false)),
-                (1, SAMPLED),
+                (1, PICTURE),
                 (3, STORAGE_BUFFER_READ),
                 (4, STORAGE_BUFFER_READ),
                 (5, STORAGE_BUFFER_READ),
                 (6, STORAGE_BUFFER_READ),
                 (7, STORAGE_BUFFER),
                 (8, storage_texture(Rgba16Float, WriteOnly)),
-                (9, storage_texture(Rgba32Float, WriteOnly)),
+                (9, PICTURE_OUT),
             ],
         );
         let pipeline_layout = |label: &str, l: &wgpu::BindGroupLayout| {
@@ -148,7 +148,12 @@ impl Pipelines {
             apply_half: pipeline(device, &module, &apply_pl, "apply_half"),
             apply_full: pipeline(device, &module, &apply_pl, "apply_full"),
             spare_half: spare("dehaze spare half", Rgba16Float),
-            spare_full: spare("dehaze spare full", Rgba32Float),
+            spare_full: picture_texture(
+                device,
+                "dehaze spare full",
+                (1, 1),
+                wgpu::TextureUsages::STORAGE_BINDING,
+            ),
             sums_layout,
             apply_layout,
         }
@@ -185,7 +190,7 @@ impl Context {
                 factor,
                 ..Default::default()
             });
-            let view = image.texture.create_view(&Default::default());
+            let view = picture_view(&image.texture);
             let group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
                 label: Some("dehaze block sums"),
                 layout: &self.dehaze.sums_layout,
@@ -227,22 +232,14 @@ impl Context {
     pub fn dehaze(&self, image: &Image, model: &Model) -> Result<(Image, DehazeStats)> {
         let (w, h) = (image.width, image.height);
         self.scoped("the dehaze", || {
-            let texture = self.device.create_texture(&wgpu::TextureDescriptor {
-                label: Some("after the dehaze, full floats"),
-                size: wgpu::Extent3d {
-                    width: w,
-                    height: h,
-                    depth_or_array_layers: 1,
-                },
-                mip_level_count: 1,
-                sample_count: 1,
-                dimension: wgpu::TextureDimension::D2,
-                format: wgpu::TextureFormat::Rgba32Float,
-                usage: wgpu::TextureUsages::TEXTURE_BINDING
+            let texture = picture_texture(
+                &self.device,
+                "after the dehaze, full floats",
+                (w, h),
+                wgpu::TextureUsages::TEXTURE_BINDING
                     | wgpu::TextureUsages::STORAGE_BINDING
                     | wgpu::TextureUsages::COPY_SRC,
-                view_formats: &[],
-            });
+            );
             let stats = self.dehaze_into(image, model, Output::Full(&texture))?;
             Ok((
                 Image {
@@ -385,7 +382,7 @@ impl Context {
                 },
                 wgpu::BindGroupEntry {
                     binding: 1,
-                    resource: wgpu::BindingResource::TextureView(&view(&image.texture)),
+                    resource: wgpu::BindingResource::TextureView(&picture_view(&image.texture)),
                 },
                 wgpu::BindGroupEntry {
                     binding: 3,
@@ -413,7 +410,7 @@ impl Context {
                 },
                 wgpu::BindGroupEntry {
                     binding: 9,
-                    resource: wgpu::BindingResource::TextureView(&view(out_full)),
+                    resource: wgpu::BindingResource::TextureView(&picture_view(out_full)),
                 },
             ],
         });

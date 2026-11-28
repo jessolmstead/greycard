@@ -41,7 +41,7 @@ struct Tap {
 }
 
 @group(0) @binding(0) var<uniform> p: Params;
-@group(0) @binding(1) var pic: texture_2d<f32>;
+@group(0) @binding(1) var pic: texture_2d_array<f32>;
 // The block sums, interleaved RGB on the grid.
 @group(0) @binding(2) var<storage, read_write> sums: array<f32>;
 // The model: the averaged slope and intercept on the grid, and the
@@ -54,7 +54,23 @@ struct Tap {
 @group(0) @binding(7) var<storage, read_write> partial: array<vec2<f32>>;
 // The apply's outputs: the viewport's half floats, or full floats.
 @group(0) @binding(8) var out_half: texture_storage_2d<rgba16float, write>;
-@group(0) @binding(9) var out_full: texture_storage_2d<rgba32float, write>;
+@group(0) @binding(9) var out_full: texture_storage_2d_array<r32float, write>;
+
+// The picture's three planes, a layer each (`crate::Image`).
+fn pixel(at: vec2<i32>) -> vec3<f32> {
+    return vec3<f32>(
+        textureLoad(pic, at, 0, 0).x,
+        textureLoad(pic, at, 1, 0).x,
+        textureLoad(pic, at, 2, 0).x,
+    );
+}
+
+// A picture into its three planes.
+fn store_full(at: vec2<i32>, px: vec3<f32>) {
+    textureStore(out_full, at, 0, vec4<f32>(px.x, 0.0, 0.0, 0.0));
+    textureStore(out_full, at, 1, vec4<f32>(px.y, 0.0, 0.0, 0.0));
+    textureStore(out_full, at, 2, vec4<f32>(px.z, 0.0, 0.0, 0.0));
+}
 
 // ---- The block sums: one invocation a block of the grid.
 
@@ -70,7 +86,7 @@ fn block_sums(@builtin(global_invocation_id) gid: vec3<u32>) {
     var s = vec3<f32>(0.0);
     for (var y = y0; y < y1; y++) {
         for (var x = x0; x < x1; x++) {
-            s = s + textureLoad(pic, vec2<u32>(x, y), 0).rgb;
+            s = s + pixel(vec2<i32>(i32(x), i32(y)));
         }
     }
     let i = (gid.y * p.grid.x + gid.x) * 3u;
@@ -136,7 +152,7 @@ fn cleared(at: vec2<u32>, lid: u32, wid: vec2<u32>, groups: u32) -> vec3<f32> {
     var t = 0.0;
     var least = NONE;
     if inside {
-        let px = textureLoad(pic, at, 0).rgb;
+        let px = pixel(vec2<i32>(at));
         t = transmission(px, columns[at.x], rows[at.y]);
         least = t;
         let a = p.airlight.xyz;
@@ -172,8 +188,8 @@ fn apply_half(
     }
 }
 
-// Into full floats for the sharpen or a read back, the alpha one as
-// the upload has it.
+// Into full floats for the sharpen or a read back, the three planes
+// the upload has.
 @compute @workgroup_size(16, 16, 1)
 fn apply_full(
     @builtin(global_invocation_id) gid: vec3<u32>,
@@ -183,6 +199,6 @@ fn apply_full(
 ) {
     let px = cleared(gid.xy, lid, wid.xy, n.x);
     if gid.x < p.size.x && gid.y < p.size.y {
-        textureStore(out_full, gid.xy, vec4<f32>(px, 1.0));
+        store_full(vec2<i32>(gid.xy), px);
     }
 }

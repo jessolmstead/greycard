@@ -1498,8 +1498,9 @@ mod tests {
     /// session's budget alone kept, on every kind of GPU: 24 MP on
     /// 16 GB, 45 MP on 32 GB, 102 MP on 64 GB beside a 16 GB card, and
     /// smaller frames on larger machines. 102 MP on the owner's 24 GB
-    /// of unified memory keeps three under the default edit, and one
-    /// with Clarity and Dehaze on; smaller unified machines keep fewer
+    /// of unified memory keeps three under the default edit, and two
+    /// with Clarity and Dehaze on (one while the pictures in full floats
+    /// were four channels); smaller unified machines keep fewer
     /// for large frames. The peak assertion is a guard over the
     /// constants, not a measurement: what a prefetch beside a full shelf
     /// holds by the account (what the editor holds besides its pictures,
@@ -1534,7 +1535,7 @@ mod tests {
         };
         // The owner's case: 102 MP on a 24 GB Mac.
         assert_eq!(kept(24 * G, MP_102, Gpu::Unified, Uses::NONE), (3, 3));
-        assert_eq!(kept(24 * G, MP_102, Gpu::Unified, detail), (1, 3));
+        assert_eq!(kept(24 * G, MP_102, Gpu::Unified, detail), (2, 3));
         assert_eq!(kept(24 * G, MP_102, Gpu::Discrete, detail), (3, 3));
         // On the CPU the Detail section keeps nothing more in memory
         // ([`the_cpu_keeps_no_more_for_the_detail_section`]).
@@ -1545,7 +1546,7 @@ mod tests {
         // Smaller machines on unified memory.
         assert_eq!(kept(16 * G, MP_102, Gpu::Unified, Uses::NONE), (0, 2));
         assert_eq!(kept(16 * G, MP_61, Gpu::Unified, Uses::NONE), (4, 4));
-        assert_eq!(kept(16 * G, MP_61, Gpu::Unified, detail), (1, 4));
+        assert_eq!(kept(16 * G, MP_61, Gpu::Unified, detail), (2, 4));
         assert_eq!(kept(8 * G, MP_24, Gpu::Unified, Uses::NONE), (3, 3));
         assert_eq!(kept(8 * G, MP_45, Gpu::Unified, Uses::NONE), (0, 1));
         let (held, room) = COST.charged(MP_102, Gpu::Unified, Uses::NONE);

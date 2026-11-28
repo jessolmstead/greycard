@@ -36,17 +36,33 @@ struct Params {
 }
 
 @group(0) @binding(0) var<uniform> p: Params;
-@group(0) @binding(1) var rgb: texture_2d<f32>;
+@group(0) @binding(1) var rgb: texture_2d_array<f32>;
 @group(0) @binding(2) var lum: texture_2d<f32>;
 @group(0) @binding(3) var sharpened: texture_2d<f32>;
 @group(0) @binding(4) var blend: texture_2d<f32>;
 @group(0) @binding(5) var out_half: texture_storage_2d<rgba16float, write>;
-@group(0) @binding(6) var out_full: texture_storage_2d<rgba32float, write>;
+@group(0) @binding(6) var out_full: texture_storage_2d_array<r32float, write>;
 @group(0) @binding(7) var out_mask: texture_storage_2d<r32float, write>;
 @group(0) @binding(8) var out_delta: texture_storage_2d<r32float, write>;
 
+// The picture's three planes, a layer each (`crate::Image`).
+fn pixel(at: vec2<i32>) -> vec3<f32> {
+    return vec3<f32>(
+        textureLoad(rgb, at, 0, 0).x,
+        textureLoad(rgb, at, 1, 0).x,
+        textureLoad(rgb, at, 2, 0).x,
+    );
+}
+
+// A picture into its three planes.
+fn store_full(at: vec2<i32>, px: vec3<f32>) {
+    textureStore(out_full, at, 0, vec4<f32>(px.x, 0.0, 0.0, 0.0));
+    textureStore(out_full, at, 1, vec4<f32>(px.y, 0.0, 0.0, 0.0));
+    textureStore(out_full, at, 2, vec4<f32>(px.z, 0.0, 0.0, 0.0));
+}
+
 fn sharpened_pixel(at: vec2<i32>) -> vec4<f32> {
-    let px = textureLoad(rgb, at, 0).rgb;
+    let px = pixel(at);
     let old = textureLoad(lum, at, 0).r;
     let now = textureLoad(sharpened, at, 0).r;
     let factor = now / old;
@@ -72,7 +88,7 @@ fn apply_full(@builtin(global_invocation_id) gid: vec3<u32>) {
     }
     let at = vec2<i32>(i32(gid.x), i32(row));
     let v = sharpened_pixel(at);
-    textureStore(out_full, at, vec4<f32>(v.rgb, 1.0));
+    store_full(at, v.rgb);
     textureStore(out_mask, at, vec4<f32>(v.a, 0.0, 0.0, 0.0));
 }
 
@@ -85,7 +101,7 @@ fn keep_half(@builtin(global_invocation_id) gid: vec3<u32>) {
         return;
     }
     let at = vec2<i32>(i32(gid.x), i32(row));
-    textureStore(out_half, at, halves_nearest(vec4<f32>(textureLoad(rgb, at, 0).rgb, 0.0)));
+    textureStore(out_half, at, halves_nearest(vec4<f32>(pixel(at), 0.0)));
 }
 
 @compute @workgroup_size(16, 16, 1)
@@ -95,7 +111,7 @@ fn keep_full(@builtin(global_invocation_id) gid: vec3<u32>) {
         return;
     }
     let at = vec2<i32>(i32(gid.x), i32(row));
-    textureStore(out_full, at, vec4<f32>(textureLoad(rgb, at, 0).rgb, 1.0));
+    store_full(at, pixel(at));
     textureStore(out_mask, at, vec4<f32>(textureLoad(blend, at, 0).r, 0.0, 0.0, 0.0));
 }
 

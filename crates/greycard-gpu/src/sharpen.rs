@@ -48,7 +48,8 @@ use greycard_core::develop::sharpen::{
 use greycard_core::image::WorkingImage;
 
 use crate::plumbing::{
-    SAMPLED, STORAGE_BUFFER, Uniforms, groups, layout, pipeline, storage_texture, uniform,
+    PICTURE, PICTURE_OUT, SAMPLED, STORAGE_BUFFER, Uniforms, groups, layout, picture_texture,
+    picture_view, pipeline, storage_texture, uniform,
 };
 use crate::{Context, Error, Image, Result};
 
@@ -300,13 +301,13 @@ impl Pipelines {
         let tiles = module("sharpen tiles", include_str!("sharpen_tiles.wgsl"));
         let apply = module("sharpen apply", with_halves!("sharpen_apply.wgsl"));
         use wgpu::StorageTextureAccess::{ReadWrite, WriteOnly};
-        use wgpu::TextureFormat::{R32Float, Rgba16Float, Rgba32Float};
+        use wgpu::TextureFormat::{R32Float, Rgba16Float};
         let planes_layout = layout(
             device,
             "sharpen planes",
             &[
                 uniform(true),
-                SAMPLED,
+                PICTURE,
                 storage_texture(R32Float, ReadWrite),
                 storage_texture(R32Float, ReadWrite),
                 storage_texture(R32Float, ReadWrite),
@@ -333,12 +334,12 @@ impl Pipelines {
             "sharpen apply",
             &[
                 uniform(false),
-                SAMPLED,
+                PICTURE,
                 SAMPLED,
                 SAMPLED,
                 SAMPLED,
                 storage_texture(Rgba16Float, WriteOnly),
-                storage_texture(Rgba32Float, WriteOnly),
+                PICTURE_OUT,
                 storage_texture(R32Float, WriteOnly),
                 storage_texture(R32Float, WriteOnly),
             ],
@@ -391,7 +392,12 @@ impl Pipelines {
             keep_full: pipeline(device, &apply, &apply_pl, "keep_full"),
             delta: pipeline(device, &apply, &apply_pl, "delta"),
             spare_half: spare("spare half", Rgba16Float),
-            spare_full: spare("spare full", Rgba32Float),
+            spare_full: picture_texture(
+                device,
+                "spare full",
+                (1, 1),
+                wgpu::TextureUsages::STORAGE_BINDING,
+            ),
             spare_mask: spare("spare mask", R32Float),
             spare_delta: spare("spare delta", R32Float),
             planes_layout,
@@ -1046,7 +1052,14 @@ impl Context {
             })
         };
         self.scoped("sharpening", || {
-            let rgb = make("sharpened, full floats", wgpu::TextureFormat::Rgba32Float);
+            let rgb = picture_texture(
+                &self.device,
+                "sharpened, full floats",
+                (w, h),
+                wgpu::TextureUsages::TEXTURE_BINDING
+                    | wgpu::TextureUsages::STORAGE_BINDING
+                    | wgpu::TextureUsages::COPY_SRC,
+            );
             let mask = make("sharpen mask", wgpu::TextureFormat::R32Float);
             let stats = self.sharpen_into(
                 image,
@@ -1092,13 +1105,12 @@ impl Context {
                 delta: delta.as_ref(),
             },
         )?;
-        let rgba = self.read_texture(&rgb, 0, 0, w, h, 16)?;
-        let rgba: &[f32] = bytemuck::cast_slice(&rgba);
-        let (pixels, _) = image.data.as_chunks_mut::<3>();
-        let (fours, _) = rgba.as_chunks::<4>();
-        for (px, four) in pixels.iter_mut().zip(fours) {
-            px.copy_from_slice(&four[..3]);
-        }
+        *image = self.download(&Image {
+            texture: rgb,
+            width: w,
+            height: h,
+            threshold: std::sync::OnceLock::new(),
+        })?;
         let mask = self.read_texture(&mask, 0, 0, w, h, 4)?;
         let delta = match &delta {
             Some(d) => bytemuck::cast_slice(&self.read_texture(d, 0, 0, w, h, 4)?).to_vec(),
@@ -1334,7 +1346,7 @@ impl Context {
                 },
                 wgpu::BindGroupEntry {
                     binding: 1,
-                    resource: wgpu::BindingResource::TextureView(&view(&image.texture)),
+                    resource: wgpu::BindingResource::TextureView(&picture_view(&image.texture)),
                 },
                 wgpu::BindGroupEntry {
                     binding: 2,
@@ -1374,7 +1386,7 @@ impl Context {
                     },
                     wgpu::BindGroupEntry {
                         binding: 1,
-                        resource: wgpu::BindingResource::TextureView(&view(&guide.texture)),
+                        resource: wgpu::BindingResource::TextureView(&picture_view(&guide.texture)),
                     },
                     wgpu::BindGroupEntry {
                         binding: 2,
@@ -1494,7 +1506,7 @@ impl Context {
                     },
                     wgpu::BindGroupEntry {
                         binding: 1,
-                        resource: wgpu::BindingResource::TextureView(&view(&image.texture)),
+                        resource: wgpu::BindingResource::TextureView(&picture_view(&image.texture)),
                     },
                     wgpu::BindGroupEntry {
                         binding: 2,
@@ -1514,7 +1526,7 @@ impl Context {
                     },
                     wgpu::BindGroupEntry {
                         binding: 6,
-                        resource: wgpu::BindingResource::TextureView(&view(out_full)),
+                        resource: wgpu::BindingResource::TextureView(&picture_view(out_full)),
                     },
                     wgpu::BindGroupEntry {
                         binding: 7,

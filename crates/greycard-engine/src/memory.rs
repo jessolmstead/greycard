@@ -96,14 +96,16 @@ impl Held {
 ///
 /// | held, by its allocation                                        | where  | B/px |
 /// |----------------------------------------------------------------|--------|------|
-/// | "developed, full floats": the base uploaded (Rgba32Float, `Context::upload`) | device | 16 |
+/// | "developed, full floats": the base uploaded (three R32Float planes, `Context::upload`) | device | 12 |
 /// | "developed": the picture drawn (Rgba16Float, `Context::viewport_texture`) | device | 8 |
 /// | the base (`Keep::Base`, three f32), the decoded mosaic (u16), the guide plane, the rest | memory | 20.6 |
 ///
-/// 44.6 in all on lavapipe; 57 on the Mac (its 6.6 GB on the device
+/// 40.6 in all on lavapipe; 57 on the Mac (its 6.6 GB on the device
 /// less the sharpen's 1.8 GB set, then kept, and 1 GB in memory, at
-/// 102 MP): 57 charged on unified memory, 23 (lavapipe's 20.6, over
-/// the Mac's 10) on a discrete card.
+/// 102 MP) when the upload was four channels of 16 a pixel, 53 with
+/// its three planes (2026-11-27, the device's allocations at 24 MP on
+/// lavapipe: 24 to 20): 53 charged on unified memory, 23 (lavapipe's
+/// 20.6, over the Mac's 10) on a discrete card.
 ///
 /// A base in the making, at its peak beside the open frame, over the
 /// open frame and the base made: on lavapipe "demosaic detail" 12,
@@ -140,8 +142,8 @@ impl Held {
 ///
 /// | kept, by its allocation                                       | where  | B/px |
 /// |---------------------------------------------------------------|--------|------|
-/// | Clarity, Texture, or Structure: "after the local contrast, full floats" (Rgba32Float, the picture before the sharpen) | device | 16 |
-/// | Dehaze: "after the dehaze, full floats" (Rgba32Float); with the local contrast both are held (measured 32) | device | 16 |
+/// | Clarity, Texture, or Structure: "after the local contrast, full floats" (three R32Float planes, the picture before the sharpen) | device | 12 |
+/// | Dehaze: "after the dehaze, full floats" (three R32Float planes); with the local contrast both are held (measured 24, 32 with four channels) | device | 12 |
 /// | a mask's Detail: `DetailPlanes::data` (four f16), and the viewport's "detail planes" (Rgba16Float) | both | 8 + 8 |
 /// | a mask's Sharpen: `DetailPlanes::sharpen` (f16), and the viewport's "sharpen delta" (R16Float) | both | 2 + 2 |
 /// | a range mask under the Detail section: `DetailPlanes::sample` (three f32), and the viewport's "range sample" (Rgba16Float) | both | 12 + 8 |
@@ -182,7 +184,7 @@ pub struct Cost {
 
 /// The figures of [`Cost`].
 pub const COST: Cost = Cost {
-    held_unified: 57,
+    held_unified: 53,
     held_memory: 23,
     making_unified: 45,
     making_memory: 18,
@@ -190,8 +192,8 @@ pub const COST: Cost = Cost {
     making_cpu: 33,
     sharpen: (16, 2 * (96 << 20)),
     local_contrast: 24,
-    after_local_contrast: 16,
-    after_dehaze: 16,
+    after_local_contrast: 12,
+    after_dehaze: 12,
     bands: Held {
         memory: 8,
         device: 8,
@@ -333,8 +335,9 @@ const SHARE: (u64, u64) = (2, 3);
 /// libraries, a model's session. From the owner's Mac (24 GB unified,
 /// 102 MP, 2026-11-26): 13.3 GB at rest with three bases on the shelf
 /// (3.7 GB) and the sharpen's set then kept (1.8 GB) leaves 7.8 GB for
-/// the open frame and the rest; the open frame's 57 a pixel is 5.8 GB,
-/// so 2.0 GB is outside the figures, rounded up to 2 GiB.
+/// the open frame and the rest; the open frame's 57 a pixel then (53
+/// since its upload is three planes) is 5.8 GB, so 2.0 GB is outside
+/// the figures, rounded up to 2 GiB.
 pub const BESIDE: u64 = 2 << 30;
 
 /// A machine as the account reads it: what the editor's pictures may hold
@@ -426,10 +429,10 @@ mod tests {
             refined: true,
         };
         let held = |gpu, uses| COST.charged(px, gpu, uses).0;
-        assert_eq!(held(Gpu::Unified, Uses::NONE), 57 * px);
+        assert_eq!(held(Gpu::Unified, Uses::NONE), 53 * px);
         assert_eq!(
             held(Gpu::Unified, all),
-            (57 + 16 + 16 + 16 + 4 + 20 + 6) * px
+            (53 + 12 + 12 + 16 + 4 + 20 + 6) * px
         );
         assert_eq!(held(Gpu::Discrete, Uses::NONE), 23 * px);
         assert_eq!(held(Gpu::Discrete, all), (23 + 8 + 2 + 12 + 6) * px);

@@ -39,9 +39,18 @@ struct Params {
 }
 
 @group(0) @binding(0) var<uniform> p: Params;
-@group(0) @binding(1) var src: texture_2d<f32>;
+@group(0) @binding(1) var src: texture_2d_array<f32>;
 // One band of rows of the output, from `p.y0`.
 @group(0) @binding(2) var dst: texture_storage_2d<rgba32float, write>;
+
+// The picture's three planes, a layer each (`crate::Image`).
+fn pixel(at: vec2<i32>) -> vec3<f32> {
+    return vec3<f32>(
+        textureLoad(src, at, 0, 0).x,
+        textureLoad(src, at, 1, 0).x,
+        textureLoad(src, at, 2, 0).x,
+    );
+}
 
 // A quotient as the CPU rounds it. Vulkan holds `/` to 2.5 units in
 // the last place, and NVIDIA's is that loose: a position's few units
@@ -177,7 +186,7 @@ fn sample_cubic(x: f32, y: f32) -> vec3<f32> {
         let sy = clamp(iy + j - 1, 0, h - 1);
         for (var i = 0; i < 4; i++) {
             let sx = clamp(ix + i - 1, 0, w - 1);
-            out += wx[i] * wy[j] * textureLoad(src, vec2(sx, sy), 0).rgb;
+            out += wx[i] * wy[j] * pixel(vec2(sx, sy));
         }
     }
     return out;
@@ -198,7 +207,7 @@ fn correct(@builtin(global_invocation_id) id: vec3<u32>) {
     let oy = f32(y) + 0.5;
     var px: vec3<f32>;
     if p.moves == 0u {
-        px = textureLoad(src, vec2(id.x, y), 0).rgb;
+        px = pixel(vec2<i32>(i32(id.x), i32(y)));
         if p.vignetting != 0u {
             px *= gain_at(ox, oy);
         }

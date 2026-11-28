@@ -97,7 +97,7 @@ fn midtone_weight(stops: f32) -> f32 {
 // (Clarity's band's top, low-passed, by the apply), the exact
 // filter's averaged coefficients, Texture's gain, the grid's averaged
 // coefficients.
-@group(0) @binding(9) var pic: texture_2d<f32>;
+@group(0) @binding(9) var pic: texture_2d_array<f32>;
 @group(0) @binding(10) var log_lum_in: texture_2d<f32>;
 @group(0) @binding(11) var intercept: texture_2d<f32>;
 @group(0) @binding(12) var slope: texture_2d<f32>;
@@ -106,14 +106,23 @@ fn midtone_weight(stops: f32) -> f32 {
 @group(0) @binding(15) var grid_slope: texture_2d<f32>;
 // The apply's outputs: the viewport's half floats, or full floats.
 @group(0) @binding(16) var out_half: texture_storage_2d<rgba16float, write>;
-@group(0) @binding(17) var out_full: texture_storage_2d<rgba32float, write>;
+@group(0) @binding(17) var out_full: texture_storage_2d_array<r32float, write>;
 // Structure's top, Clarity's base, and its own grid's averaged
 // coefficients (its exact filter's are `intercept` and `slope`).
 @group(0) @binding(18) var top: texture_2d<f32>;
 @group(0) @binding(19) var structure_intercept: texture_2d<f32>;
 @group(0) @binding(20) var structure_slope: texture_2d<f32>;
 
-// ---- The log luminance: the picture (`src`) into a plane (`dst`).
+// The picture's three planes, a layer each (`crate::Image`).
+fn pixel(at: vec2<i32>) -> vec3<f32> {
+    return vec3<f32>(
+        textureLoad(pic, at, 0, 0).x,
+        textureLoad(pic, at, 1, 0).x,
+        textureLoad(pic, at, 2, 0).x,
+    );
+}
+
+// ---- The log luminance: the picture (`pic`) into a plane (`dst`).
 
 @compute @workgroup_size(16, 16, 1)
 fn log_lum(@builtin(global_invocation_id) gid: vec3<u32>) {
@@ -121,7 +130,7 @@ fn log_lum(@builtin(global_invocation_id) gid: vec3<u32>) {
         return;
     }
     let at = vec2<i32>(gid.xy);
-    let px = textureLoad(src, at, 0).rgb;
+    let px = pixel(at);
     let y = p.luma.x * px.x + p.luma.y * px.y + p.luma.z * px.z;
     let l = log2(max(y, p.floor) / p.luma.w);
     textureStore(dst, at, vec4<f32>(l, 0.0, 0.0, 0.0));
@@ -243,7 +252,7 @@ fn texture_gain(@builtin(global_invocation_id) gid: vec3<u32>) {
     let at = vec2<i32>(gid.xy);
     let u = textureLoad(log_lum_in, at, 0).r;
     let base = textureLoad(intercept, at, 0).r + textureLoad(slope, at, 0).r * u;
-    let px = textureLoad(pic, at, 0).rgb;
+    let px = pixel(at);
     let g = exp2(clip_weight(px) * p.k * (u - base));
     textureStore(dst, at, vec4<f32>(g, 0.0, 0.0, 0.0));
 }
@@ -398,7 +407,7 @@ fn structure_band(u: f32, base: f32) -> f32 {
 }
 
 fn applied(at: vec2<i32>) -> vec3<f32> {
-    var px = textureLoad(pic, at, 0).rgb;
+    var px = pixel(at);
     if (p.mode & TEXTURE) != 0u {
         px *= textureLoad(gain, at, 0).r;
     }
@@ -442,13 +451,16 @@ fn apply_half(@builtin(global_invocation_id) gid: vec3<u32>) {
     textureStore(out_half, at, halves_nearest(vec4<f32>(applied(at), 0.0)));
 }
 
-// Into full floats for the sharpen or a read back, the alpha one as
-// the upload has it.
+// Into full floats for the sharpen or a read back, the three planes
+// the upload has.
 @compute @workgroup_size(16, 16, 1)
 fn apply_full(@builtin(global_invocation_id) gid: vec3<u32>) {
     if gid.x >= p.size.x || gid.y >= p.size.y {
         return;
     }
     let at = vec2<i32>(gid.xy);
-    textureStore(out_full, at, vec4<f32>(applied(at), 1.0));
+    let px = applied(at);
+    textureStore(out_full, at, 0, vec4<f32>(px.x, 0.0, 0.0, 0.0));
+    textureStore(out_full, at, 1, vec4<f32>(px.y, 0.0, 0.0, 0.0));
+    textureStore(out_full, at, 2, vec4<f32>(px.z, 0.0, 0.0, 0.0));
 }

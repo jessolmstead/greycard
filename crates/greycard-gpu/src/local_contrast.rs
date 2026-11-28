@@ -48,7 +48,10 @@ use greycard_core::develop::local_contrast::{
 };
 use greycard_core::image::WorkingImage;
 
-use crate::plumbing::{SAMPLED, Uniforms, groups, layout_at, pipeline, storage_texture, uniform};
+use crate::plumbing::{
+    PICTURE, PICTURE_OUT, SAMPLED, Uniforms, groups, layout_at, picture_texture, picture_view,
+    pipeline, storage_texture, uniform,
+};
 use crate::{Context, Error, Image, Result};
 
 /// The shaders' uniform, laid out as WGSL lays it out.
@@ -104,6 +107,7 @@ const COL_H: u32 = 32;
 /// kept between runs on a picture of the same size when `keep` is
 /// set.
 pub(crate) struct Pipelines {
+    log_layout: wgpu::BindGroupLayout,
     plane_layout: wgpu::BindGroupLayout,
     blocks_layout: wgpu::BindGroupLayout,
     coef_layout: wgpu::BindGroupLayout,
@@ -139,11 +143,16 @@ impl Pipelines {
             source: wgpu::ShaderSource::Wgsl(with_halves!("local_contrast.wgsl").into()),
         });
         use wgpu::StorageTextureAccess::{ReadWrite, WriteOnly};
-        use wgpu::TextureFormat::{R32Float, Rgba16Float, Rgba32Float};
+        use wgpu::TextureFormat::{R32Float, Rgba16Float};
         let write = || storage_texture(R32Float, WriteOnly);
         let both = || storage_texture(R32Float, ReadWrite);
         // The bindings as the shader numbers them; each layout the
         // subset its kernels use.
+        let log_layout = layout_at(
+            device,
+            "local contrast log",
+            &[(0, uniform(true)), (2, write()), (9, PICTURE)],
+        );
         let plane_layout = layout_at(
             device,
             "local contrast plane",
@@ -182,7 +191,7 @@ impl Pipelines {
             &[
                 (0, uniform(true)),
                 (2, write()),
-                (9, SAMPLED),
+                (9, PICTURE),
                 (10, SAMPLED),
                 (11, SAMPLED),
                 (12, SAMPLED),
@@ -206,7 +215,7 @@ impl Pipelines {
             "local contrast apply",
             &[
                 (0, uniform(true)),
-                (9, SAMPLED),
+                (9, PICTURE),
                 (10, SAMPLED),
                 (11, SAMPLED),
                 (12, SAMPLED),
@@ -214,7 +223,7 @@ impl Pipelines {
                 (14, SAMPLED),
                 (15, SAMPLED),
                 (16, storage_texture(Rgba16Float, WriteOnly)),
-                (17, storage_texture(Rgba32Float, WriteOnly)),
+                (17, PICTURE_OUT),
                 (18, SAMPLED),
                 (19, SAMPLED),
                 (20, SAMPLED),
@@ -227,6 +236,7 @@ impl Pipelines {
                 ..Default::default()
             })
         };
+        let log_pl = pipeline_layout("local contrast log", &log_layout);
         let plane_pl = pipeline_layout("local contrast plane", &plane_layout);
         let blocks_pl = pipeline_layout("local contrast blocks", &blocks_layout);
         let coef_pl = pipeline_layout("local contrast coefficients", &coef_layout);
@@ -251,7 +261,7 @@ impl Pipelines {
             })
         };
         Self {
-            log_lum: pipeline(device, &module, &plane_pl, "log_lum"),
+            log_lum: pipeline(device, &module, &log_pl, "log_lum"),
             box_rows: pipeline(device, &module, &plane_pl, "box_rows"),
             box_cols: pipeline(device, &module, &plane_pl, "box_cols"),
             coefficients: pipeline(device, &module, &coef_pl, "coefficients"),
@@ -264,7 +274,13 @@ impl Pipelines {
             apply_full: pipeline(device, &module, &apply_pl, "apply_full"),
             spare_plane: spare("local contrast spare plane", R32Float),
             spare_half: spare("local contrast spare half", Rgba16Float),
-            spare_full: spare("local contrast spare full", Rgba32Float),
+            spare_full: picture_texture(
+                device,
+                "local contrast spare full",
+                (1, 1),
+                wgpu::TextureUsages::STORAGE_BINDING | wgpu::TextureUsages::TEXTURE_BINDING,
+            ),
+            log_layout,
             plane_layout,
             blocks_layout,
             coef_layout,
@@ -774,22 +790,14 @@ impl Context {
     ) -> Result<(Image, LocalContrastStats)> {
         let (w, h) = (image.width, image.height);
         self.scoped("the local contrast", || {
-            let texture = self.device.create_texture(&wgpu::TextureDescriptor {
-                label: Some("after the local contrast, full floats"),
-                size: wgpu::Extent3d {
-                    width: w,
-                    height: h,
-                    depth_or_array_layers: 1,
-                },
-                mip_level_count: 1,
-                sample_count: 1,
-                dimension: wgpu::TextureDimension::D2,
-                format: wgpu::TextureFormat::Rgba32Float,
-                usage: wgpu::TextureUsages::TEXTURE_BINDING
+            let texture = picture_texture(
+                &self.device,
+                "after the local contrast, full floats",
+                (w, h),
+                wgpu::TextureUsages::TEXTURE_BINDING
                     | wgpu::TextureUsages::STORAGE_BINDING
                     | wgpu::TextureUsages::COPY_SRC,
-                view_formats: &[],
-            });
+            );
             let stats =
                 self.local_contrast_into(image, options, clip_level, Output::Full(&texture))?;
             Ok((
@@ -950,11 +958,25 @@ impl Context {
             // The log luminance, once, from the picture before either
             // band.
             pass.set_pipeline(&p.log_lum);
-            pass.set_bind_group(
-                0,
-                &passes.group(&image.texture, &work.log),
-                &[uniforms.push(&self.queue, &base)],
-            );
+            let log = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("local contrast log"),
+                layout: &p.log_layout,
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: uniforms.binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 2,
+                        resource: wgpu::BindingResource::TextureView(&view(&work.log)),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 9,
+                        resource: wgpu::BindingResource::TextureView(&picture_view(&image.texture)),
+                    },
+                ],
+            });
+            pass.set_bind_group(0, &log, &[uniforms.push(&self.queue, &base)]);
             pass.dispatch_workgroups(groups(w, 16), groups(h, 16), 1);
             if texture_on {
                 mode |= MODE_TEXTURE;
@@ -983,7 +1005,9 @@ impl Context {
                         },
                         wgpu::BindGroupEntry {
                             binding: 9,
-                            resource: wgpu::BindingResource::TextureView(&view(&image.texture)),
+                            resource: wgpu::BindingResource::TextureView(&picture_view(
+                                &image.texture,
+                            )),
                         },
                         wgpu::BindGroupEntry {
                             binding: 10,
@@ -1159,7 +1183,7 @@ impl Context {
                     },
                     wgpu::BindGroupEntry {
                         binding: 9,
-                        resource: wgpu::BindingResource::TextureView(&view(&image.texture)),
+                        resource: wgpu::BindingResource::TextureView(&picture_view(&image.texture)),
                     },
                     wgpu::BindGroupEntry {
                         binding: 10,
@@ -1191,7 +1215,7 @@ impl Context {
                     },
                     wgpu::BindGroupEntry {
                         binding: 17,
-                        resource: wgpu::BindingResource::TextureView(&view(out_full)),
+                        resource: wgpu::BindingResource::TextureView(&picture_view(out_full)),
                     },
                     wgpu::BindGroupEntry {
                         binding: 18,

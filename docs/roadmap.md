@@ -72,11 +72,13 @@ the reasoning lives in `docs/notes.md`.
       frame just left should always be kept where the budget comes to
       none
 - [ ] The open frame is held twice, the CPU base beside its upload of
-      full floats (about 1 GB and 1.6 GB at 102 MP): drop the CPU base
-      while the upload stands and read it back when it is needed, after
-      measuring what a readback costs
-- [ ] The upload and the dehaze's copy are four channels with nothing
-      in the fourth (about 400 MB each at 102 MP): three planes
+      full floats (1.2 GB each at 102 MP). Not dropped: a retouch, the
+      learned masks, an export, a step to the next frame, and a lost
+      device all read the CPU base, each paying a readback (0.3 to
+      0.6 s at 102 MP on an RTX 5070 Ti) or a develop again (§758)
+- [ ] Three planes on Metal and D3D12: bit-identical and no slower on
+      Vulkan, unrun elsewhere; and the shelf's 53 bytes a pixel is the
+      Mac's measured 57 less the four dropped, not a measurement (§758)
 - [ ] The learned denoiser's buffers stay on the card for the session
       after one denoise; give them back when idle or hidden
 - [ ] A WebGPU out of memory that loses no device is not handled: step

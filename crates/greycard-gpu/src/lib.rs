@@ -26,6 +26,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 
 use greycard_core::image::WorkingImage;
+use plumbing::{PICTURE_LAYERS, picture_texture};
 
 pub use wgpu;
 
@@ -622,68 +623,62 @@ impl Context {
 
     fn upload_unscoped(&self, image: &WorkingImage, w: u32, h: u32) -> Result<Image> {
         use rayon::prelude::*;
-        let texture = self.device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("developed, full floats"),
-            size: wgpu::Extent3d {
-                width: w,
-                height: h,
-                depth_or_array_layers: 1,
-            },
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format: wgpu::TextureFormat::Rgba32Float,
-            // Read back as it is when nothing after the upload changed it.
-            usage: wgpu::TextureUsages::TEXTURE_BINDING
+        // Read back as it is when nothing after the upload changed it.
+        let texture = picture_texture(
+            &self.device,
+            "developed, full floats",
+            (w, h),
+            wgpu::TextureUsages::TEXTURE_BINDING
                 | wgpu::TextureUsages::COPY_DST
                 | wgpu::TextureUsages::COPY_SRC,
-            view_formats: &[],
-        });
-        // A band of rows at a time, each submitted before the next: the
-        // interleave to four channels is a pass over the picture, and
-        // the queue keeps every `write_texture`'s staging copy until
-        // the next submit, so without the submits a 45 MP frame would
-        // hold another 720 MB on the CPU and as much again in staging
-        // while the copy waits.
-        let band = (32usize << 20).div_ceil(image.width * 16).max(1);
-        let mut rgba = vec![0f32; image.width * band * 4];
+        );
+        // A band of rows of one plane at a time, each submitted before
+        // the next: the split into planes is a pass over the picture,
+        // and the queue keeps every `write_texture`'s staging copy
+        // until the next submit, so without the submits a 45 MP frame
+        // would hold another 540 MB on the CPU and as much again in
+        // staging while the copy waits.
+        let band = (32usize << 20).div_ceil(image.width * 4).max(1);
+        let mut plane = vec![0f32; image.width * band];
         for y0 in (0..image.height).step_by(band) {
             let rows = band.min(image.height - y0);
             let src = &image.data[y0 * image.width * 3..(y0 + rows) * image.width * 3];
-            rgba[..rows * image.width * 4]
-                .par_chunks_mut(image.width * 4)
-                .zip(src.par_chunks(image.width * 3))
-                .for_each(|(out, row)| {
-                    let (out, _) = out.as_chunks_mut::<4>();
-                    let (row, _) = row.as_chunks::<3>();
-                    for (o, px) in out.iter_mut().zip(row) {
-                        *o = [px[0], px[1], px[2], 1.0];
-                    }
-                });
-            self.queue.write_texture(
-                wgpu::TexelCopyTextureInfo {
-                    texture: &texture,
-                    mip_level: 0,
-                    origin: wgpu::Origin3d {
-                        x: 0,
-                        y: y0 as u32,
-                        z: 0,
+            for layer in 0..PICTURE_LAYERS {
+                let c = layer as usize;
+                plane[..rows * image.width]
+                    .par_chunks_mut(image.width)
+                    .zip(src.par_chunks(image.width * 3))
+                    .for_each(|(out, row)| {
+                        let (row, _) = row.as_chunks::<3>();
+                        for (o, px) in out.iter_mut().zip(row) {
+                            *o = px[c];
+                        }
+                    });
+                self.queue.write_texture(
+                    wgpu::TexelCopyTextureInfo {
+                        texture: &texture,
+                        mip_level: 0,
+                        origin: wgpu::Origin3d {
+                            x: 0,
+                            y: y0 as u32,
+                            z: layer,
+                        },
+                        aspect: wgpu::TextureAspect::All,
                     },
-                    aspect: wgpu::TextureAspect::All,
-                },
-                bytemuck::cast_slice(&rgba[..rows * image.width * 4]),
-                wgpu::TexelCopyBufferLayout {
-                    offset: 0,
-                    bytes_per_row: Some(w * 16),
-                    rows_per_image: Some(rows as u32),
-                },
-                wgpu::Extent3d {
-                    width: w,
-                    height: rows as u32,
-                    depth_or_array_layers: 1,
-                },
-            );
-            self.queue.submit([]);
+                    bytemuck::cast_slice(&plane[..rows * image.width]),
+                    wgpu::TexelCopyBufferLayout {
+                        offset: 0,
+                        bytes_per_row: Some(w * 4),
+                        rows_per_image: Some(rows as u32),
+                    },
+                    wgpu::Extent3d {
+                        width: w,
+                        height: rows as u32,
+                        depth_or_array_layers: 1,
+                    },
+                );
+                self.queue.submit([]);
+            }
         }
         Ok(Image {
             texture,
@@ -693,25 +688,32 @@ impl Context {
         })
     }
 
-    /// A picture on the GPU read back as a working image, its alpha
-    /// dropped: for an export's finish on the CPU, the CLI, and the
-    /// tests, not a slider. A band of rows at a time, so the four
-    /// channels' copy is never the whole picture's: at 45 MP that
-    /// would be 720 MB beside the 540 MB result.
+    /// A picture on the GPU read back as a working image: for an
+    /// export's finish on the CPU, the CLI, and the tests, not a
+    /// slider. A band of rows of one plane at a time, so no plane's
+    /// copy is ever the whole picture's.
     pub fn download(&self, image: &Image) -> Result<WorkingImage> {
+        use rayon::prelude::*;
         let (w, h) = (image.width, image.height);
-        let band = ((64u32 << 20) / (w * 16)).max(1);
-        let mut data = Vec::with_capacity(w as usize * h as usize * 3);
+        let band = ((64u32 << 20) / (w * 4)).max(1);
+        let mut data = vec![0f32; w as usize * h as usize * 3];
         for y0 in (0..h).step_by(band as usize) {
             let rows = band.min(h - y0);
-            let rgba = self.read_texture(&image.texture, 0, y0, w, rows, 16)?;
-            let rgba: &[f32] = bytemuck::cast_slice(&rgba);
-            data.extend(
-                rgba.as_chunks::<4>()
-                    .0
-                    .iter()
-                    .flat_map(|px| [px[0], px[1], px[2]]),
-            );
+            let out = &mut data[y0 as usize * w as usize * 3..][..rows as usize * w as usize * 3];
+            for layer in 0..PICTURE_LAYERS {
+                let c = layer as usize;
+                let plane =
+                    self.read_texture_layer(&image.texture, layer, (0, y0), (w, rows), 4)?;
+                let plane: &[f32] = bytemuck::cast_slice(&plane);
+                out.par_chunks_mut(w as usize * 3)
+                    .zip(plane.par_chunks(w as usize))
+                    .for_each(|(out, row)| {
+                        let (out, _) = out.as_chunks_mut::<3>();
+                        for (o, v) in out.iter_mut().zip(row) {
+                            o[c] = *v;
+                        }
+                    });
+            }
         }
         WorkingImage::from_data(w as usize, h as usize, data)
             .map_err(|e| Error::ReadBack(e.to_string()))
@@ -829,18 +831,30 @@ impl Context {
         height: u32,
         bytes: u32,
     ) -> Result<Vec<u8>> {
+        self.read_texture_layer(texture, 0, (x, y), (width, height), bytes)
+    }
+
+    /// The same, of the array layer `layer`: one plane of a picture in
+    /// full floats.
+    fn read_texture_layer(
+        &self,
+        texture: &wgpu::Texture,
+        layer: u32,
+        at: (u32, u32),
+        size: (u32, u32),
+        bytes: u32,
+    ) -> Result<Vec<u8>> {
         self.scoped("reading back", || {
-            self.read_texture_unscoped(texture, x, y, width, height, bytes)
+            self.read_texture_unscoped(texture, layer, at, size, bytes)
         })
     }
 
     fn read_texture_unscoped(
         &self,
         texture: &wgpu::Texture,
-        x: u32,
-        y: u32,
-        width: u32,
-        height: u32,
+        layer: u32,
+        (x, y): (u32, u32),
+        (width, height): (u32, u32),
         bytes: u32,
     ) -> Result<Vec<u8>> {
         let row = (width * bytes).div_ceil(256) * 256;
@@ -863,7 +877,11 @@ impl Context {
                 wgpu::TexelCopyTextureInfo {
                     texture,
                     mip_level: 0,
-                    origin: wgpu::Origin3d { x, y: y + y0, z: 0 },
+                    origin: wgpu::Origin3d {
+                        x,
+                        y: y + y0,
+                        z: layer,
+                    },
                     aspect: wgpu::TextureAspect::All,
                 },
                 wgpu::TexelCopyBufferInfo {

@@ -49,11 +49,21 @@ struct Params {
 }
 
 @group(0) @binding(0) var<uniform> p: Params;
-@group(0) @binding(1) var rgb: texture_2d<f32>;
+@group(0) @binding(1) var rgb: texture_2d_array<f32>;
 @group(0) @binding(2) var lum: texture_storage_2d<r32float, read_write>;
 @group(0) @binding(3) var lstar: texture_storage_2d<r32float, read_write>;
 @group(0) @binding(4) var blend: texture_storage_2d<r32float, read_write>;
 @group(0) @binding(5) var tmp: texture_storage_2d<r32float, read_write>;
+
+// The picture's three planes, a layer each (`crate::Image`).
+fn pixel(at: vec2<i32>) -> vec3<f32> {
+    return vec3<f32>(
+        textureLoad(rgb, at, 0, 0).x,
+        textureLoad(rgb, at, 1, 0).x,
+        textureLoad(rgb, at, 2, 0).x,
+    );
+}
+
 // Row sums, or the tile indices of a search.
 @group(0) @binding(6) var<storage, read_write> partials: array<f32>;
 
@@ -116,7 +126,7 @@ fn prepare(@builtin(global_invocation_id) gid: vec3<u32>) {
         return;
     }
     let at = vec2<i32>(i32(gid.x), i32(row));
-    let px = textureLoad(rgb, at, 0).rgb;
+    let px = pixel(at);
     let y = LUMA.x * px.x + LUMA.y * px.y + LUMA.z * px.z;
     textureStore(lum, at, vec4<f32>(max(y, 0.0) + p.pedestal, 0.0, 0.0, 0.0));
     textureStore(lstar, at, vec4<f32>(l_star(y * p.level_scale), 0.0, 0.0, 0.0));
@@ -136,7 +146,7 @@ fn guide_lstar(@builtin(global_invocation_id) gid: vec3<u32>) {
         return;
     }
     let at = vec2<i32>(i32(gid.x), i32(row));
-    let px = textureLoad(rgb, at, 0).rgb;
+    let px = pixel(at);
     let y = LUMA.x * px.x + LUMA.y * px.y + LUMA.z * px.z;
     textureStore(lstar, at, vec4<f32>(l_star(y * p.level_scale), 0.0, 0.0, 0.0));
 }

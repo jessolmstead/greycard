@@ -11,6 +11,12 @@ design note behind it.
   tier's X-Trans network
   ([§756](https://github.com/jessolmstead/greycard/blob/master/docs/notes/756-the-learned-denoiser-in-a-merge-of-x-trans-frames.md)).
 
+### Speed
+
+- An open frame takes less of the GPU's memory: about 400 MB less at
+  102 megapixels, and 1.2 GB less with Clarity and Dehaze on
+  ([§758](https://github.com/jessolmstead/greycard/blob/master/docs/notes/758-a-picture-on-the-device-as-three-planes.md)).
+
 ### Fixes
 
 - A sidecar holding a very long history no longer takes seconds and

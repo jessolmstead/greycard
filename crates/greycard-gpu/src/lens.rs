@@ -16,7 +16,9 @@ use greycard_core::develop::lens::{Distortion, LensCorrection, LensStats};
 use greycard_core::image::WorkingImage;
 use rayon::prelude::*;
 
-use crate::plumbing::{SAMPLED, Uniforms, groups, layout, pipeline, storage_texture, uniform};
+use crate::plumbing::{
+    PICTURE, Uniforms, groups, layout, picture_view, pipeline, storage_texture, uniform,
+};
 use crate::{Context, Error, Result};
 
 /// The shader's uniform, laid out as WGSL lays it out.
@@ -104,7 +106,7 @@ impl Pipelines {
             "lens",
             &[
                 uniform(true),
-                SAMPLED,
+                PICTURE,
                 storage_texture(
                     wgpu::TextureFormat::Rgba32Float,
                     wgpu::StorageTextureAccess::WriteOnly,
@@ -196,7 +198,7 @@ impl Context {
             view_formats: &[],
         });
         let uniforms = Uniforms::new(&self.device, "lens params", u64::from(bands));
-        let src_view = input.texture.create_view(&Default::default());
+        let src_view = picture_view(&input.texture);
         let dst_view = target.create_view(&Default::default());
         let bind = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("lens"),

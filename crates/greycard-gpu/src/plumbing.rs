@@ -19,6 +19,58 @@ pub(crate) const SAMPLED: wgpu::BindingType = wgpu::BindingType::Texture {
     multisampled: false,
 };
 
+/// A picture in full floats ([`crate::Image`]) as an op reads it: three
+/// planes of one texture, red, green, and blue, a layer each. There is
+/// no three-channel float format, and four channels held a fourth that
+/// nothing read: a quarter of every such picture, 400 MB at 102 MP.
+pub(crate) const PICTURE: wgpu::BindingType = wgpu::BindingType::Texture {
+    sample_type: wgpu::TextureSampleType::Float { filterable: false },
+    view_dimension: wgpu::TextureViewDimension::D2Array,
+    multisampled: false,
+};
+
+/// The layers of a picture in full floats.
+pub(crate) const PICTURE_LAYERS: u32 = 3;
+
+/// A picture in full floats as an op writes it.
+pub(crate) const PICTURE_OUT: wgpu::BindingType = wgpu::BindingType::StorageTexture {
+    access: wgpu::StorageTextureAccess::WriteOnly,
+    format: wgpu::TextureFormat::R32Float,
+    view_dimension: wgpu::TextureViewDimension::D2Array,
+};
+
+/// A texture for a picture in full floats, `width` by `height`, its
+/// three planes.
+pub(crate) fn picture_texture(
+    device: &wgpu::Device,
+    label: &str,
+    (width, height): (u32, u32),
+    usage: wgpu::TextureUsages,
+) -> wgpu::Texture {
+    device.create_texture(&wgpu::TextureDescriptor {
+        label: Some(label),
+        size: wgpu::Extent3d {
+            width,
+            height,
+            depth_or_array_layers: PICTURE_LAYERS,
+        },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format: wgpu::TextureFormat::R32Float,
+        usage,
+        view_formats: &[],
+    })
+}
+
+/// A view of a picture's texture as the ops bind it, its three planes.
+pub(crate) fn picture_view(texture: &wgpu::Texture) -> wgpu::TextureView {
+    texture.create_view(&wgpu::TextureViewDescriptor {
+        dimension: Some(wgpu::TextureViewDimension::D2Array),
+        ..Default::default()
+    })
+}
+
 pub(crate) const STORAGE_BUFFER: wgpu::BindingType = wgpu::BindingType::Buffer {
     ty: wgpu::BufferBindingType::Storage { read_only: false },
     has_dynamic_offset: false,
@@ -168,5 +220,8 @@ pub(crate) fn texture_bytes(texture: &wgpu::Texture) -> u64 {
         .format()
         .block_copy_size(Some(wgpu::TextureAspect::All))
         .unwrap_or(0);
-    u64::from(texture.width()) * u64::from(texture.height()) * u64::from(per_texel)
+    u64::from(texture.width())
+        * u64::from(texture.height())
+        * u64::from(texture.depth_or_array_layers())
+        * u64::from(per_texel)
 }
