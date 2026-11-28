@@ -8967,3 +8967,113 @@ fn an_image_change_sends_each_read_back_once() {
     assert!(!in_flight, "the tap sent again for the same change");
     assert!(renderer.scopes.main.in_flight.is_some());
 }
+
+/// A NaN, an infinity either way, a channel past a half float's
+/// largest, and channels under zero, each alone in a flat field, render
+/// on the GPU what the CPU renders of them, and nothing of them reaches
+/// the pixels beside them: at 1:1, through the cubic, minified, and
+/// magnified. Before the picture was let in finite (`image::admit`),
+/// the GPU drew the first four black where the CPU drew a NaN as a
+/// color, and its texture filter took the black to the neighbors.
+#[test]
+fn a_samples_not_finite_and_under_zero_render_as_the_cpus_and_stay_put() {
+    let Some((device, queue)) = device("the non-finite samples' check") else {
+        return;
+    };
+    let (w, h) = (10usize, 10usize);
+    let base = [0.05f32, 0.12, 0.3];
+    let odd: [[f32; 3]; 8] = [
+        [f32::NAN, 0.12, 0.3],
+        [f32::INFINITY, 0.12, 0.3],
+        [f32::NEG_INFINITY, 0.12, 0.3],
+        [0.05, f32::NAN, f32::INFINITY],
+        [1e6, 0.12, 0.3],
+        [-0.05, 0.12, 0.3],
+        [-2.0, 0.5, 0.3],
+        [-0.05, -0.02, -0.01],
+    ];
+    let to_out = greycard_render::export::Space::Srgb.matrix();
+    let (bx, by) = (5usize, 5usize);
+    let mut worst = (0.0f32, String::new());
+    for v in odd {
+        let mut data = Vec::with_capacity(w * h * 3);
+        for y in 0..h {
+            for x in 0..w {
+                data.extend_from_slice(if (x, y) == (bx, by) { &v } else { &base });
+            }
+        }
+        let image = WorkingImage {
+            width: w,
+            height: h,
+            data,
+        };
+        let mut renderer = Renderer::new(&device, &queue);
+        renderer.upload(&Halves::from_image(&image, None));
+        let halved =
+            |c: [f32; 3]| c.map(|v| half::f16::from_f32(greycard_core::image::admit(v)).to_f32());
+        for curve in [
+            greycard_edit::DisplayCurve::Channels,
+            greycard_edit::DisplayCurve::Agx,
+        ] {
+            for (contrast, whites) in [(1.0f32, 0.0f32), (1.4, -1.0)] {
+                let mut edit = greycard_edit::Edit {
+                    display_curve: curve,
+                    ..Default::default()
+                };
+                edit.light.tone.contrast = contrast;
+                edit.light.tone.whites = whites;
+                let global = Baked::global(&edit, Source::SCENE);
+                let cpu = |c: [f32; 3]| {
+                    greycard_render::finish::finish_pixel(halved(c), &global, &[], &to_out)
+                };
+                let (want_odd, want_base) = (cpu(v), cpu(base));
+                for (cubic, zoom) in [(false, 1.0f32), (true, 1.0), (false, 0.5), (true, 2.0)] {
+                    let view = View {
+                        center: (w as f32 / 2.0, h as f32 / 2.0),
+                        plane: (w as f32, h as f32),
+                        frame_size: (w as f32, h as f32),
+                        cubic,
+                        zoom,
+                        ..View::with_look(&edit)
+                    };
+                    let (tw, th) = ((w as f32 * zoom) as u32, (h as f32 * zoom) as u32);
+                    let target = renderer.render(tw, th, &view).0;
+                    let shown = renderer.read_back(&target).expect("read back");
+                    for ty in 0..th {
+                        for tx in 0..tw {
+                            // The source pixel under this one; minified,
+                            // the two by two block's corner.
+                            let (sx, sy) =
+                                ((tx as f32 / zoom) as usize, (ty as f32 / zoom) as usize);
+                            let reach = if cubic { 2 } else { 1 };
+                            let near = sx.abs_diff(bx).max(sy.abs_diff(by));
+                            let want = if (sx, sy) == (bx, by) && !cubic && zoom == 1.0 {
+                                want_odd
+                            } else if near > reach {
+                                want_base
+                            } else {
+                                continue;
+                            };
+                            let got = shown.get_pixel(tx, ty);
+                            for k in 0..3 {
+                                let d = (want[k] - f32::from(got[k]) / 255.0).abs();
+                                if d > worst.0 {
+                                    worst = (
+                                        d,
+                                        format!(
+                                            "{v:?} {curve:?} contrast {contrast} whites {whites} \
+                                             cubic {cubic} zoom {zoom} at ({tx}, {ty}): \
+                                             {want:?} against {got:?}"
+                                        ),
+                                    );
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    eprintln!("the odd samples, GPU against CPU: {worst:?}");
+    assert!(worst.0 < 1.5 / 255.0, "{worst:?}");
+}

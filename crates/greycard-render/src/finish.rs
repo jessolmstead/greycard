@@ -946,7 +946,9 @@ pub fn finish_pixel_display(
     // on the developed picture in the develop's white, as the develop
     // puts the global's on: the dehaze's airlight and its bound are of
     // that picture, and the fade toward the clip reads it.
-    let mut px = px;
+    // Let in as the shader's texture holds it (`Halves::from_image`):
+    // finite and in the half float's range, a NaN at zero.
+    let mut px = px.map(greycard_core::image::admit);
     if let Some((bands, meta)) = detail
         && let Some(k) = crate::detail::amounts(locals)
     {
@@ -7292,6 +7294,96 @@ mod tests {
                         assert!(a[c] <= last[c] * (1.0 + 1e-5), "{color:?} {x} {whites}");
                     }
                     last = a;
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn a_sample_not_finite_finishes_as_it_is_let_in() {
+        // A NaN finishes as zero and an infinity, or a channel past a
+        // half float's largest, as that largest, on both curves: what
+        // the shader reads of them from its texture. An infinity
+        // finished black on the CPU before (inf less inf in the shifts'
+        // gain), where the GPU, given the half float's largest, drew it
+        // white.
+        let to_out = crate::export::Space::Srgb.matrix();
+        let limit = greycard_core::image::SAMPLE_LIMIT;
+        for curve in greycard_edit::DisplayCurve::ALL {
+            let edit = Edit {
+                display_curve: curve,
+                ..Default::default()
+            };
+            let b = Baked::global(&edit, Source::SCENE);
+            let f = |px: [f32; 3]| finish_pixel(px, &b, &[], &to_out);
+            for (odd, admitted) in [
+                ([f32::NAN, 0.12, 0.3], [0.0, 0.12, 0.3]),
+                ([f32::INFINITY, 0.12, 0.3], [limit, 0.12, 0.3]),
+                ([f32::NEG_INFINITY, 0.12, 0.3], [-limit, 0.12, 0.3]),
+                ([1e9, 1e9, 1e9], [limit; 3]),
+            ] {
+                let (o, a) = (f(odd), f(admitted));
+                assert!(o.iter().all(|v| v.is_finite()), "{curve:?} {odd:?}: {o:?}");
+                assert_eq!(o, a, "{curve:?} {odd:?}");
+            }
+            let white = f([f32::INFINITY; 3]);
+            assert!(
+                white.iter().all(|v| *v > 1.0 - 1e-4),
+                "{curve:?}: {white:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn more_whites_down_never_brightens_a_channel_of_any_color_before_the_gamut() {
+        // A grid of the working space's colors, saturated ones past
+        // sRGB among them, from three stops under grey to six over,
+        // its region a stop either side or none: as the whites goes a
+        // step further down, no channel of the display-referred picture
+        // rises, on either curve. After it, the gamut op (its rail at
+        // sRGB's top runs for every output) and AgX's rail can raise a
+        // channel as a far-out color darkens, as much under Exposure
+        // down as under Whites down: that is the output's, not the
+        // whites'. The slack is float rounding, a hundredth of a level
+        // of 65,535 (AgX's hue blend per channel).
+        const UP: f32 = 2e-7;
+        let n = 5;
+        for curve in greycard_edit::DisplayCurve::ALL {
+            let steps: Vec<Baked> = (0..=14)
+                .map(|k| {
+                    let mut edit = Edit {
+                        display_curve: curve,
+                        ..Default::default()
+                    };
+                    edit.light.tone.whites = -(k as f32) * 0.25;
+                    Baked::global(&edit, Source::SCENE)
+                })
+                .collect();
+            for i in 0..(n + 1) * (n + 1) * (n + 1) {
+                let color = [i % (n + 1), i / (n + 1) % (n + 1), i / (n + 1) / (n + 1)]
+                    .map(|v| v as f32 / n as f32);
+                if color.iter().all(|v| *v == 0.0) {
+                    continue;
+                }
+                for s in 0..=18 {
+                    let x = -3.0 + s as f32 * 0.5;
+                    let px = colored(color, x - 0.8);
+                    for g in [None, Some(x - 1.0), Some(x + 1.0)] {
+                        let guide = g.map(|g| (g - 0.8, FRAME_TYPICAL));
+                        let mut last = [f32::MAX; 3];
+                        for b in &steps {
+                            let d = finish_pixel_display(px, b, &[], 0.0, None, guide, None, None);
+                            for k in 0..3 {
+                                assert!(
+                                    d[k] <= last[k] + UP,
+                                    "{curve:?} {color:?} at {x}, region {g:?}, whites {}: \
+                                     {d:?} after {last:?}",
+                                    b.light.tone.whites
+                                );
+                            }
+                            last = d;
+                        }
+                    }
                 }
             }
         }

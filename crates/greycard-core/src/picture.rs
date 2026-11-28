@@ -899,7 +899,8 @@ fn to_working(decoded: DynamicImage, t: &Transform) -> Result<(WorkingImage, u8)
                 .par_chunks_mut(3)
                 .zip(px.as_raw().par_chunks(3))
                 .for_each(|(o, p)| {
-                    o.copy_from_slice(&matrixed([p[0], p[1], p[2]]));
+                    let rgb = [p[0], p[1], p[2]].map(crate::image::admit);
+                    o.copy_from_slice(&matrixed(rgb).map(crate::image::admit));
                 });
             32
         }
@@ -1167,6 +1168,30 @@ mod tests {
     use ::rawler::tags::ExifTag;
     use image::ImageEncoder;
     use std::io::Cursor;
+
+    /// A float picture's NaN comes in as zero and its infinity as the
+    /// half float's largest, each channel on its own, before the matrix
+    /// mixes it into the others; a channel under zero is carried.
+    #[test]
+    fn a_float_pictures_samples_come_in_finite() {
+        let px = [f32::NAN, 0.2, 0.3, f32::INFINITY, 0.2, 0.3, -0.1, 0.2, 0.3];
+        let decoded =
+            DynamicImage::ImageRgb32F(image::Rgb32FImage::from_raw(3, 1, px.to_vec()).unwrap());
+        let t = Transform::srgb().unwrap();
+        let (image, bits) = to_working(decoded, &t).unwrap();
+        assert_eq!(bits, 32);
+        assert!(image.data.iter().all(|v| v.is_finite()), "{:?}", image.data);
+        let m = t.matrix;
+        let want = |rgb: [f32; 3]| {
+            [0, 1, 2].map(|i| {
+                crate::image::admit(m[i][0] * rgb[0] + m[i][1] * rgb[1] + m[i][2] * rgb[2])
+            })
+        };
+        let limit = crate::image::SAMPLE_LIMIT;
+        assert_eq!(image.pixel(0, 0), want([0.0, 0.2, 0.3]));
+        assert_eq!(image.pixel(1, 0), want([limit, 0.2, 0.3]));
+        assert_eq!(image.pixel(2, 0), want([-0.1, 0.2, 0.3]));
+    }
 
     /// A matrix/TRC profile built by hand: the colorants given, a
     /// parametric sRGB curve, and a version 2 description.

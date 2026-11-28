@@ -93,13 +93,19 @@ the reasoning lives in `docs/notes.md`.
 - [ ] The Rotate slider's refit can carry a crop edge across an edge
       arrow's band, and the arrow hops aside and back under the drag;
       a handle's drag holds the arrows still, a slider's does not
-- [ ] Whites down brightens a few pixels on real exports: on 746 of
-      750 frame and setting pairs some pixel comes out brighter, up
-      to 42 of 65,535 on Channels and 9,663 (about 200 pixels) on AgX
-      at -3.5 (found reviewing issue 132's Whites)
-- [ ] A NaN, an infinity, or a negative channel renders black on the
-      GPU and in color on the CPU, and on lavapipe the black reaches
-      the pixels beside it
+- [ ] The gamut stage can raise one channel of a color far outside
+      the output space as the color darkens, under Whites or Exposure
+      down, by 0.08 to 0.14 of full scale on the grids tried; the
+      rail's share grows with headroom. Whites itself raises nothing
+      (§759). Making the rail monotone moves every saturated light:
+      the owner's call
+- [ ] A float raw's NaN or infinite photosite develops as a small
+      bright blotch: the normalize passes it and the hot-pixel pass
+      does not repair it (§759)
+- [ ] A float picture already at the half float's limit and pushed
+      past it by a GPU stage could become infinite in the viewport's
+      texture, black dots at a sun's edge; reasoned, not reproduced
+      (§759)
 - [ ] The capture sharpen's early stop sits on a knife edge: the
       device and the CPU can stop a 32x32 block an iteration apart,
       and the block moves by up to 3% (§668). A margin past an

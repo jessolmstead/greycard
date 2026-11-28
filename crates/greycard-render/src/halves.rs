@@ -29,6 +29,11 @@ impl Halves {
                 let (out, _) = out.as_chunks_mut::<4>();
                 let (row, _) = row.as_chunks::<3>();
                 for (x, (o, px)) in out.iter_mut().zip(row).enumerate() {
+                    // Let in finite (`image::admit`): a half float takes
+                    // anything past its largest to an infinity, and the
+                    // texture filter spreads a NaN or an infinity to the
+                    // pixels beside it.
+                    let px = px.map(greycard_core::image::admit);
                     o[0] = half::f16::from_f32(px[0]);
                     o[1] = half::f16::from_f32(px[1]);
                     o[2] = half::f16::from_f32(px[2]);
