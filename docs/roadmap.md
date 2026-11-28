@@ -1601,7 +1601,7 @@ clears or a tester asks for it.
       for a folder of `.arp` alone, which waits on words
       (pixls, 2026-10-24)
 - [ ] The clipping warnings as a pair of plain buttons, with the
-      toolbar (pixls, 2026-10-24)
+      toolbar (pixls, 2026-10-24; issue 227)
 - [ ] A color negative photographed with a digital camera inverted:
       the film base sampled as the white point, each channel turned
       about it, a curve per film stock later (pixls, 2026-10-28). The
