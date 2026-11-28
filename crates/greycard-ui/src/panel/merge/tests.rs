@@ -6,7 +6,7 @@ use greycard_core::merge::testing::{mosaic, write_dng};
 use slint::Model;
 
 /// A finished merge whose frames went without the learned tier
-/// asked says why after its line, the card's or X-Trans; one with
+/// asked says why after its line, the card's; one with
 /// nothing skipped says its line alone.
 #[test]
 fn a_merge_that_went_without_the_tier_says_why() {
@@ -34,10 +34,6 @@ fn a_merge_that_went_without_the_tier_says_why() {
     assert_eq!(
         landed(Some(merge::LearnedSkipped::OffCard)),
         "merged 3 frames into IMG_0-HDR.dng; no learned denoise on this graphics card"
-    );
-    assert_eq!(
-        landed(Some(merge::LearnedSkipped::XTrans)),
-        "merged 3 frames into IMG_0-HDR.dng; no learned denoise in an X-Trans merge"
     );
     assert_eq!(landed(None), "merged 3 frames into IMG_0-HDR.dng");
 }

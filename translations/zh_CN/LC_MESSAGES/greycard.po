@@ -3166,28 +3166,28 @@ msgstr ""
 msgid "drawing in software on {name} and developing on the CPU, which is slow"
 msgstr "正在 {name} 上以软件绘制并在 CPU 上处理，速度较慢"
 
-#: crates/greycard-ui/src/archive.rs:483 crates/greycard-ui/src/archive.rs:968
-#: crates/greycard-ui/src/archive.rs:969
+#: crates/greycard-ui/src/archive.rs:489 crates/greycard-ui/src/archive.rs:984
+#: crates/greycard-ui/src/archive.rs:985
 msgid "reading it: {e}"
 msgstr "读取时出错：{e}"
 
-#: crates/greycard-ui/src/archive.rs:485
+#: crates/greycard-ui/src/archive.rs:491
 msgid "reading the copy: {e}"
 msgstr "读取副本时出错：{e}"
 
-#: crates/greycard-ui/src/archive.rs:496
+#: crates/greycard-ui/src/archive.rs:502
 msgid "writing it: {e}"
 msgstr "写入时出错：{e}"
 
-#: crates/greycard-ui/src/archive.rs:499
+#: crates/greycard-ui/src/archive.rs:505
 msgid "writing the copy: {e}"
 msgstr "写入副本时出错：{e}"
 
-#: crates/greycard-ui/src/archive.rs:759
+#: crates/greycard-ui/src/archive.rs:765
 msgid "not a file"
 msgstr "不是文件"
 
-#: crates/greycard-ui/src/archive.rs:1384
+#: crates/greycard-ui/src/archive.rs:1426
 msgid "{n} byte"
 msgid_plural "{n} bytes"
 msgstr[0] "{n} 字节"
@@ -3526,154 +3526,154 @@ msgstr "所有照片"
 msgid "{} or {last}"
 msgstr "{} 或 {last}"
 
-#: crates/greycard-ui/src/import.rs:196
+#: crates/greycard-ui/src/import.rs:197
 msgid "{} is not a folder"
 msgstr "{} 不是文件夹"
 
-#: crates/greycard-ui/src/import.rs:199
+#: crates/greycard-ui/src/import.rs:200
 msgid "reading {}"
 msgstr "正在读取 {}"
 
-#: crates/greycard-ui/src/import.rs:499
+#: crates/greycard-ui/src/import.rs:500
 msgid "import stopped: {done} of {n} frame imported"
 msgid_plural "import stopped: {done} of {n} frames imported"
 msgstr[0] "导入已停止：已导入 {n} 张照片中的 {done} 张"
 
-#: crates/greycard-ui/src/import.rs:505
+#: crates/greycard-ui/src/import.rs:506
 msgid "import failed after {done} of {n} frame"
 msgid_plural "import failed after {done} of {n} frames"
 msgstr[0] "导入失败，此前已导入 {n} 张照片中的 {done} 张"
 
-#: crates/greycard-ui/src/import.rs:510
+#: crates/greycard-ui/src/import.rs:511
 msgid "imported {n} frame"
 msgid_plural "imported {n} frames"
 msgstr[0] "已导入 {n} 张照片"
 
-#: crates/greycard-ui/src/import.rs:512
+#: crates/greycard-ui/src/import.rs:513
 msgid " to {}"
 msgstr "到 {}"
 
-#: crates/greycard-ui/src/import.rs:515
+#: crates/greycard-ui/src/import.rs:516
 msgid " ({} MB at {} MB/s)"
 msgstr "（{} MB，{} MB/s）"
 
-#: crates/greycard-ui/src/import.rs:521
+#: crates/greycard-ui/src/import.rs:522
 msgid ", {} backed up"
 msgstr "，已备份 {}"
 
-#: crates/greycard-ui/src/import.rs:524
+#: crates/greycard-ui/src/import.rs:525
 msgid ", {} already there"
 msgstr "，{} 已存在"
 
-#: crates/greycard-ui/src/import.rs:527
+#: crates/greycard-ui/src/import.rs:528
 msgid ", {} with a Lightroom edit"
 msgstr "，{} 带有 Lightroom 编辑"
 
-#: crates/greycard-ui/src/import.rs:531
+#: crates/greycard-ui/src/import.rs:532
 msgid ", {} renamed with -1 (the name was another file's)"
 msgstr "，{} 以 -1 重命名（该名称已被其他文件占用）"
 
-#: crates/greycard-ui/src/import.rs:537
+#: crates/greycard-ui/src/import.rs:538
 msgid ", {} JPEG or XMP not copied (the name was another file's)"
 msgstr "，{} 个 JPEG 或 XMP 未拷贝（该名称已被其他文件占用）"
 
-#: crates/greycard-ui/src/import.rs:543
+#: crates/greycard-ui/src/import.rs:544
 msgid ""
 ", the preset's camera profile left off {n} frame (made for another camera)"
 msgid_plural ""
 ", the preset's camera profile left off {n} frames (made for another camera)"
 msgstr[0] "，预设的相机配置文件未用于 {n} 张照片（为其他相机制作）"
 
-#: crates/greycard-ui/src/import.rs:550
+#: crates/greycard-ui/src/import.rs:551
 msgid "; {n} folder could not be read, its frames not imported"
 msgid_plural "; {n} folders could not be read, their frames not imported"
 msgstr[0] "；{n} 个文件夹无法读取，其中的照片未导入"
 
-#: crates/greycard-ui/src/import.rs:626
+#: crates/greycard-ui/src/import.rs:627
 msgid "importing {} of {total}: {name}"
 msgstr "正在导入第 {} 张，共 {total} 张：{name}"
 
-#: crates/greycard-ui/src/import.rs:917 crates/greycard-ui/src/import.rs:918
-#: crates/greycard-ui/src/import.rs:998 crates/greycard-ui/src/import.rs:1134
-#: crates/greycard-ui/src/import.rs:1151 crates/greycard-ui/src/import.rs:1158
-#: crates/greycard-ui/src/import.rs:1613
+#: crates/greycard-ui/src/import.rs:948 crates/greycard-ui/src/import.rs:949
+#: crates/greycard-ui/src/import.rs:1048 crates/greycard-ui/src/import.rs:1200
+#: crates/greycard-ui/src/import.rs:1217 crates/greycard-ui/src/import.rs:1224
+#: crates/greycard-ui/src/import.rs:1679
 msgid "reading it"
 msgstr "读取时"
 
-#: crates/greycard-ui/src/import.rs:977
+#: crates/greycard-ui/src/import.rs:1019
 msgid "no folder to write in"
 msgstr "没有可写入的文件夹"
 
-#: crates/greycard-ui/src/import.rs:978
+#: crates/greycard-ui/src/import.rs:1020
 msgid "making {}"
 msgstr "创建 {} 时"
 
-#: crates/greycard-ui/src/import.rs:988 crates/greycard-ui/src/import.rs:1001
-#: crates/greycard-ui/src/import.rs:1017
+#: crates/greycard-ui/src/import.rs:1030 crates/greycard-ui/src/import.rs:1051
+#: crates/greycard-ui/src/import.rs:1064 crates/greycard-ui/src/import.rs:1082
 msgid "writing the copy"
 msgstr "写入副本时"
 
-#: crates/greycard-ui/src/import.rs:1012
+#: crates/greycard-ui/src/import.rs:1074
 msgid "read {bytes} bytes of the {length} it has"
 msgstr "只读到 {length} 字节中的 {bytes} 字节"
 
-#: crates/greycard-ui/src/import.rs:1024
+#: crates/greycard-ui/src/import.rs:1090
 msgid "the copy it was made from no longer matches the card"
 msgstr "生成副本所依据的数据与存储卡已不一致"
 
-#: crates/greycard-ui/src/import.rs:1032
+#: crates/greycard-ui/src/import.rs:1098
 msgid "reading the copy back"
 msgstr "回读副本时"
 
-#: crates/greycard-ui/src/import.rs:1034
+#: crates/greycard-ui/src/import.rs:1100
 msgid "the copy does not read back the same"
 msgstr "副本回读的结果不一致"
 
-#: crates/greycard-ui/src/import.rs:1037 crates/greycard-ui/src/import.rs:1043
+#: crates/greycard-ui/src/import.rs:1103 crates/greycard-ui/src/import.rs:1109
 msgid "naming the copy"
 msgstr "命名副本时"
 
-#: crates/greycard-ui/src/import.rs:1041
+#: crates/greycard-ui/src/import.rs:1107
 msgid "{} appeared while it was copied"
 msgstr "{} 在拷贝过程中出现"
 
-#: crates/greycard-ui/src/import.rs:1392
+#: crates/greycard-ui/src/import.rs:1458
 msgid "the source {} is not a folder"
 msgstr "来源 {} 不是文件夹"
 
-#: crates/greycard-ui/src/import.rs:1396
+#: crates/greycard-ui/src/import.rs:1462
 msgid "no destination is chosen"
 msgstr "未选择目标"
 
-#: crates/greycard-ui/src/import.rs:1411
+#: crates/greycard-ui/src/import.rs:1477
 msgid "the backup {} holds the source {}"
 msgstr "备份 {} 包含来源 {}"
 
-#: crates/greycard-ui/src/import.rs:1417
+#: crates/greycard-ui/src/import.rs:1483
 msgid "the destination {} holds the source {}"
 msgstr "目标 {} 包含来源 {}"
 
-#: crates/greycard-ui/src/import.rs:1427
+#: crates/greycard-ui/src/import.rs:1493
 msgid "the backup {} is on the card ({})"
 msgstr "备份 {} 位于存储卡上（{}）"
 
-#: crates/greycard-ui/src/import.rs:1433
+#: crates/greycard-ui/src/import.rs:1499
 msgid "the destination {} is on the card ({})"
 msgstr "目标 {} 位于存储卡上（{}）"
 
-#: crates/greycard-ui/src/import.rs:1443
+#: crates/greycard-ui/src/import.rs:1509
 msgid "the backup is the destination, or inside it"
 msgstr "备份就是目标，或位于目标之中"
 
-#: crates/greycard-ui/src/import.rs:1660
+#: crates/greycard-ui/src/import.rs:1726
 msgid "the card read differently twice"
 msgstr "两次读取存储卡的结果不同"
 
-#: crates/greycard-ui/src/import.rs:1693
+#: crates/greycard-ui/src/import.rs:1759
 msgid "{} (with {})"
 msgstr "{}（附带 {}）"
 
-#: crates/greycard-ui/src/import.rs:1805 crates/greycard-ui/src/import.rs:1822
+#: crates/greycard-ui/src/import.rs:1871 crates/greycard-ui/src/import.rs:1888
 msgid "the backup copy"
 msgstr "备份副本"
 
@@ -3982,7 +3982,7 @@ msgstr "单击"
 
 #. What the sheets write for an action bound to no key.
 #: crates/greycard-ui/src/keys.rs:1173
-#: crates/greycard-ui/src/keys/tests.rs:1620
+#: crates/greycard-ui/src/keys/tests.rs:1624
 msgctxt "key binding"
 msgid "None"
 msgstr "无"
@@ -4049,199 +4049,199 @@ msgstr "图库索引不可用：{e}"
 msgid "{name} isn't reachable; showing its last indexed frames"
 msgstr "{name} 无法访问；显示上次编入索引的照片"
 
-#: crates/greycard-ui/src/panel/archive.rs:311
+#: crates/greycard-ui/src/panel/archive.rs:312
 msgid "backing up to {label}: {done} of {total}"
 msgstr "正在备份到 {label}：{done}/{total}"
 
-#: crates/greycard-ui/src/panel/archive.rs:317
+#: crates/greycard-ui/src/panel/archive.rs:318
 msgid "backing up to {label}: {done} of {total}; stopping after this frame"
 msgstr "正在备份到 {label}：{done}/{total}；完成这张后停止"
 
-#: crates/greycard-ui/src/panel/archive.rs:323
+#: crates/greycard-ui/src/panel/archive.rs:324
 msgid "bringing back to {label}: {done} of {total}"
 msgstr "正在取回到 {label}：{done}/{total}"
 
-#: crates/greycard-ui/src/panel/archive.rs:329
+#: crates/greycard-ui/src/panel/archive.rs:330
 msgid "bringing back to {label}: {done} of {total}; stopping after this frame"
 msgstr "正在取回到 {label}：{done}/{total}；完成这张后停止"
 
-#: crates/greycard-ui/src/panel/archive.rs:335
+#: crates/greycard-ui/src/panel/archive.rs:336
 msgid "moving the rejects on {label}: {done} of {total}"
 msgstr "正在移动 {label} 上排除的照片：{done}/{total}"
 
-#: crates/greycard-ui/src/panel/archive.rs:341
+#: crates/greycard-ui/src/panel/archive.rs:342
 msgid ""
 "moving the rejects on {label}: {done} of {total}; stopping after this frame"
 msgstr "正在移动 {label} 上排除的照片：{done}/{total}；完成这张后停止"
 
-#: crates/greycard-ui/src/panel/archive.rs:347
+#: crates/greycard-ui/src/panel/archive.rs:348
 msgid "deleting the rejects from {label}: {done} of {total}"
 msgstr "正在从 {label} 删除排除的照片：{done}/{total}"
 
-#: crates/greycard-ui/src/panel/archive.rs:353
+#: crates/greycard-ui/src/panel/archive.rs:354
 msgid ""
 "deleting the rejects from {label}: {done} of {total}; stopping after this "
 "frame"
 msgstr "正在从 {label} 删除排除的照片：{done}/{total}；完成这张后停止"
 
-#: crates/greycard-ui/src/panel/archive.rs:391
+#: crates/greycard-ui/src/panel/archive.rs:392
 msgid "Back up..."
 msgstr "备份..."
 
-#: crates/greycard-ui/src/panel/archive.rs:398
+#: crates/greycard-ui/src/panel/archive.rs:399
 msgid "Back up to {label} ({count})..."
 msgstr "备份到 {label}（{count}）..."
 
-#: crates/greycard-ui/src/panel/archive.rs:402
+#: crates/greycard-ui/src/panel/archive.rs:403
 msgid "Back up to {label}..."
 msgstr "备份到 {label}..."
 
-#: crates/greycard-ui/src/panel/archive.rs:406
-#: crates/greycard-ui/src/panel/archive.rs:466
-#: crates/greycard-ui/src/panel/archive.rs:939
+#: crates/greycard-ui/src/panel/archive.rs:407
+#: crates/greycard-ui/src/panel/archive.rs:467
+#: crates/greycard-ui/src/panel/archive.rs:942
 msgid "Back up"
 msgstr "备份"
 
-#: crates/greycard-ui/src/panel/archive.rs:409
+#: crates/greycard-ui/src/panel/archive.rs:410
 msgid "Bring back..."
 msgstr "取回..."
 
-#: crates/greycard-ui/src/panel/archive.rs:410
-#: crates/greycard-ui/src/panel/archive.rs:467
-#: crates/greycard-ui/src/panel/archive.rs:941
+#: crates/greycard-ui/src/panel/archive.rs:411
+#: crates/greycard-ui/src/panel/archive.rs:468
+#: crates/greycard-ui/src/panel/archive.rs:944
 msgid "Bring back"
 msgstr "取回"
 
-#: crates/greycard-ui/src/panel/archive.rs:413
+#: crates/greycard-ui/src/panel/archive.rs:414
 msgid "Bring back to {label}..."
 msgstr "取回到 {label}..."
 
-#: crates/greycard-ui/src/panel/archive.rs:435
+#: crates/greycard-ui/src/panel/archive.rs:436
 msgid "All on {label}"
 msgstr "全部在 {label} 上"
 
-#: crates/greycard-ui/src/panel/archive.rs:437
+#: crates/greycard-ui/src/panel/archive.rs:438
 msgid "{n} frame not on {label}"
 msgid_plural "{n} frames not on {label}"
 msgstr[0] "{n} 张照片不在 {label} 上"
 
-#: crates/greycard-ui/src/panel/archive.rs:441
+#: crates/greycard-ui/src/panel/archive.rs:442
 msgid "{n} frame not known on {label}"
 msgid_plural "{n} frames not known on {label}"
 msgstr[0] "{n} 张照片在 {label} 上的情况未知"
 
-#: crates/greycard-ui/src/panel/archive.rs:445
+#: crates/greycard-ui/src/panel/archive.rs:446
 msgid "{n} frame not on {label}, {unknown} not known"
 msgid_plural "{n} frames not on {label}, {unknown} not known"
 msgstr[0] "{n} 张照片不在 {label} 上，{unknown} 张未知"
 
-#: crates/greycard-ui/src/panel/archive.rs:490
+#: crates/greycard-ui/src/panel/archive.rs:491
 msgid "a backup is still under way"
 msgstr "备份仍在进行中"
 
-#: crates/greycard-ui/src/panel/archive.rs:534
+#: crates/greycard-ui/src/panel/archive.rs:535
 #: crates/greycard-ui/src/panel/sync.rs:1633
 msgid ": nothing to copy"
 msgstr "：没有要拷贝的内容"
 
-#: crates/greycard-ui/src/panel/archive.rs:536
+#: crates/greycard-ui/src/panel/archive.rs:537
 msgid "nothing is chosen to copy"
 msgstr "没有选择要拷贝的内容"
 
-#: crates/greycard-ui/src/panel/archive.rs:543
+#: crates/greycard-ui/src/panel/archive.rs:544
 msgid "there is no archive to copy to: mark a root as one from its menu"
 msgstr "没有可拷贝到的归档：请从根文件夹的菜单中将其标记为归档"
 
-#: crates/greycard-ui/src/panel/archive.rs:554
+#: crates/greycard-ui/src/panel/archive.rs:555
 #: crates/greycard-ui/src/panel/archive/rejects.rs:184
 msgid "still waiting on {label}; try again shortly"
 msgstr "仍在等待 {label}；请稍后再试"
 
-#: crates/greycard-ui/src/panel/archive.rs:630
+#: crates/greycard-ui/src/panel/archive.rs:631
 msgid ""
 "these frames are under more than one root: back up a root's or a folder's at "
 "a time"
 msgstr "这些照片位于多个根文件夹下：请一次备份一个根文件夹或一个文件夹的照片"
 
-#: crates/greycard-ui/src/panel/archive.rs:636
+#: crates/greycard-ui/src/panel/archive.rs:637
 msgid "looking at what is on {label}..."
 msgstr "正在查看 {label} 上的内容..."
 
-#: crates/greycard-ui/src/panel/archive.rs:652
-#: crates/greycard-ui/src/panel/archive.rs:939
+#: crates/greycard-ui/src/panel/archive.rs:653
+#: crates/greycard-ui/src/panel/archive.rs:942
 msgid "Back up to {label}"
 msgstr "备份到 {label}"
 
-#: crates/greycard-ui/src/panel/archive.rs:653
-#: crates/greycard-ui/src/panel/archive.rs:942
+#: crates/greycard-ui/src/panel/archive.rs:654
+#: crates/greycard-ui/src/panel/archive.rs:945
 msgid "Bring back to {label}"
 msgstr "取回到 {label}"
 
-#: crates/greycard-ui/src/panel/archive.rs:656
+#: crates/greycard-ui/src/panel/archive.rs:657
 msgid "Looking at what is on {label}..."
 msgstr "正在查看 {label} 上的内容..."
 
-#: crates/greycard-ui/src/panel/archive.rs:662
-#: crates/greycard-ui/src/panel/archive.rs:1111
+#: crates/greycard-ui/src/panel/archive.rs:663
+#: crates/greycard-ui/src/panel/archive.rs:1114
 msgid "Looking..."
 msgstr "正在查看..."
 
-#: crates/greycard-ui/src/panel/archive.rs:757
+#: crates/greycard-ui/src/panel/archive.rs:758
 msgid ""
 "forgot that {source} was backed up to {dest}: that folder is no longer on "
 "{archive}"
 msgstr "已忘记 {source} 曾备份到 {dest}：该文件夹已不在 {archive} 上"
 
-#: crates/greycard-ui/src/panel/archive.rs:763
+#: crates/greycard-ui/src/panel/archive.rs:764
 msgid "forgot {n} backup whose folder is no longer on {archive}: {names}"
 msgid_plural ""
 "forgot {n} backups whose folders are no longer on {archive}: {names}"
 msgstr[0] "已忘记 {n} 个备份，其文件夹已不在 {archive} 上：{names}"
 
-#: crates/greycard-ui/src/panel/archive.rs:818
+#: crates/greycard-ui/src/panel/archive.rs:821
 msgid "{name} isn't reachable; nothing was copied"
 msgstr "{name} 无法访问；未拷贝任何内容"
 
-#: crates/greycard-ui/src/panel/archive.rs:835
-#: crates/greycard-ui/src/panel/archive/rejects.rs:210
+#: crates/greycard-ui/src/panel/archive.rs:838
+#: crates/greycard-ui/src/panel/archive/rejects.rs:211
 msgid "the look at the archive could not be started"
 msgstr "无法开始查看归档"
 
-#: crates/greycard-ui/src/panel/archive.rs:865
+#: crates/greycard-ui/src/panel/archive.rs:868
 msgid "{label} timed out after {seconds} s; nothing was copied"
 msgstr "{label} 在 {seconds} s 后超时；未拷贝任何内容"
 
-#: crates/greycard-ui/src/panel/archive.rs:878
-#: crates/greycard-ui/src/panel/archive/rejects.rs:241
+#: crates/greycard-ui/src/panel/archive.rs:881
+#: crates/greycard-ui/src/panel/archive/rejects.rs:242
 msgid "the look at the archive failed; the log has why"
 msgstr "查看归档失败；原因见日志"
 
-#: crates/greycard-ui/src/panel/archive.rs:930
+#: crates/greycard-ui/src/panel/archive.rs:933
 msgid "and {n} more"
 msgstr "还有 {n} 个"
 
-#: crates/greycard-ui/src/panel/archive.rs:953
+#: crates/greycard-ui/src/panel/archive.rs:956
 msgid "{n} frame to copy, {size}, with their sidecars."
 msgid_plural "{n} frames to copy, {size}, with their sidecars."
 msgstr[0] "要拷贝 {n} 张照片，{size}，连同其附属文件。"
 
-#: crates/greycard-ui/src/panel/archive.rs:959
+#: crates/greycard-ui/src/panel/archive.rs:962
 msgid "{n} frame to copy, {size}."
 msgid_plural "{n} frames to copy, {size}."
 msgstr[0] "要拷贝 {n} 张照片，{size}。"
 
-#: crates/greycard-ui/src/panel/archive.rs:965
+#: crates/greycard-ui/src/panel/archive.rs:968
 msgid "Sidecars are off for this run."
 msgstr "本次运行已关闭附属文件。"
 
-#: crates/greycard-ui/src/panel/archive.rs:970
+#: crates/greycard-ui/src/panel/archive.rs:973
 msgid ""
 "{n} frame already there has newer sidecars here; only the sidecars copy."
 msgid_plural ""
 "{n} frames already there have newer sidecars here; only the sidecars copy."
 msgstr[0] "{n} 张已在那里的照片在此处有更新的附属文件；只拷贝附属文件。"
 
-#: crates/greycard-ui/src/panel/archive.rs:975
+#: crates/greycard-ui/src/panel/archive.rs:978
 msgid ""
 "{n} frame already there has newer sidecars on the archive; only the sidecars "
 "copy."
@@ -4250,12 +4250,12 @@ msgid_plural ""
 "sidecars copy."
 msgstr[0] "{n} 张已在那里的照片在归档上有更新的附属文件；只拷贝附属文件。"
 
-#: crates/greycard-ui/src/panel/archive.rs:984
+#: crates/greycard-ui/src/panel/archive.rs:987
 msgid "{n} frame already on {label}, skipped."
 msgid_plural "{n} frames already on {label}, skipped."
 msgstr[0] "{n} 张照片已在 {label} 上，已跳过。"
 
-#: crates/greycard-ui/src/panel/archive.rs:990
+#: crates/greycard-ui/src/panel/archive.rs:993
 msgid ""
 "{n} frame already on {label}, {elsewhere} under a different folder, skipped."
 msgid_plural ""
@@ -4263,258 +4263,258 @@ msgid_plural ""
 msgstr[0] ""
 "{n} 张照片已在 {label} 上（其中 {elsewhere} 张在其他文件夹下），已跳过。"
 
-#: crates/greycard-ui/src/panel/archive.rs:997
+#: crates/greycard-ui/src/panel/archive.rs:1000
 msgid "{n} frame already here, skipped."
 msgid_plural "{n} frames already here, skipped."
 msgstr[0] "{n} 张照片已在此处，已跳过。"
 
-#: crates/greycard-ui/src/panel/archive.rs:1000
+#: crates/greycard-ui/src/panel/archive.rs:1003
 msgid "{n} frame already here, {elsewhere} under a different folder, skipped."
 msgid_plural ""
 "{n} frames already here, {elsewhere} under a different folder, skipped."
 msgstr[0] "{n} 张照片已在此处（其中 {elsewhere} 张在其他文件夹下），已跳过。"
 
-#: crates/greycard-ui/src/panel/archive.rs:1008
+#: crates/greycard-ui/src/panel/archive.rs:1011
 msgid "Nothing to copy."
 msgstr "没有要拷贝的内容。"
 
-#: crates/greycard-ui/src/panel/archive.rs:1015
+#: crates/greycard-ui/src/panel/archive.rs:1018
 msgid "Skipped, {label}'s sidecar is the newer: {names}."
 msgstr "已跳过，{label} 上的附属文件较新：{names}。"
 
-#: crates/greycard-ui/src/panel/archive.rs:1020
+#: crates/greycard-ui/src/panel/archive.rs:1023
 msgid "Skipped, the sidecar here is the newer: {names}."
 msgstr "已跳过，此处的附属文件较新：{names}。"
 
-#: crates/greycard-ui/src/panel/archive.rs:1028
+#: crates/greycard-ui/src/panel/archive.rs:1031
 msgid "Skipped, the name is taken there: {names}."
 msgstr "已跳过，那里已有同名文件：{names}。"
 
-#: crates/greycard-ui/src/panel/archive.rs:1036
+#: crates/greycard-ui/src/panel/archive.rs:1039
 msgid "Could not be read: {names}."
 msgstr "无法读取：{names}。"
 
-#: crates/greycard-ui/src/panel/archive.rs:1046
+#: crates/greycard-ui/src/panel/archive.rs:1049
 msgid "Under {label}; remembered for this folder."
 msgstr "位于 {label} 下；已为此文件夹记住。"
 
-#: crates/greycard-ui/src/panel/archive.rs:1049
+#: crates/greycard-ui/src/panel/archive.rs:1052
 msgid "Not from {label}: choose a place under it."
 msgstr "不在 {label} 中：请选择其下的位置。"
 
-#: crates/greycard-ui/src/panel/archive.rs:1052
+#: crates/greycard-ui/src/panel/archive.rs:1055
 msgid "Where it was backed up from, under {label}."
 msgstr "其备份来源，位于 {label} 下。"
 
-#: crates/greycard-ui/src/panel/archive.rs:1064
+#: crates/greycard-ui/src/panel/archive.rs:1067
 msgid "Back up {n} frame"
 msgid_plural "Back up {n} frames"
 msgstr[0] "备份 {n} 张照片"
 
-#: crates/greycard-ui/src/panel/archive.rs:1066
+#: crates/greycard-ui/src/panel/archive.rs:1069
 msgid "Bring back {n} frame"
 msgid_plural "Bring back {n} frames"
 msgstr[0] "取回 {n} 张照片"
 
-#: crates/greycard-ui/src/panel/archive.rs:1070
+#: crates/greycard-ui/src/panel/archive.rs:1073
 msgid "Copy the sidecars of {n} frame"
 msgid_plural "Copy the sidecars of {n} frames"
 msgstr[0] "拷贝 {n} 张照片的附属文件"
 
-#: crates/greycard-ui/src/panel/archive.rs:1097
+#: crates/greycard-ui/src/panel/archive.rs:1100
 msgid "The folder has to be under {label} ({folder})."
 msgstr "该文件夹必须位于 {label}（{folder}）下。"
 
-#: crates/greycard-ui/src/panel/archive.rs:1147
+#: crates/greycard-ui/src/panel/archive.rs:1150
 msgid ""
 "not copied: another job on an archive started meanwhile; ask again once it "
 "is done"
 msgstr "未拷贝：期间另一项归档任务已开始；完成后请再试"
 
-#: crates/greycard-ui/src/panel/archive.rs:1155
+#: crates/greycard-ui/src/panel/archive.rs:1158
 msgid "not copied: a capture, an export or a timing run never copies"
 msgstr "未拷贝：截图、导出或计时运行从不拷贝"
 
-#: crates/greycard-ui/src/panel/archive.rs:1204
+#: crates/greycard-ui/src/panel/archive.rs:1207
 msgid "backing up {n} frame to {label}..."
 msgid_plural "backing up {n} frames to {label}..."
 msgstr[0] "正在将 {n} 张照片备份到 {label}..."
 
-#: crates/greycard-ui/src/panel/archive.rs:1208
+#: crates/greycard-ui/src/panel/archive.rs:1211
 msgid "bringing back {n} frame to {label}..."
 msgid_plural "bringing back {n} frames to {label}..."
 msgstr[0] "正在将 {n} 张照片取回到 {label}..."
 
-#: crates/greycard-ui/src/panel/archive.rs:1239
+#: crates/greycard-ui/src/panel/archive.rs:1243
 msgid "the copy could not be started; nothing was copied"
 msgstr "无法开始拷贝；未拷贝任何内容"
 
-#: crates/greycard-ui/src/panel/archive.rs:1328
+#: crates/greycard-ui/src/panel/archive.rs:1332
 msgid "{label} timed out after {seconds} s; stopping after this frame"
 msgstr "{label} 在 {seconds} s 后超时；完成这张后停止"
 
-#: crates/greycard-ui/src/panel/archive.rs:1347
+#: crates/greycard-ui/src/panel/archive.rs:1351
 msgid ""
 "the copy stopped without a report; the next Back up checks it (see the log)"
 msgstr "拷贝停止了，没有留下报告；下次备份时会检查（见日志）"
 
-#: crates/greycard-ui/src/panel/archive.rs:1366
+#: crates/greycard-ui/src/panel/archive.rs:1370
 msgid "the timed-out copy finished: {words}"
 msgstr "超时的拷贝已完成：{words}"
 
-#: crates/greycard-ui/src/panel/archive.rs:1396
+#: crates/greycard-ui/src/panel/archive.rs:1400
 msgid "backed up {n} frame ({size})"
 msgid_plural "backed up {n} frames ({size})"
 msgstr[0] "已备份 {n} 张照片（{size}）"
 
-#: crates/greycard-ui/src/panel/archive.rs:1400
+#: crates/greycard-ui/src/panel/archive.rs:1404
 msgid "backed up {n} frame to {label} ({size})"
 msgid_plural "backed up {n} frames to {label} ({size})"
 msgstr[0] "已将 {n} 张照片备份到 {label}（{size}）"
 
-#: crates/greycard-ui/src/panel/archive.rs:1406
+#: crates/greycard-ui/src/panel/archive.rs:1410
 msgid "brought back {n} frame ({size})"
 msgid_plural "brought back {n} frames ({size})"
 msgstr[0] "已取回 {n} 张照片（{size}）"
 
-#: crates/greycard-ui/src/panel/archive.rs:1410
+#: crates/greycard-ui/src/panel/archive.rs:1414
 msgid "brought back {n} frame to {label} ({size})"
 msgid_plural "brought back {n} frames to {label} ({size})"
 msgstr[0] "已将 {n} 张照片取回到 {label}（{size}）"
 
-#: crates/greycard-ui/src/panel/archive.rs:1417
+#: crates/greycard-ui/src/panel/archive.rs:1421
 msgid "the sidecars of {n} frame already there"
 msgid_plural "the sidecars of {n} frames already there"
 msgstr[0] "{n} 张已在那里的照片的附属文件"
 
-#: crates/greycard-ui/src/panel/archive.rs:1422
+#: crates/greycard-ui/src/panel/archive.rs:1426
 msgid "{n} already there"
 msgid_plural "{n} already there"
 msgstr[0] "{n} 张已在那里"
 
-#: crates/greycard-ui/src/panel/archive.rs:1427
+#: crates/greycard-ui/src/panel/archive.rs:1431
 msgid "skipped, the other side's sidecar is newer: {names}"
 msgstr "已跳过，另一侧的附属文件较新：{names}"
 
-#: crates/greycard-ui/src/panel/archive.rs:1434
+#: crates/greycard-ui/src/panel/archive.rs:1438
 msgid "left, another file has the name: {names}"
 msgstr "未处理，已有其他文件使用该名称：{names}"
 
-#: crates/greycard-ui/src/panel/archive.rs:1443
+#: crates/greycard-ui/src/panel/archive.rs:1447
 msgid "{n} failed: {name} ({why}; the log has the rest)"
 msgid_plural "{n} failed: {name} ({why}; the log has the rest)"
 msgstr[0] "{n} 张失败：{name}（{why}；其余见日志）"
 
-#: crates/greycard-ui/src/panel/archive.rs:1450
+#: crates/greycard-ui/src/panel/archive.rs:1454
 msgid "{n} failed: {name} ({why})"
 msgid_plural "{n} failed: {name} ({why})"
 msgstr[0] "{n} 张失败：{name}（{why}）"
 
-#: crates/greycard-ui/src/panel/archive.rs:1458
+#: crates/greycard-ui/src/panel/archive.rs:1462
 msgid "removed a temporary file left by an earlier copy that did not finish"
 msgid_plural ""
 "removed {n} temporary files left by an earlier copy that did not finish"
 msgstr[0] "已移除之前未完成的拷贝留下的 {n} 个临时文件"
 
-#: crates/greycard-ui/src/panel/archive.rs:1465
+#: crates/greycard-ui/src/panel/archive.rs:1469
 msgid "canceled, {n} frame not copied"
 msgid_plural "canceled, {n} frames not copied"
 msgstr[0] "已取消，{n} 张照片未拷贝"
 
-#: crates/greycard-ui/src/panel/archive.rs:1602
-#: crates/greycard-ui/src/panel/archive.rs:1735
+#: crates/greycard-ui/src/panel/archive.rs:1607
+#: crates/greycard-ui/src/panel/archive.rs:1741
 msgid "It is on no other root."
 msgstr "它不在其他任何根文件夹上。"
 
-#: crates/greycard-ui/src/panel/archive.rs:1604
+#: crates/greycard-ui/src/panel/archive.rs:1609
 msgid "All {n} are on no other root."
 msgid_plural "All {n} are on no other root."
 msgstr[0] "这 {n} 张都不在其他任何根文件夹上。"
 
-#: crates/greycard-ui/src/panel/archive.rs:1613
+#: crates/greycard-ui/src/panel/archive.rs:1618
 msgid "Looking for copies of these on the other roots..."
 msgstr "正在其他根文件夹上查找这些照片的副本..."
 
-#: crates/greycard-ui/src/panel/archive.rs:1615
+#: crates/greycard-ui/src/panel/archive.rs:1620
 msgid "Looking for these on the archives..."
 msgstr "正在归档上查找这些照片..."
 
-#: crates/greycard-ui/src/panel/archive.rs:1684
+#: crates/greycard-ui/src/panel/archive.rs:1690
 msgid "An archive isn't reachable; unknown whether these are on it."
 msgstr "有归档无法访问；不确定这些照片是否在其上。"
 
-#: crates/greycard-ui/src/panel/archive.rs:1711
+#: crates/greycard-ui/src/panel/archive.rs:1717
 msgid "It is also on {label}."
 msgstr "它也在 {label} 上。"
 
-#: crates/greycard-ui/src/panel/archive.rs:1712
+#: crates/greycard-ui/src/panel/archive.rs:1718
 msgid "It is on {label}."
 msgstr "它在 {label} 上。"
 
-#: crates/greycard-ui/src/panel/archive.rs:1714
+#: crates/greycard-ui/src/panel/archive.rs:1720
 msgid "All {n} are also on {label}."
 msgid_plural "All {n} are also on {label}."
 msgstr[0] "这 {n} 张也都在 {label} 上。"
 
-#: crates/greycard-ui/src/panel/archive.rs:1718
+#: crates/greycard-ui/src/panel/archive.rs:1724
 msgid "All {n} are on {label}."
 msgid_plural "All {n} are on {label}."
 msgstr[0] "这 {n} 张都在 {label} 上。"
 
-#: crates/greycard-ui/src/panel/archive.rs:1729
+#: crates/greycard-ui/src/panel/archive.rs:1735
 msgid "All {n} are also on another root."
 msgid_plural "All {n} are also on another root."
 msgstr[0] "这 {n} 张也都在另一个根文件夹上。"
 
-#: crates/greycard-ui/src/panel/archive.rs:1732
+#: crates/greycard-ui/src/panel/archive.rs:1738
 msgid "All {n} are on an archive."
 msgid_plural "All {n} are on an archive."
 msgstr[0] "这 {n} 张都在归档上。"
 
-#: crates/greycard-ui/src/panel/archive.rs:1736
+#: crates/greycard-ui/src/panel/archive.rs:1742
 msgid "It is on no archive."
 msgstr "它不在任何归档上。"
 
-#: crates/greycard-ui/src/panel/archive.rs:1738
+#: crates/greycard-ui/src/panel/archive.rs:1744
 msgid "{n} of these is on no other root."
 msgid_plural "{n} of these are on no other root."
 msgstr[0] "其中 {n} 张不在其他任何根文件夹上。"
 
-#: crates/greycard-ui/src/panel/archive.rs:1742
+#: crates/greycard-ui/src/panel/archive.rs:1748
 msgid "{n} of these is on no archive."
 msgid_plural "{n} of these are on no archive."
 msgstr[0] "其中 {n} 张不在任何归档上。"
 
-#: crates/greycard-ui/src/panel/archive.rs:1749
+#: crates/greycard-ui/src/panel/archive.rs:1755
 msgid " Unsure whether it is also on another root; Back up checks it fully."
 msgstr "不确定它是否也在另一个根文件夹上；备份时会完整检查。"
 
-#: crates/greycard-ui/src/panel/archive.rs:1751
+#: crates/greycard-ui/src/panel/archive.rs:1757
 msgid " Unsure whether it is on an archive; Back up checks it fully."
 msgstr "不确定它是否在归档上；备份时会完整检查。"
 
-#: crates/greycard-ui/src/panel/archive.rs:1753
+#: crates/greycard-ui/src/panel/archive.rs:1759
 msgid " {n} unsure; Back up checks them fully."
 msgid_plural " {n} unsure; Back up checks them fully."
 msgstr[0] "{n} 张不确定；备份时会完整检查。"
 
-#: crates/greycard-ui/src/panel/archive.rs:1763
+#: crates/greycard-ui/src/panel/archive.rs:1769
 msgid " Not reachable: {names}."
 msgstr "无法访问：{names}。"
 
-#: crates/greycard-ui/src/panel/archive.rs:1777
+#: crates/greycard-ui/src/panel/archive.rs:1783
 msgid "{folder} is not in the library"
 msgstr "{folder} 不在图库中"
 
-#: crates/greycard-ui/src/panel/archive.rs:1783
+#: crates/greycard-ui/src/panel/archive.rs:1789
 msgid "not changed: {why}"
 msgstr "未更改：{why}"
 
-#: crates/greycard-ui/src/panel/archive.rs:1799
+#: crates/greycard-ui/src/panel/archive.rs:1805
 msgid "{name} is now an archive"
 msgstr "{name} 现在是归档"
 
-#: crates/greycard-ui/src/panel/archive.rs:1801
+#: crates/greycard-ui/src/panel/archive.rs:1807
 msgid "{name} is no longer an archive; nothing moved"
 msgstr "{name} 不再是归档；未移动任何内容"
 
@@ -4559,127 +4559,127 @@ msgstr ""
 msgid "looking for the rejects on {label}..."
 msgstr "正在查找 {label} 上排除的照片..."
 
-#: crates/greycard-ui/src/panel/archive/rejects.rs:232
+#: crates/greycard-ui/src/panel/archive/rejects.rs:233
 msgid "{} timed out after {} s; nothing was done"
 msgstr "{} 在 {} s 后超时；未执行任何操作"
 
-#: crates/greycard-ui/src/panel/archive/rejects.rs:257
+#: crates/greycard-ui/src/panel/archive/rejects.rs:258
 #: crates/greycard-ui/src/panel/delete.rs:362
 msgid "{} has no frames in it"
 msgstr "{} 中没有照片"
 
-#: crates/greycard-ui/src/panel/archive/rejects.rs:304
+#: crates/greycard-ui/src/panel/archive/rejects.rs:305
 msgid "{n} reject here has {copies} on {label}, {size}:"
 msgid_plural "{n} rejects here have {copies} on {label}, {size}:"
 msgstr[0] "此处 {n} 张排除的照片在 {label} 上有 {copies}，{size}："
 
-#: crates/greycard-ui/src/panel/archive/rejects.rs:315
+#: crates/greycard-ui/src/panel/archive/rejects.rs:316
 msgid "and {} more"
 msgstr "还有 {} 个"
 
-#: crates/greycard-ui/src/panel/archive/rejects.rs:328
+#: crates/greycard-ui/src/panel/archive/rejects.rs:329
 msgid "No copy of the {n} reject in {dir} was found on {label}."
 msgid_plural "No copy of the {n} rejects in {dir} was found on {label}."
 msgstr[0] "在 {label} 上找不到 {dir} 中 {n} 张排除照片的副本。"
 
-#: crates/greycard-ui/src/panel/archive/rejects.rs:336
+#: crates/greycard-ui/src/panel/archive/rejects.rs:337
 msgid "{label} isn't reachable: moves will queue, deletes can't run."
 msgstr "{label} 无法访问：移动会排队，删除无法执行。"
 
-#: crates/greycard-ui/src/panel/archive/rejects.rs:344
+#: crates/greycard-ui/src/panel/archive/rejects.rs:345
 msgid "No copy found on {label}: {names}."
 msgstr "在 {label} 上找不到副本：{names}。"
 
-#: crates/greycard-ui/src/panel/archive/rejects.rs:351
+#: crates/greycard-ui/src/panel/archive/rejects.rs:352
 msgid "Unverified, skipped: {}."
 msgstr "未校验，已跳过：{}。"
 
-#: crates/greycard-ui/src/panel/archive/rejects.rs:356
+#: crates/greycard-ui/src/panel/archive/rejects.rs:357
 msgid "Could not be read: {}."
 msgstr "无法读取：{}。"
 
-#: crates/greycard-ui/src/panel/archive/rejects.rs:359
+#: crates/greycard-ui/src/panel/archive/rejects.rs:360
 msgid "Delete uses the trash."
 msgstr "删除会使用回收站。"
 
-#: crates/greycard-ui/src/panel/archive/rejects.rs:362
+#: crates/greycard-ui/src/panel/archive/rejects.rs:363
 msgid ""
 "The trash failed on {label} earlier; a permanent delete can't be undone."
 msgstr "{label} 上的回收站之前出错；永久删除无法撤销。"
 
-#: crates/greycard-ui/src/panel/archive/rejects.rs:366
+#: crates/greycard-ui/src/panel/archive/rejects.rs:367
 msgid "No trash on {label}: deletes are permanent."
 msgstr "{label} 上没有回收站：删除是永久的。"
 
-#: crates/greycard-ui/src/panel/archive/rejects.rs:369
+#: crates/greycard-ui/src/panel/archive/rejects.rs:370
 msgid "Move puts them in a rejects folder on {label}. {delete_note}"
 msgstr "“移动”会将它们放入 {label} 上的排除文件夹。{delete_note}"
 
-#: crates/greycard-ui/src/panel/archive/rejects.rs:373
+#: crates/greycard-ui/src/panel/archive/rejects.rs:374
 msgid "Remove rejects from {label}"
 msgstr "从 {label} 移除排除的照片"
 
-#: crates/greycard-ui/src/panel/archive/rejects.rs:380
+#: crates/greycard-ui/src/panel/archive/rejects.rs:381
 msgid "Move to rejects on {label}"
 msgstr "移到 {label} 上的排除文件夹"
 
-#: crates/greycard-ui/src/panel/archive/rejects.rs:389
+#: crates/greycard-ui/src/panel/archive/rejects.rs:390
 msgid "Delete from {label}"
 msgstr "从 {label} 删除"
 
-#: crates/greycard-ui/src/panel/archive/rejects.rs:391
+#: crates/greycard-ui/src/panel/archive/rejects.rs:392
 msgid "Delete from {label} (to the trash)"
 msgstr "从 {label} 删除（到回收站）"
 
-#: crates/greycard-ui/src/panel/archive/rejects.rs:392
-#: crates/greycard-ui/src/panel/archive/rejects.rs:396
+#: crates/greycard-ui/src/panel/archive/rejects.rs:393
+#: crates/greycard-ui/src/panel/archive/rejects.rs:397
 msgid "Delete from {label} permanently"
 msgstr "从 {label} 永久删除"
 
-#: crates/greycard-ui/src/panel/archive/rejects.rs:413
+#: crates/greycard-ui/src/panel/archive/rejects.rs:414
 msgid ""
 "nothing done: another job on an archive is under way; ask again once it is "
 "done"
 msgstr "未执行：另一项归档任务正在进行；完成后请再试"
 
-#: crates/greycard-ui/src/panel/archive/rejects.rs:437
+#: crates/greycard-ui/src/panel/archive/rejects.rs:438
 msgid "not deleted: {} isn't reachable"
 msgstr "未删除：{} 无法访问"
 
-#: crates/greycard-ui/src/panel/archive/rejects.rs:448
+#: crates/greycard-ui/src/panel/archive/rejects.rs:449
 msgid ""
 "nothing done: a capture, an export or a timing run never moves or deletes"
 msgstr "未执行：截图、导出或计时运行从不移动或删除"
 
-#: crates/greycard-ui/src/panel/archive/rejects.rs:501
+#: crates/greycard-ui/src/panel/archive/rejects.rs:502
 msgid "deleting the rejects from {label}..."
 msgstr "正在从 {label} 删除排除的照片..."
 
-#: crates/greycard-ui/src/panel/archive/rejects.rs:503
+#: crates/greycard-ui/src/panel/archive/rejects.rs:504
 msgid "moving the rejects on {label}..."
 msgstr "正在移动 {label} 上排除的照片..."
 
-#: crates/greycard-ui/src/panel/archive/rejects.rs:552
+#: crates/greycard-ui/src/panel/archive/rejects.rs:554
 msgid "the job could not be started; nothing was done"
 msgstr "无法开始任务；未执行任何操作"
 
-#: crates/greycard-ui/src/panel/archive/rejects.rs:586
+#: crates/greycard-ui/src/panel/archive/rejects.rs:588
 msgid "{} timed out after {} s; stopping after this frame"
 msgstr "{} 在 {} s 后超时；完成这张后停止"
 
-#: crates/greycard-ui/src/panel/archive/rejects.rs:609
+#: crates/greycard-ui/src/panel/archive/rejects.rs:611
 msgid "the rejects' job stopped without a report; see the log"
 msgstr "排除照片的任务停止了，没有留下报告；见日志"
 
-#: crates/greycard-ui/src/panel/archive/rejects.rs:624
+#: crates/greycard-ui/src/panel/archive/rejects.rs:626
 msgid "the timed-out job finished: {words}"
 msgstr "超时的任务已完成：{words}"
 
-#: crates/greycard-ui/src/panel/archive/rejects.rs:652
+#: crates/greycard-ui/src/panel/archive/rejects.rs:654
 msgid "there is no library to keep the queue beside"
 msgstr "没有可存放队列的图库"
 
-#: crates/greycard-ui/src/panel/archive/rejects.rs:676
+#: crates/greycard-ui/src/panel/archive/rejects.rs:678
 msgid ""
 "{label} isn't reachable; the move of {n} reject is queued until it's "
 "back{dropped}"
@@ -4689,46 +4689,46 @@ msgid_plural ""
 msgstr[0] ""
 "{label} 无法访问；{n} 张排除照片的移动已排队，待其恢复后执行{dropped}"
 
-#: crates/greycard-ui/src/panel/archive/rejects.rs:683
+#: crates/greycard-ui/src/panel/archive/rejects.rs:685
 msgid "{label} isn't reachable, and the move couldn't be queued: {e}"
 msgstr "{label} 无法访问，且移动无法排队：{e}"
 
-#: crates/greycard-ui/src/panel/archive/rejects.rs:692
+#: crates/greycard-ui/src/panel/archive/rejects.rs:694
 msgid "not deleted: {label} isn't reachable; try again when it's back"
 msgstr "未删除：{label} 无法访问；恢复后请再试"
 
-#: crates/greycard-ui/src/panel/archive/rejects.rs:699
+#: crates/greycard-ui/src/panel/archive/rejects.rs:701
 msgid "{label} isn't reachable after all; its queued moves wait"
 msgstr "{label} 仍然无法访问；其已排队的移动继续等待"
 
-#: crates/greycard-ui/src/panel/archive/rejects.rs:714
+#: crates/greycard-ui/src/panel/archive/rejects.rs:716
 msgid "; the {n} frame not reached are queued until {label} is back{dropped}"
 msgid_plural ""
 "; the {n} frames not reached are queued until {label} is back{dropped}"
 msgstr[0] "；未到达的 {n} 张照片已排队，待 {label} 恢复后执行{dropped}"
 
-#: crates/greycard-ui/src/panel/archive/rejects.rs:721
+#: crates/greycard-ui/src/panel/archive/rejects.rs:723
 msgid "; the {n} frame not reached could not be queued: {e}"
 msgid_plural "; the {n} frames not reached could not be queued: {e}"
 msgstr[0] "；未到达的 {n} 张照片无法排队：{e}"
 
-#: crates/greycard-ui/src/panel/archive/rejects.rs:742
+#: crates/greycard-ui/src/panel/archive/rejects.rs:744
 msgid "{label} is back; queued moves ran: {words}"
 msgstr "{label} 已恢复；已执行排队的移动：{words}"
 
-#: crates/greycard-ui/src/panel/archive/rejects.rs:750
+#: crates/greycard-ui/src/panel/archive/rejects.rs:752
 msgid "; the queue could not be written: {e}"
 msgstr "；无法写入队列：{e}"
 
-#: crates/greycard-ui/src/panel/archive/rejects.rs:761
+#: crates/greycard-ui/src/panel/archive/rejects.rs:763
 msgid "; left in the queue: {}{}"
 msgstr "；仍在队列中：{}{}"
 
-#: crates/greycard-ui/src/panel/archive/rejects.rs:810
+#: crates/greycard-ui/src/panel/archive/rejects.rs:812
 msgid "; dropped from the archive queue as malformed: {one}"
 msgstr "；因格式错误已从归档队列中丢弃：{one}"
 
-#: crates/greycard-ui/src/panel/archive/rejects.rs:814
+#: crates/greycard-ui/src/panel/archive/rejects.rs:816
 msgid ""
 "; dropped from the archive queue as malformed: {n} entry ({first}; the log "
 "has the rest)"
@@ -4737,62 +4737,62 @@ msgid_plural ""
 "has the rest)"
 msgstr[0] "；因格式错误已从归档队列中丢弃 {n} 个条目（{first}；其余见日志）"
 
-#: crates/greycard-ui/src/panel/archive/rejects.rs:826
+#: crates/greycard-ui/src/panel/archive/rejects.rs:828
 msgid "nothing was moved on {label}"
 msgstr "{label} 上没有移动任何内容"
 
-#: crates/greycard-ui/src/panel/archive/rejects.rs:829
+#: crates/greycard-ui/src/panel/archive/rejects.rs:831
 msgid "moved {copies} on {label} into a rejects folder beside each"
 msgstr "已将 {label} 上的 {copies} 移入各自旁边的排除文件夹"
 
-#: crates/greycard-ui/src/panel/archive/rejects.rs:835
+#: crates/greycard-ui/src/panel/archive/rejects.rs:837
 msgid ", {n} sidecar with them"
 msgid_plural ", {n} sidecars with them"
 msgstr[0] "，连同 {n} 个附属文件"
 
-#: crates/greycard-ui/src/panel/archive/rejects.rs:842
+#: crates/greycard-ui/src/panel/archive/rejects.rs:844
 msgid "{} in a rejects folder there already"
 msgstr "{} 已在那里的排除文件夹中"
 
-#: crates/greycard-ui/src/panel/archive/rejects.rs:848
+#: crates/greycard-ui/src/panel/archive/rejects.rs:850
 msgid "left: {} ({why})"
 msgstr "未处理：{}（{why}）"
 
-#: crates/greycard-ui/src/panel/archive/rejects.rs:851
+#: crates/greycard-ui/src/panel/archive/rejects.rs:853
 msgid "a copy not known, left alone: {}"
 msgstr "一个未知的副本，未改动：{}"
 
-#: crates/greycard-ui/src/panel/archive/rejects.rs:854
+#: crates/greycard-ui/src/panel/archive/rejects.rs:856
 msgid "canceled, {n} frame not reached"
 msgid_plural "canceled, {n} frames not reached"
 msgstr[0] "已取消，{n} 张照片未到达"
 
-#: crates/greycard-ui/src/panel/archive/rejects.rs:864
+#: crates/greycard-ui/src/panel/archive/rejects.rs:866
 msgid "on {label}, {summary}"
 msgstr "{label} 上：{summary}"
 
-#: crates/greycard-ui/src/panel/archive/rejects.rs:869
+#: crates/greycard-ui/src/panel/archive/rejects.rs:871
 msgid "; no copy found there: {}"
 msgstr "；在那里找不到副本：{}"
 
-#: crates/greycard-ui/src/panel/archive/rejects.rs:873
+#: crates/greycard-ui/src/panel/archive/rejects.rs:875
 msgid "; a copy not known, left alone: {}"
 msgstr "；一个未知的副本，未改动：{}"
 
-#: crates/greycard-ui/src/panel/archive/rejects.rs:879
+#: crates/greycard-ui/src/panel/archive/rejects.rs:881
 msgid "after the refusal"
 msgstr "被拒绝后，"
 
-#: crates/greycard-ui/src/panel/archive/rejects.rs:881
+#: crates/greycard-ui/src/panel/archive/rejects.rs:883
 msgid "canceled,"
 msgstr "已取消，"
 
-#: crates/greycard-ui/src/panel/archive/rejects.rs:884
+#: crates/greycard-ui/src/panel/archive/rejects.rs:886
 msgid "; {why} {n} frame not reached"
 msgid_plural "; {why} {n} frames not reached"
 msgstr[0] "；{why}{n} 张照片未到达"
 
-#: crates/greycard-ui/src/panel/archive/rejects.rs:995
+#: crates/greycard-ui/src/panel/archive/rejects.rs:997
 msgid "{label} is back: moving its {n} reject queued..."
 msgid_plural "{label} is back: moving its {n} rejects queued..."
 msgstr[0] "{label} 已恢复：正在移动其已排队的 {n} 张排除照片..."
@@ -6891,23 +6891,18 @@ msgstr "正在合并：写入文件"
 msgid "no learned denoise on this graphics card"
 msgstr "此显卡不支持 AI 降噪"
 
-#. WORDING PENDING the owner's sign-off.
-#: crates/greycard-ui/src/panel/merge.rs:802
-msgid "no learned denoise in an X-Trans merge"
-msgstr "X-Trans 合并不支持 AI 降噪"
-
-#: crates/greycard-ui/src/panel/merge.rs:813
-#: crates/greycard-ui/src/panel/merge/tests.rs:1173
+#: crates/greycard-ui/src/panel/merge.rs:811
+#: crates/greycard-ui/src/panel/merge/tests.rs:1169
 msgid "not merged: {why}"
 msgstr "未合并：{why}"
 
-#: crates/greycard-ui/src/panel/merge.rs:823
+#: crates/greycard-ui/src/panel/merge.rs:821
 msgid "merged {n} frame into {name}"
 msgid_plural "merged {n} frames into {name}"
 msgstr[0] "已将 {n} 张照片合并为 {name}"
 
 #. The finished line, then why the learned denoise did not run.
-#: crates/greycard-ui/src/panel/merge.rs:828
+#: crates/greycard-ui/src/panel/merge.rs:826
 msgid "{line}; {why}"
 msgstr "{line}；{why}"
 
@@ -8691,6 +8686,9 @@ msgstr "正在检查..."
 #: crates/greycard-ui/src/update.rs:415
 msgid "the release page is open in the browser: {url}"
 msgstr "已在浏览器中打开发布页面：{url}"
+
+#~ msgid "no learned denoise in an X-Trans merge"
+#~ msgstr "X-Trans 合并不支持 AI 降噪"
 
 #~ msgid "learned: not on X-Trans yet"
 #~ msgstr "AI：暂不支持 X-Trans"

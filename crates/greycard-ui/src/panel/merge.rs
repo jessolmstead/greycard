@@ -798,7 +798,6 @@ thread_local! {
 fn skipped_words(why: merge::LearnedSkipped) -> String {
     match why {
         merge::LearnedSkipped::OffCard => tr!("no learned denoise on this graphics card"),
-        merge::LearnedSkipped::XTrans => tr!("no learned denoise in an X-Trans merge"),
     }
 }
 

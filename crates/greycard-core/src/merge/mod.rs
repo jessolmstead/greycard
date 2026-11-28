@@ -1061,7 +1061,80 @@ pub mod testing {
         model: &str,
         focal: Option<u32>,
     ) {
-        let cfa = CFA::new("RGGB");
+        write_dng_of(
+            path,
+            "RGGB",
+            samples,
+            (width, height),
+            shutter,
+            iso,
+            model,
+            focal,
+        );
+    }
+
+    /// The X-Trans mosaic in rawler's letters, row by row: a
+    /// Fujifilm 6x6 cell at one of its phases.
+    pub const XTRANS: &str = "GGRGGBGGBGGRBRGRBGGGBGGRGGRGGBRBGBRG";
+
+    /// [`mosaic_of`] on the X-Trans mosaic [`XTRANS`] spells.
+    pub fn xtrans_mosaic_of(
+        width: usize,
+        height: usize,
+        gain: f32,
+        noise: super::Noise,
+        seed: u64,
+        light: impl Fn(usize, usize, usize) -> f32,
+    ) -> Vec<u16> {
+        let colors: Vec<usize> = XTRANS
+            .bytes()
+            .map(|c| match c {
+                b'R' => 0,
+                b'G' => 1,
+                _ => 2,
+            })
+            .collect();
+        // Each sample's light is its own color's: the plain mosaic's
+        // noise and clip, the color read off the cell.
+        mosaic_of(width, height, gain, noise, seed, |x, y, _| {
+            light(x, y, colors[(y % 6) * 6 + x % 6])
+        })
+    }
+
+    /// [`write_dng`] of an X-Trans mosaic, [`XTRANS`].
+    pub fn write_xtrans_dng(
+        path: &Path,
+        samples: Vec<u16>,
+        width: usize,
+        height: usize,
+        shutter: (u32, u32),
+        model: &str,
+    ) {
+        write_dng_of(
+            path,
+            XTRANS,
+            samples,
+            (width, height),
+            shutter,
+            100,
+            model,
+            None,
+        );
+    }
+
+    /// [`write_dng_shot`] of the mosaic `pattern` spells.
+    #[allow(clippy::too_many_arguments)]
+    fn write_dng_of(
+        path: &Path,
+        pattern: &str,
+        samples: Vec<u16>,
+        (width, height): (usize, usize),
+        shutter: (u32, u32),
+        iso: u16,
+        model: &str,
+        focal: Option<u32>,
+    ) {
+        let cfa = CFA::new(pattern);
         let mut camera = Camera::new();
         camera.make = "Synthetic".into();
         camera.model = model.into();

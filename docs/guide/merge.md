@@ -123,9 +123,8 @@ frames are beside it, unchanged, it can be made again from them.
   the merge ran, or off when none ran. Pick one and press the button;
   the status line follows the merge as it runs, and the picture
   reloads when it is done. The row is not there when a frame is
-  missing or changed, when the frames are not ones the learned
-  denoiser takes (X-Trans), or when sidecars are off, and it waits
-  while another merge runs.
+  missing or changed, when a frame is neither Bayer nor X-Trans, or
+  when sidecars are off, and it waits while another merge runs.
 - `greycard merge again IMG_0001-pano.dng --denoise balanced` merges
   the frames again with the learned denoiser on each (`fast`,
   `balanced`, `best`, or `none`). The frames land where they did, to

@@ -1297,8 +1297,10 @@ clears or a tester asks for it.
 - [ ] The capture sharpen's radius measured from an X-Trans mosaic
       (§322)
 - [ ] The X-Trans denoiser, what is left (§731): fp16 copies for Core
-      ML, a merge of X-Trans frames, and a tier's fetch taking only the
-      network a library needs
+      ML, and a tier's fetch taking only the network a library needs
+- [ ] A merge of X-Trans frames under the learned denoiser tried on a
+      real bracket, and a focus stack's memory with it measured: the
+      190 bytes a pixel is Bayer's (§756)
 - [ ] A GPU X-Trans demosaic, if the CPU's 0.6 s on 40 MP becomes what
       a develop waits on (§322)
 - [ ] Per-camera hot pixel defect map. Waits on a place for per-camera

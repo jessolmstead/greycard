@@ -3,6 +3,14 @@
 What's new in each version, newest first. Each item links to the
 design note behind it.
 
+## 0.14.0
+
+### Develop
+
+- A merge of Fujifilm X-Trans frames takes the learned denoiser, each
+  tier's X-Trans network
+  ([§756](https://github.com/jessolmstead/greycard/blob/master/docs/notes/756-the-learned-denoiser-in-a-merge-of-x-trans-frames.md)).
+
 ## 0.13.0, 2026-11-27
 
 The learned denoiser on Fujifilm X-Trans, Pentax raws, Grain and Output

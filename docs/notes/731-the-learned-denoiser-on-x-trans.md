@@ -115,6 +115,7 @@ names the commit of their upload (§647).
 
 - fp16 copies for Core ML, checked as the Bayer ones were (§481, §489).
   Until then Core ML opens the fp32 file.
-- A merge still takes the learned denoiser on Bayer frames only.
+- A merge still takes the learned denoiser on Bayer frames only
+  (done, §756).
 - A tier's fetch takes both its networks, so a Bayer-only library
   downloads 5 to 20 MB it does not use.

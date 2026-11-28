@@ -79,7 +79,8 @@ pub struct MergeInput {
     /// every frame of a panorama and a focus stack.
     pub reconstruct: bool,
     /// The learned denoiser in the demosaic's place, when the merge
-    /// asks for it.
+    /// asks for it: the tier it names, whose X-Trans network an
+    /// X-Trans frame runs ([`greycard_ai::for_mosaic`]).
     pub denoiser: Option<&'static greycard_ai::Model>,
     /// Where the frame's CA fit comes from.
     pub ca: MergeCa,
@@ -848,11 +849,6 @@ pub const LEARNED_DENOISER: &str = "the learned denoiser";
 /// user's approval.
 pub const OFF_CARD: &str = "the learned denoiser is not on this graphics card";
 
-/// Why the learned denoiser is skipped on a merge's X-Trans frame: a
-/// merge takes it on Bayer frames only, though a single X-Trans frame
-/// takes its tier's X-Trans network.
-pub const NO_XTRANS: &str = "a merge takes the learned denoiser on Bayer frames only";
-
 /// The name a list's skips give the learned highlight fill.
 pub const HIGHLIGHT_FILL: &str = "the highlight fill";
 
@@ -1011,8 +1007,8 @@ impl Steps {
 pub struct Needs {
     /// The learned denoiser's model: the tier's Bayer network, since
     /// the frame's mosaic is not known before the decode. An X-Trans
-    /// frame's list runs the tier's X-Trans network ([`stages`]); a
-    /// merge's frame names its own.
+    /// frame's list runs the tier's X-Trans network ([`stages`]), a
+    /// merge's frame's as well.
     pub denoiser: Option<&'static greycard_ai::Model>,
     /// The look the edit names, when it has strength.
     pub look: Option<String>,
@@ -1528,15 +1524,18 @@ fn merge_input(edit: &Edit, merge: &MergeInput, facts: &Facts) -> Steps {
     let bayer = pattern
         .as_ref()
         .is_some_and(greycard_core::develop::rcd::is_bayer);
+    let xtrans = pattern.as_ref().is_some_and(CfaPattern::is_xtrans);
     match merge.denoiser {
         // On a card a learned denoiser lost, every tier is skipped as on
         // a mosaic it has no version for; that one's words first.
-        Some(_) if bayer && crate::ai::learned_off_card() => {
+        Some(_) if (bayer || xtrans) && crate::ai::learned_off_card() => {
             s.skip(LEARNED_DENOISER, Skip::Unavailable(OFF_CARD))
         }
-        Some(model) if bayer => s.op(Stage::Learned(model)),
-        Some(_) if pattern.as_ref().is_some_and(CfaPattern::is_xtrans) => {
-            s.skip(LEARNED_DENOISER, Skip::Unavailable(NO_XTRANS))
+        // The tier the merge names, as the frame's mosaic has it, as a
+        // develop takes it: an X-Trans frame runs the tier's X-Trans
+        // network.
+        Some(model) if bayer || xtrans => {
+            s.op(Stage::Learned(greycard_ai::for_mosaic(model, xtrans)))
         }
         Some(_) => s.skip(
             LEARNED_DENOISER,
@@ -3009,8 +3008,8 @@ mod tests {
     /// A merge's frame: the prepare with nothing clipped and its noise
     /// measured, the CA, the demosaic, and nothing after; the reference's
     /// white taken; the darkest frame's highlights reconstructed; the
-    /// learned denoiser in the demosaic's place when asked, on a Bayer
-    /// mosaic alone.
+    /// learned denoiser in the demosaic's place when asked, the tier's
+    /// network for the frame's mosaic, Bayer or X-Trans.
     #[test]
     fn a_merges_frame_ends_at_the_demosaic_with_nothing_clipped() {
         let merge = |white, reconstruct, denoiser| {
@@ -3063,12 +3062,31 @@ mod tests {
                 .map(|m| m.id),
             Some(model.id)
         );
-        let x = stages(&edit, &merge(None, false, Some(model)), &xtrans(), None);
-        assert_eq!(names(&x), ["prepare", "CA", "demosaic"]);
-        assert_eq!(
-            x.skipped,
-            vec![(LEARNED_DENOISER, Skip::Unavailable(NO_XTRANS))]
-        );
+        // An X-Trans frame runs the tier's X-Trans network, whichever
+        // of the tier's two networks the merge names.
+        for named in [model, &greycard_ai::DENOISE_XTRANS_BALANCED] {
+            let x = stages(&edit, &merge(None, false, Some(named)), &xtrans(), None);
+            assert_eq!(names(&x), ["prepare", "CA", "learned denoiser"]);
+            assert!(
+                x.ops()
+                    .any(|o| *o == Stage::Learned(&greycard_ai::DENOISE_XTRANS_BALANCED))
+            );
+            assert!(x.skipped.is_empty(), "{:?}", x.skipped);
+            let b = stages(&edit, &merge(None, false, Some(named)), &raw(0), None);
+            assert!(b.ops().any(|o| *o == Stage::Learned(model)));
+        }
+        // On a card the denoiser lost, either mosaic is skipped for the
+        // card, and demosaiced.
+        crate::ai::set_test_off_card(Some(true));
+        for frame in [xtrans(), raw(0)] {
+            let off = stages(&edit, &merge(None, false, Some(model)), &frame, None);
+            assert_eq!(names(&off), ["prepare", "CA", "demosaic"]);
+            assert_eq!(
+                off.skipped,
+                vec![(LEARNED_DENOISER, Skip::Unavailable(OFF_CARD))]
+            );
+        }
+        crate::ai::set_test_off_card(None);
 
         // A panorama's frame: the lens's vignetting in camera space,
         // after the demosaic, before anything leaves camera RGB.

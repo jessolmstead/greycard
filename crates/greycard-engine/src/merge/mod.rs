@@ -189,12 +189,9 @@ pub struct FrameReport {
 }
 
 /// Why a merge whose frames asked for a learned tier made them without
-/// it: said on the finished line and as a CLI note, and logged. The
-/// card's wins when both apply.
+/// it: said on the finished line and as a CLI note, and logged.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum LearnedSkipped {
-    /// A frame is X-Trans, which the learned denoiser has no version for.
-    XTrans,
     /// The learned denoiser is off this graphics card: it lost it.
     OffCard,
 }
@@ -203,30 +200,24 @@ impl LearnedSkipped {
     /// The CLI's note, and the log's.
     pub fn words(self) -> &'static str {
         match self {
-            Self::XTrans => "no learned denoise in an X-Trans merge",
             Self::OffCard => "no learned denoise on this graphics card",
         }
     }
 
     /// Why a frame's walk skipped the learned denoiser, from its list's
-    /// skips: one of these two, or none.
+    /// skips: one of these, or none.
     fn of(skipped: &[(&'static str, crate::stages::Skip)]) -> Option<Self> {
         skipped.iter().find_map(|(name, why)| match why {
-            crate::stages::Skip::Unavailable(w) if *name == crate::stages::LEARNED_DENOISER => {
-                if *w == crate::stages::OFF_CARD {
-                    Some(Self::OffCard)
-                } else if *w == crate::stages::NO_XTRANS {
-                    Some(Self::XTrans)
-                } else {
-                    None
-                }
+            crate::stages::Skip::Unavailable(w)
+                if *name == crate::stages::LEARNED_DENOISER && *w == crate::stages::OFF_CARD =>
+            {
+                Some(Self::OffCard)
             }
             _ => None,
         })
     }
 
-    /// The reason for the whole merge, from its frames': the card's
-    /// first, then X-Trans, logged once.
+    /// The reason for the whole merge, from its frames', logged once.
     pub(crate) fn of_frames(frames: impl IntoIterator<Item = Option<Self>>) -> Option<Self> {
         let worst = frames.into_iter().flatten().max();
         if let Some(why) = worst {
@@ -466,7 +457,7 @@ struct Walked {
     white_balance: WhiteBalance,
     denoised: bool,
     stood_in: Option<String>,
-    /// Why the learned denoiser was skipped on it, of the two a merge
+    /// Why the learned denoiser was skipped on it, of those a merge
     /// says.
     learned_skipped: Option<LearnedSkipped>,
     /// The CA's fit, when the frame was asked to hand it back.
@@ -1141,24 +1132,51 @@ pub fn frames_of(file: &Path, tag: &merge::Tag) -> Result<(Recipe, Vec<PathBuf>)
 }
 
 /// Whether the learned denoiser takes every one of `frames`: each a
-/// 2x2 Bayer mosaic, read from its tags; else which does not.
-pub fn take_learned(frames: &[PathBuf]) -> Result<()> {
+/// 2x2 Bayer or an X-Trans mosaic, read from its tags; whether any is
+/// each, the networks they run; else which does not.
+pub fn take_learned(frames: &[PathBuf]) -> Result<Mosaics> {
+    use greycard_core::raw::Mosaic;
+    let mut mosaics = Mosaics::default();
     for frame in frames {
         let mosaic = greycard_core::decode::mosaic_path(frame)
             .with_context(|| format!("reading {}", frame.display()))?;
-        if mosaic != Some(greycard_core::raw::Mosaic::Bayer) {
-            bail!(
-                "the learned denoiser takes a 2x2 Bayer mosaic, and {} is {}",
+        match mosaic {
+            Some(Mosaic::Bayer) => mosaics.bayer = true,
+            Some(Mosaic::XTrans) => mosaics.xtrans = true,
+            other => bail!(
+                "the learned denoiser takes a Bayer or an X-Trans mosaic, and {} is {}",
                 name_of(frame),
-                match mosaic {
-                    Some(greycard_core::raw::Mosaic::XTrans) => "X-Trans",
+                match other {
                     Some(_) => "another mosaic",
                     None => "no mosaic",
                 }
-            );
+            ),
         }
     }
-    Ok(())
+    Ok(mosaics)
+}
+
+/// The mosaics of a merge's frames, as [`take_learned`] read them.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Mosaics {
+    /// Whether any frame is a 2x2 Bayer mosaic.
+    pub bayer: bool,
+    /// Whether any frame is an X-Trans mosaic.
+    pub xtrans: bool,
+}
+
+impl Mosaics {
+    /// The networks of the tier `model` names these frames run: its
+    /// Bayer network, its X-Trans one, or both.
+    pub fn networks(
+        self,
+        model: &'static greycard_ai::Model,
+    ) -> impl Iterator<Item = &'static greycard_ai::Model> {
+        [(self.bayer, false), (self.xtrans, true)]
+            .into_iter()
+            .filter(|(any, _)| *any)
+            .map(move |(_, xtrans)| greycard_ai::for_mosaic(model, xtrans))
+    }
 }
 
 /// Whether the merged file `file`, whose tag is `tag`, can be made
@@ -1207,21 +1225,28 @@ pub fn again(
                 .with_context(|| format!("there is no learned denoiser called {t}"))?;
             // The walk would skip it on such a frame and write the
             // file undenoised.
-            if let Err(e) = take_learned(&frames) {
-                bail!("{e:#}, and nothing was made again");
-            }
+            let mosaics = match take_learned(&frames) {
+                Ok(m) => m,
+                Err(e) => bail!("{e:#}, and nothing was made again"),
+            };
             // Refused before any frame is walked: a merge made without
             // the tier asked would take the place of one made with it.
-            match models.can_denoise(model) {
-                Ok(()) => {}
-                Err(crate::walk::NoLearned::Missing(_)) => bail!(
-                    "the learned denoiser's {t} tier is not fetched, and nothing was made again"
-                ),
-                Err(crate::walk::NoLearned::Failed(why) | crate::walk::NoLearned::Short(why)) => {
-                    bail!(
-                        "the learned denoiser's {t} tier cannot run ({why}), and nothing was made \
-                     again"
-                    )
+            // The tier is the network each frame's mosaic runs.
+            for network in mosaics.networks(model) {
+                match models.can_denoise(network) {
+                    Ok(()) => {}
+                    Err(crate::walk::NoLearned::Missing(_)) => bail!(
+                        "the learned denoiser's {t} tier is not fetched, and nothing was made \
+                         again"
+                    ),
+                    Err(
+                        crate::walk::NoLearned::Failed(why) | crate::walk::NoLearned::Short(why),
+                    ) => {
+                        bail!(
+                            "the learned denoiser's {t} tier cannot run ({why}), and nothing was \
+                             made again"
+                        )
+                    }
                 }
             }
             Some(model)
@@ -2158,42 +2183,27 @@ mod tests {
     }
 
     /// Why a merge's frames went without the learned tier, from each
-    /// frame's skips: the card's or X-Trans, the card's first when both
-    /// apply; any other skip, or none, says nothing.
+    /// frame's skips: the card's; any other skip, or none, says nothing.
     #[test]
     fn a_merge_says_why_its_frames_went_without_the_tier() {
-        use crate::stages::{LEARNED_DENOISER, NO_XTRANS, OFF_CARD, Skip};
+        use crate::stages::{LEARNED_DENOISER, OFF_CARD, Skip};
         let off = [(LEARNED_DENOISER, Skip::Unavailable(OFF_CARD))];
-        let xtrans = [(LEARNED_DENOISER, Skip::Unavailable(NO_XTRANS))];
         let other = [(
             LEARNED_DENOISER,
             Skip::Unavailable("the learned denoiser needs a 2x2 Bayer mosaic"),
         )];
         assert_eq!(LearnedSkipped::of(&off), Some(LearnedSkipped::OffCard));
-        assert_eq!(LearnedSkipped::of(&xtrans), Some(LearnedSkipped::XTrans));
         assert_eq!(LearnedSkipped::of(&other), None);
         assert_eq!(LearnedSkipped::of(&[]), None);
         let frames = |f: &[Option<LearnedSkipped>]| LearnedSkipped::of_frames(f.to_vec());
         assert_eq!(
-            frames(&[
-                Some(LearnedSkipped::XTrans),
-                Some(LearnedSkipped::OffCard),
-                None
-            ]),
+            frames(&[None, Some(LearnedSkipped::OffCard), None]),
             Some(LearnedSkipped::OffCard)
-        );
-        assert_eq!(
-            frames(&[None, Some(LearnedSkipped::XTrans)]),
-            Some(LearnedSkipped::XTrans)
         );
         assert_eq!(frames(&[None, None]), None);
         assert_eq!(
             LearnedSkipped::OffCard.words(),
             "no learned denoise on this graphics card"
-        );
-        assert_eq!(
-            LearnedSkipped::XTrans.words(),
-            "no learned denoise in an X-Trans merge"
         );
     }
 
@@ -2336,7 +2346,7 @@ mod tests {
     }
 
     /// On a card a learned denoiser lost, a merge asked for any tier
-    /// walks its frames as it walks X-Trans ones: the network skipped,
+    /// walks its frames as with none: the network skipped,
     /// the plain demosaic, no tier in the recipe, and no word of it
     /// among the warnings. Made again at any tier, it is declined up
     /// front in the existing words, the merge left as it was, and the
@@ -2524,25 +2534,34 @@ mod tests {
         greycard_core::testing::remove_dir_retry(&dir);
     }
 
-    /// Frames the learned denoiser does not take (X-Trans here) are
-    /// refused a tier before any is walked, where the walk would skip
-    /// the denoiser and write the file undenoised; with no tier they
-    /// stand, and the window's check says the row has nothing to offer.
+    /// Frames the learned denoiser does not take (a 2x2 mosaic that is
+    /// no Bayer one here) are refused a tier before any is walked,
+    /// where the walk would skip the denoiser and write the file
+    /// undenoised; with no tier they stand, and the window's check says
+    /// the row has nothing to offer. X-Trans frames it takes.
     #[test]
     fn a_tier_on_frames_it_cannot_take_is_refused() {
-        let dir = scratch("again-xtrans");
+        let dir = scratch("again-other");
         let names = ["DSCF0.dng", "DSCF1.dng", "DSCF2.dng"];
-        let frames: Vec<PathBuf> = names
-            .iter()
-            .map(|n| {
-                let p = dir.join(n);
-                greycard_library::fixture::write_mosaic_dng(
-                    &p,
-                    "GGRGGBGGBGGRBRGRBGGGBGGRGGRGGBRBGBRG",
-                );
-                p
-            })
-            .collect();
+        let write = |pattern: &str| -> Vec<PathBuf> {
+            names
+                .iter()
+                .map(|n| {
+                    let p = dir.join(n);
+                    greycard_library::fixture::write_mosaic_dng(&p, pattern);
+                    p
+                })
+                .collect()
+        };
+        let xtrans = write(greycard_core::merge::testing::XTRANS);
+        assert_eq!(
+            take_learned(&xtrans).unwrap(),
+            Mosaics {
+                bayer: false,
+                xtrans: true
+            }
+        );
+        let frames = write("RGBG");
         // The merged file's own body from a calibrated frame, which the
         // fixture's are not; nothing reads its pixels.
         let body = dir.join("body.dng");
@@ -2622,11 +2641,237 @@ mod tests {
         .to_string();
         assert_eq!(
             refused,
-            "the learned denoiser takes a 2x2 Bayer mosaic, and DSCF0.dng is X-Trans, and \
-             nothing was made again"
+            "the learned denoiser takes a Bayer or an X-Trans mosaic, and DSCF0.dng is another \
+             mosaic, \
+             and nothing was made again"
         );
         assert!(steps.into_inner().is_empty());
         assert_eq!(std::fs::read(&out).unwrap(), before);
+        greycard_core::testing::remove_dir_retry(&dir);
+    }
+
+    /// The bracket of [`bracket`] on an X-Trans mosaic.
+    fn xtrans_bracket(what: &str) -> (PathBuf, Vec<PathBuf>) {
+        use greycard_core::merge::testing::{write_xtrans_dng, xtrans_mosaic_of};
+        let dir = scratch(what);
+        let gains = [1.0 / 3.8, 1.0, 3.8];
+        let shutters = [(1, 400), (1, 100), (1, 25)];
+        let files = (0..3)
+            .map(|k| {
+                let path = dir.join(format!("DSCF{k}.dng"));
+                let samples = xtrans_mosaic_of(W, H, gains[k], Noise::ASSUMED, 31 + k as u64, {
+                    |x, y, c| scene(x, y, c, W, H)
+                });
+                write_xtrans_dng(&path, samples, W, H, shutters[k], "XTrans");
+                path
+            })
+            .collect();
+        (dir, files)
+    }
+
+    /// The plain demosaic for a network, as [`crate::testing::PlainDenoiser`]
+    /// gives it, saying which networks were asked after and run; the
+    /// network `missing` is not there.
+    struct Asked {
+        missing: Option<&'static str>,
+        asked: Vec<&'static str>,
+        ran: Vec<&'static str>,
+    }
+    impl Asked {
+        fn new(missing: Option<&'static greycard_ai::Model>) -> Self {
+            Self {
+                missing: missing.map(|m| m.id),
+                asked: Vec::new(),
+                ran: Vec::new(),
+            }
+        }
+    }
+    impl Models for Asked {
+        fn can_denoise(
+            &mut self,
+            model: &'static greycard_ai::Model,
+        ) -> Result<(), crate::walk::NoLearned> {
+            self.asked.push(model.id);
+            if self.missing == Some(model.id) {
+                return Err(crate::walk::NoLearned::Missing(model));
+            }
+            Ok(())
+        }
+        fn denoise(
+            &mut self,
+            model: &'static greycard_ai::Model,
+            frame: &RawFrame,
+            prepared: &greycard_core::develop::Prepared,
+        ) -> Result<Vec<f32>, crate::walk::NoLearned> {
+            self.ran.push(model.id);
+            crate::testing::PlainDenoiser.denoise(model, frame, prepared)
+        }
+        fn fill(
+            &mut self,
+            _: &greycard_edit::retouch::Patch,
+            _: &greycard_core::develop::retouch::Region,
+            _: &greycard_core::image::WorkingImage,
+        ) -> Option<Vec<f32>> {
+            None
+        }
+        fn could_fill_more(
+            &mut self,
+            _: &greycard_edit::retouch::Retouch,
+            _: &greycard_core::image::WorkingImage,
+        ) -> bool {
+            false
+        }
+        fn rasters(
+            &mut self,
+            _: crate::stages::Masks,
+            _: &std::sync::Arc<greycard_core::image::WorkingImage>,
+            _: Option<crate::walk::Patched<'_>>,
+            _: &crate::walk::Meta,
+        ) -> crate::walk::Rasters {
+            crate::walk::Rasters::new()
+        }
+    }
+
+    /// An X-Trans bracket asked for a tier runs the tier's X-Trans
+    /// network on every frame, as a develop of one does, keeps the tier
+    /// in its recipe, and says nothing of it; made again at another
+    /// tier, it runs that tier's X-Trans network, and the window's row
+    /// is offered for it.
+    #[test]
+    fn an_xtrans_bracket_runs_the_tiers_xtrans_network() {
+        let (dir, files) = xtrans_bracket("xtrans-tier");
+        crate::ai::set_test_off_card(Some(false));
+        let mut models = Asked::new(None);
+        let report = hdr(
+            &files,
+            &Edit::default(),
+            &Options {
+                denoiser: greycard_ai::denoiser("balanced"),
+                ..Options::default()
+            },
+            &mut models,
+            &|_: Step| {},
+        )
+        .unwrap();
+        assert!(report.denoised);
+        assert_eq!(report.learned_skipped, None);
+        assert!(report.warnings.iter().all(|w| !w.contains("stood down")));
+        let xtrans = greycard_ai::DENOISE_XTRANS_BALANCED.id;
+        assert_eq!(models.ran, [xtrans; 3]);
+        assert!(
+            models.asked.iter().all(|id| *id == xtrans),
+            "{:?}",
+            models.asked
+        );
+        let (_, tag) = samples_and_tag(&report.out);
+        assert_eq!(
+            tag.recipe.clone().unwrap().denoise.as_deref(),
+            Some("balanced")
+        );
+        assert!(can_denoise_again(&report.out, &tag));
+
+        let mut models = Asked::new(None);
+        let Again::Hdr(again) = again(
+            &report.out,
+            &Overrides {
+                denoise: Some(Some("fast".into())),
+                ..Default::default()
+            },
+            &Edit::default(),
+            &mut models,
+            &|_: Step| {},
+        )
+        .unwrap() else {
+            panic!("a bracket");
+        };
+        assert!(again.denoised);
+        let fast = greycard_ai::DENOISE_XTRANS_FAST.id;
+        assert_eq!(models.ran, [fast; 3]);
+        assert!(
+            models.asked.iter().all(|id| *id == fast),
+            "{:?}",
+            models.asked
+        );
+        let (_, tag) = samples_and_tag(&report.out);
+        assert_eq!(tag.recipe.unwrap().denoise.as_deref(), Some("fast"));
+        crate::ai::set_test_off_card(None);
+        greycard_core::testing::remove_dir_retry(&dir);
+    }
+
+    /// An X-Trans bracket whose tier's X-Trans network is not there is
+    /// merged as a Bayer one whose network is not: the engine's own path
+    /// stands in, said in the stood-down warning, and no tier kept; made
+    /// again at the tier, it is refused up front in the Bayer words. On
+    /// a card the denoiser lost, the card's note, as on Bayer.
+    #[test]
+    fn an_xtrans_bracket_without_its_network_or_its_card_goes_as_bayer_does() {
+        let (dir, files) = xtrans_bracket("xtrans-missing");
+        crate::ai::set_test_off_card(Some(false));
+        let options = Options {
+            denoiser: greycard_ai::denoiser("best"),
+            on_exists: greycard_core::output::OnExists::Overwrite,
+            ..Options::default()
+        };
+        let mut models = Asked::new(Some(&greycard_ai::DENOISE_XTRANS_BEST));
+        let report = hdr(
+            &files,
+            &Edit::default(),
+            &options,
+            &mut models,
+            &|_: Step| {},
+        )
+        .unwrap();
+        assert!(!report.denoised);
+        assert!(models.ran.is_empty());
+        assert_eq!(report.learned_skipped, None);
+        assert_eq!(
+            report
+                .warnings
+                .iter()
+                .filter(|w| w.starts_with("the learned denoiser stood down: Missing("))
+                .count(),
+            3,
+            "{:?}",
+            report.warnings
+        );
+        let (_, tag) = samples_and_tag(&report.out);
+        assert_eq!(tag.recipe.unwrap().denoise, None);
+        let before = std::fs::read(&report.out).unwrap();
+        let refused = again(
+            &report.out,
+            &Overrides {
+                denoise: Some(Some("best".into())),
+                ..Default::default()
+            },
+            &Edit::default(),
+            &mut Asked::new(Some(&greycard_ai::DENOISE_XTRANS_BEST)),
+            &|_: Step| panic!("nothing is walked"),
+        )
+        .map(|_| ())
+        .unwrap_err()
+        .to_string();
+        assert_eq!(
+            refused,
+            "the learned denoiser's best tier is not fetched, and nothing was made again"
+        );
+        assert_eq!(std::fs::read(&report.out).unwrap(), before);
+
+        crate::ai::set_test_off_card(Some(true));
+        let mut models = Asked::new(None);
+        let off = hdr(
+            &files,
+            &Edit::default(),
+            &options,
+            &mut models,
+            &|_: Step| {},
+        )
+        .unwrap();
+        assert!(!off.denoised);
+        assert!(models.asked.is_empty() && models.ran.is_empty());
+        assert_eq!(off.learned_skipped, Some(LearnedSkipped::OffCard));
+        let (_, tag) = samples_and_tag(&off.out);
+        assert!(!can_denoise_again(&off.out, &tag));
+        crate::ai::set_test_off_card(None);
         greycard_core::testing::remove_dir_retry(&dir);
     }
 
